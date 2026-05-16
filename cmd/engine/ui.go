@@ -99,12 +99,12 @@ func BuildHeader(state *render.ApplicationState) render.Component {
 		JustifyContent: render.JustifySpaceBetween,
 		Padding: 20,
 		Children: []render.Component{
-			&render.Label{CompID: "title", Pos: image.Point{0, 0}, Text: fmt.Sprintf("POLYENGINE // %s", state.CurrentPage), Color: color.RGBA{255, 255, 255, 255}},
+			&render.Label{CompID: "title", Pos: image.Point{0, 0}, Text: fmt.Sprintf("P.O.E.M. // %s", state.CurrentPage), Color: color.RGBA{255, 255, 255, 255}},
 			&render.DynamicLabel{
 				CompID: "status_tag",
 				Pos:    image.Point{0, 0},
 				Color:  color.RGBA{0, 255, 180, 255},
-				GetText: func(s *render.ApplicationState) string { return "[ STATUS: NOMINAL ]" },
+				GetText: func(s *render.ApplicationState) string { return "[ STATUS: POETIC ]" },
 			},
 		},
 	}
@@ -131,7 +131,7 @@ func BuildFooter(state *render.ApplicationState) render.Component {
 					if s.ActiveID != "" {
 						active = s.ActiveID
 					}
-					return fmt.Sprintf("READY | THREADS: %d | HOVER: %s | ACTIVE: %s | PAGE: %s", runtime.NumGoroutine(), hover, active, s.CurrentPage)
+					return fmt.Sprintf("P.O.E.M. READY | THREADS: %d | HOVER: %s | ACTIVE: %s | PAGE: %s", runtime.NumGoroutine(), hover, active, s.CurrentPage)
 				},
 			},
 		},
@@ -272,7 +272,7 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 		// Engine Information
 		&render.Label{CompID: "lbl_engine_info", Pos: image.Point{110, 350}, Text: "ENGINE INFORMATION", Color: color.RGBA{200, 200, 200, 255}},
 		&render.Panel{CompID: "engine_info_box", Rect: image.Rect(110, 365, render.Width-40, 500), BGColor: color.RGBA{15, 20, 30, 255}, Rounding: 8},
-		&render.Label{CompID: "engine_v", Pos: image.Point{125, 395}, Text: "POLYENGINE v0.4.2 // OPERATIONAL ENGINE MATRIX", Color: color.RGBA{0, 255, 150, 255}},
+		&render.Label{CompID: "engine_v", Pos: image.Point{125, 395}, Text: "P.O.E.M. v0.4.2 // OPERATIONAL ENGINE MATRIX", Color: color.RGBA{0, 255, 150, 255}},
 		&render.Label{CompID: "engine_arch", Pos: image.Point{125, 425}, Text: fmt.Sprintf("ARCHITECTURE: %s // OS: %s", runtime.GOARCH, runtime.GOOS), Color: color.RGBA{150, 160, 180, 255}},
 		&render.Label{CompID: "engine_compiler", Pos: image.Point{125, 455}, Text: fmt.Sprintf("COMPILER: %s", runtime.Version()), Color: color.RGBA{150, 160, 180, 255}},
 	}
