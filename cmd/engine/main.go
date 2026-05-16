@@ -16,8 +16,9 @@ import (
 var (
 	hdc         uintptr
 	activeState = &render.ApplicationState{
-		StatusText: "Engine Running Synchronized Component Tree",
-		Volume:     75.0,
+		StatusText:   "Engine Running Synchronized Component Tree",
+		Volume:       75.0,
+		GlassEnabled: true,
 	}
 	uiEngine    render.UIRenderer
 )
@@ -27,20 +28,25 @@ func findComponent(id string) render.Component {
 		return nil
 	}
 	var found render.Component
-	for _, c := range activeState.Components {
-		c.Walk(func(comp render.Component) {
-			if comp.ID() == id {
-				found = comp
-			}
-		})
+	// Search in current page components
+	if comps, ok := activeState.Pages[activeState.CurrentPage]; ok {
+		for _, c := range comps {
+			c.Walk(func(comp render.Component) {
+				if comp.ID() == id {
+					found = comp
+				}
+			})
+		}
 	}
 	return found
 }
 
 func findHoveredComponent(pt image.Point) string {
-	for i := len(activeState.Components) - 1; i >= 0; i-- {
-		if id := activeState.Components[i].HitTest(pt); id != "" {
-			return id
+	if comps, ok := activeState.Pages[activeState.CurrentPage]; ok {
+		for i := len(comps) - 1; i >= 0; i-- {
+			if id := comps[i].HitTest(pt); id != "" {
+				return id
+			}
 		}
 	}
 	return ""
@@ -60,7 +66,7 @@ func wndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 			if uiEngine != nil {
 				uiEngine.SetSize(w, h)
 				// Re-generate layout to adapt to new dimensions
-				activeState.Components = BuildShowcaseLayout(activeState)
+				BuildAllPages(activeState)
 			}
 		}
 		return 0
@@ -79,7 +85,8 @@ func wndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 					if s, ok := comp.(*render.Slider); ok {
 						activeState.Volume = s.Value
 					}
-					activeState.Components = BuildShowcaseLayout(activeState)
+					// Only rebuild if it's a structural change, but for simplicity:
+					BuildAllPages(activeState)
 				}
 				win32.SetCapture(hwnd)
 			}
@@ -100,10 +107,12 @@ func wndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 
 		// Identify hovered component
 		newHover := ""
-		for i := len(activeState.Components) - 1; i >= 0; i-- {
-			if id := activeState.Components[i].HitTest(pt); id != "" {
-				newHover = id
-				break
+		if comps, ok := activeState.Pages[activeState.CurrentPage]; ok {
+			for i := len(comps) - 1; i >= 0; i-- {
+				if id := comps[i].HitTest(pt); id != "" {
+					newHover = id
+					break
+				}
 			}
 		}
 		activeState.HoveredID = newHover
@@ -137,11 +146,13 @@ func wndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 
 		// Forward special keys to focused component
 		if activeState.FocusedID != "" {
-			for _, c := range activeState.Components {
-				if c.OnKey(uint32(wparam), 0, activeState) {
-					activeState.Components = BuildShowcaseLayout(activeState)
-					win32.InvalidateRect(hwnd, nil, false)
-					break
+			if comps, ok := activeState.Pages[activeState.CurrentPage]; ok {
+				for _, c := range comps {
+					if c.OnKey(uint32(wparam), 0, activeState) {
+						BuildAllPages(activeState)
+						win32.InvalidateRect(hwnd, nil, false)
+						break
+					}
 				}
 			}
 		}
@@ -149,12 +160,14 @@ func wndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	case 0x0102: // WM_CHAR
 		// Forward character input to focused component
 		if activeState.FocusedID != "" {
-			for _, c := range activeState.Components {
-				if c.OnKey(0, rune(wparam), activeState) {
-					// State might have changed (e.g. navigation), refresh layout
-					activeState.Components = BuildShowcaseLayout(activeState)
-					win32.InvalidateRect(hwnd, nil, false)
-					break
+			if comps, ok := activeState.Pages[activeState.CurrentPage]; ok {
+				for _, c := range comps {
+					if c.OnKey(0, rune(wparam), activeState) {
+						// State might have changed (e.g. navigation), refresh layout
+						BuildAllPages(activeState)
+						win32.InvalidateRect(hwnd, nil, false)
+						break
+					}
 				}
 			}
 		}
@@ -218,8 +231,8 @@ func main() {
 	activeState.CoreMask = (1 << uint(runtime.NumCPU())) - 1
 	activeState.Particles = render.NewParticleSystem(100, image.Rect(0, 0, render.Width, render.Height))
 
-	// Initialize UI Components (The Showcase Layout)
-	activeState.Components = BuildShowcaseLayout(activeState)
+	// Initialize UI Components
+	BuildAllPages(activeState)
 
 	win32.ShowWindow(hwnd, 5) // SW_SHOW
 
@@ -233,6 +246,7 @@ func main() {
 			if dt > 0 {
 				activeState.CurrentFPS = 1.0 / dt
 				activeState.Particles.Update(dt)
+				activeState.UpdateAnimations(float32(dt))
 			}
 			lastFrame = now
 			win32.InvalidateRect(hwnd, nil, false)

@@ -9,46 +9,42 @@ import (
 	"go_native_gpu_gui/internal/render"
 )
 
-// BuildShowcaseLayout constructs the complex dashboard UI tree based on current state.
-func BuildShowcaseLayout(state *render.ApplicationState) []render.Component {
+// BuildAllPages populates the application state's page registry.
+func BuildAllPages(state *render.ApplicationState) {
+	if state.Pages == nil {
+		state.Pages = make(map[string][]render.Component)
+	}
+
 	if state.CurrentPage == "" {
 		state.CurrentPage = render.PageDashboard
 	}
 
-	// 1. GLOBAL CHROME (Always Visible)
+	state.Pages[render.PageDashboard] = BuildPage(state, render.PageDashboard, BuildDashboard(state))
+	state.Pages[render.PageAnalytics] = BuildPage(state, render.PageAnalytics, BuildAnalytics(state))
+	state.Pages[render.PageSettings] = BuildPage(state, render.PageSettings, BuildSettings(state))
+}
+
+func BuildPage(state *render.ApplicationState, name string, content []render.Component) []render.Component {
 	comps := []render.Component{
 		// Backdrop
-		&render.Panel{CompID: "bg_blur", Rect: image.Rect(0, 0, render.Width, render.Height), BGColor: color.RGBA{10, 10, 15, 255}},
+		&render.Panel{CompID: "bg_blur_" + name, Rect: image.Rect(0, 0, render.Width, render.Height), BGColor: color.RGBA{10, 10, 15, 255}},
 		
 		// Background Particles
-		&render.ParticleComponent{CompID: "vfx_particles", System: state.Particles},
+		&render.ParticleComponent{CompID: "vfx_particles_" + name, System: state.Particles},
 
 		// Sidebar Background
-		&render.Panel{CompID: "sidebar_bg", Rect: image.Rect(0, 0, 70, render.Height), BGColor: color.RGBA{15, 15, 25, 255}},
+		&render.Panel{CompID: "sidebar_bg_" + name, Rect: image.Rect(0, 0, 70, render.Height), BGColor: color.RGBA{15, 15, 25, 255}},
 		BuildSidebar(state),
 
 		// Header Background
-		&render.Panel{CompID: "header_bg", Rect: image.Rect(70, 0, render.Width, 60), BGColor: color.RGBA{20, 25, 40, 220}},
+		&render.Panel{CompID: "header_bg_" + name, Rect: image.Rect(70, 0, render.Width, 60), BGColor: color.RGBA{20, 25, 40, 220}},
 		BuildHeader(state),
 		
 		// Footer Background
-		&render.Panel{CompID: "footer_bg", Rect: image.Rect(70, render.Height-40, render.Width, render.Height), BGColor: color.RGBA{10, 10, 20, 255}},
+		&render.Panel{CompID: "footer_bg_" + name, Rect: image.Rect(70, render.Height-40, render.Width, render.Height), BGColor: color.RGBA{10, 10, 20, 255}},
 		BuildFooter(state),
 	}
-
-	// 2. PAGE CONTENT (Swappable Area)
-	switch state.CurrentPage {
-	case render.PageDashboard:
-		comps = append(comps, BuildDashboard(state)...)
-	case render.PageSettings:
-		comps = append(comps, BuildSettings(state)...)
-	case render.PageAnalytics:
-		comps = append(comps, BuildAnalytics(state)...)
-	default:
-		comps = append(comps, BuildDashboard(state)...)
-	}
-
-	return comps
+	return append(comps, content...)
 }
 
 func BuildSidebar(state *render.ApplicationState) render.Component {
@@ -65,19 +61,19 @@ func BuildSidebar(state *render.ApplicationState) render.Component {
 				CompID: "nav_home", Rect: image.Rect(0, 0, 40, 40), Label: "H",
 				BaseColor:  getPageColor(state, render.PageDashboard),
 				HoverColor: color.RGBA{0, 150, 255, 255}, Rounding: 8,
-				OnClick: func(s *render.ApplicationState) { s.CurrentPage = render.PageDashboard },
+				OnClick: func(s *render.ApplicationState) { s.NavigateTo(render.PageDashboard) },
 			},
 			&render.Button{
 				CompID: "nav_analytics", Rect: image.Rect(0, 0, 40, 40), Label: "A",
 				BaseColor:  getPageColor(state, render.PageAnalytics),
 				HoverColor: color.RGBA{0, 150, 255, 255}, Rounding: 8,
-				OnClick: func(s *render.ApplicationState) { s.CurrentPage = render.PageAnalytics },
+				OnClick: func(s *render.ApplicationState) { s.NavigateTo(render.PageAnalytics) },
 			},
 			&render.Button{
 				CompID: "nav_settings", Rect: image.Rect(0, 0, 40, 40), Label: "S",
 				BaseColor:  getPageColor(state, render.PageSettings),
 				HoverColor: color.RGBA{0, 150, 255, 255}, Rounding: 8,
-				OnClick: func(s *render.ApplicationState) { s.CurrentPage = render.PageSettings },
+				OnClick: func(s *render.ApplicationState) { s.NavigateTo(render.PageSettings) },
 			},
 		},
 	}
@@ -141,7 +137,7 @@ func BuildFooter(state *render.ApplicationState) render.Component {
 func BuildDashboard(state *render.ApplicationState) []render.Component {
 	return []render.Component{
 		// 3. LEFT WIDGET: "System Configuration"
-		&render.Panel{CompID: "config_panel", Rect: image.Rect(90, 80, 400, 560), BGColor: color.RGBA{25, 30, 45, 180}, Rounding: 15},
+		&render.GlassPanel{Panel: render.Panel{CompID: "config_panel", Rect: image.Rect(90, 80, 400, 560), BGColor: color.RGBA{30, 35, 55, 255}, Rounding: 15}, Opacity: 180},
 		&render.Label{CompID: "cfg_title", Pos: image.Point{110, 115}, Text: "SYSTEM PARAMETERS", Color: color.RGBA{150, 160, 180, 255}},
 
 		&render.Label{CompID: "lbl_core", Pos: image.Point{110, 160}, Text: "CPU CORE ASSIGNMENT:", Color: color.RGBA{200, 200, 200, 255}},
@@ -198,7 +194,7 @@ func BuildDashboard(state *render.ApplicationState) []render.Component {
 		},
 
 		// 4. RIGHT WIDGET: "Interaction Telemetry"
-		&render.Panel{CompID: "telemetry_panel", Rect: image.Rect(420, 80, render.Width-20, 560), BGColor: color.RGBA{25, 30, 45, 180}, Rounding: 15},
+		&render.GlassPanel{Panel: render.Panel{CompID: "telemetry_panel", Rect: image.Rect(420, 80, render.Width-20, 560), BGColor: color.RGBA{30, 35, 55, 255}, Rounding: 15}, Opacity: 180},
 		&render.Label{CompID: "tel_title", Pos: image.Point{440, 115}, Text: "LIVE TELEMETRY STREAM", Color: color.RGBA{150, 160, 180, 255}},
 
 		&render.DynamicLabel{
@@ -255,7 +251,7 @@ func BuildDashboard(state *render.ApplicationState) []render.Component {
 
 func BuildSettings(state *render.ApplicationState) []render.Component {
 	return []render.Component{
-		&render.Panel{CompID: "settings_panel", Rect: image.Rect(90, 80, render.Width-20, render.Height-100), BGColor: color.RGBA{25, 30, 45, 180}, Rounding: 15},
+		&render.GlassPanel{Panel: render.Panel{CompID: "settings_panel", Rect: image.Rect(90, 80, render.Width-20, render.Height-100), BGColor: color.RGBA{30, 35, 55, 255}, Rounding: 15}, Opacity: 180},
 		&render.Label{CompID: "set_title", Pos: image.Point{110, 115}, Text: "SYSTEM SETTINGS", Color: color.RGBA{150, 160, 180, 255}},
 
 		// UI Preferences
@@ -267,6 +263,9 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 		&render.Button{
 			CompID: "btn_blur", Rect: image.Rect(110, 240, 350, 290), Label: "TOGGLE GLASS BLUR",
 			BaseColor: color.RGBA{60, 80, 120, 255}, HoverColor: color.RGBA{80, 110, 180, 255}, Rounding: 5,
+			OnClick: func(s *render.ApplicationState) {
+				s.GlassEnabled = !s.GlassEnabled
+			},
 		},
 
 		// Engine Information
@@ -280,7 +279,7 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 
 func BuildAnalytics(state *render.ApplicationState) []render.Component {
 	return []render.Component{
-		&render.Panel{CompID: "analytics_panel", Rect: image.Rect(90, 80, render.Width-20, render.Height-100), BGColor: color.RGBA{25, 30, 45, 180}, Rounding: 15},
+		&render.GlassPanel{Panel: render.Panel{CompID: "analytics_panel", Rect: image.Rect(90, 80, render.Width-20, render.Height-100), BGColor: color.RGBA{30, 35, 55, 255}, Rounding: 15}, Opacity: 180},
 		&render.Label{CompID: "ana_title", Pos: image.Point{110, 115}, Text: "PERFORMANCE ANALYTICS", Color: color.RGBA{150, 160, 180, 255}},
 
 		// Memory Metrics
