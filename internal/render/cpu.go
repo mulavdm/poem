@@ -17,6 +17,8 @@ import (
 type CPUEngine struct {
 	canvas     *image.RGBA
 	bitmapInfo win32.BITMAPINFO
+	offsetX    float32
+	offsetY    float32
 }
 
 func New(hdc uintptr) (UIRenderer, error) {
@@ -63,6 +65,8 @@ func (c *CPUEngine) DrawText(s string, x, y int, col color.RGBA) {
 }
 
 func (c *CPUEngine) FillRect(r image.Rectangle, col color.RGBA) {
+	ox, oy := int(c.offsetX), int(c.offsetY)
+	r = r.Add(image.Point{ox, oy})
 	draw.Draw(c.canvas, r, &image.Uniform{col}, image.Point{}, draw.Src)
 }
 
@@ -85,28 +89,63 @@ func (c *CPUEngine) Paint(hdc uintptr, state *ApplicationState) {
 		}
 	}
 
-	// 2. COMPONENT PASS (Hit Testing)
+	// 2. BACKGROUND PARTICLES
+	if state.Particles != nil {
+		state.Particles.Draw(c, state)
+	}
+
+	// 3. COMPONENT PASS (Hit Testing)
 	mousePoint := image.Point{state.MouseX, state.MouseY}
-	state.HoveredID = "" // Reset
-	for i := len(state.Components) - 1; i >= 0; i-- {
-		comp := state.Components[i]
-		if id := comp.HitTest(mousePoint); id != "" {
-			state.HoveredID = id
-			break
+	
+	// Hit test current page components
+	if page, ok := state.Pages[state.CurrentPage]; ok {
+		for i := len(page) - 1; i >= 0; i-- {
+			comp := page[i]
+			if id := comp.HitTest(mousePoint); id != "" {
+				state.HoveredID = id
+				break
+			}
 		}
 	}
 
-	// 3. COMPONENT PASS (Drawing)
-	for _, comp := range state.Components {
-		comp.Draw(c, state)
+	// 4. UI PASS (Draw current page with transitions)
+	c.offsetX = 0
+	c.offsetY = 0
+
+	if state.IsTransitioning && state.TransitionProgress < 1.0 {
+		progress := state.TransitionProgress
+		
+		// Draw previous page (sliding out)
+		if comps, ok := state.Pages[state.PrevPage]; ok {
+			c.offsetX = -progress * float32(Width)
+			for _, comp := range comps {
+				comp.Draw(c, state)
+			}
+		}
+
+		// Draw current page (sliding in)
+		if comps, ok := state.Pages[state.CurrentPage]; ok {
+			c.offsetX = (1.0 - progress) * float32(Width)
+			for _, comp := range comps {
+				comp.Draw(c, state)
+			}
+		}
+	} else {
+		// Draw current page normally
+		if page, ok := state.Pages[state.CurrentPage]; ok {
+			for _, comp := range page {
+				comp.Draw(c, state)
+			}
+		}
 	}
 
-	// 4. MANUAL OVERLAYS (Performance pulse, etc.)
+	// 5. MANUAL OVERLAYS (Performance pulse, etc.)
+	c.offsetX = 0 // Reset for overlay
 	elapsed := time.Since(state.StartTime).Seconds()
 	pulse := math.Sin(elapsed*3) * 5
 	c.drawRoundedRect(image.Rect(650-int(pulse), 220-int(pulse), 750+int(pulse), 320+int(pulse)), 50, color.RGBA{0, 255, 200, 100})
 
-	// 5. BLIT TO MONITOR
+	// 6. BLIT TO MONITOR
 	win32.StretchDIBits(
 		hdc, 0, 0, int32(Width), int32(Height), 0, 0, int32(Width), int32(Height),
 		uintptr(unsafe.Pointer(&c.canvas.Pix[0])),

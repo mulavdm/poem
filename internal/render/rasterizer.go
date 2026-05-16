@@ -14,17 +14,20 @@ import (
 
 // drawText renders basic bitmap text onto the CPU canvas
 func (c *CPUEngine) drawText(s string, x, y int, col color.RGBA) {
+	ox, oy := int(c.offsetX), int(c.offsetY)
 	d := &font.Drawer{
 		Dst:  c.canvas,
 		Src:  image.NewUniform(col),
 		Face: basicfont.Face7x13,
-		Dot:  fixed.Point26_6{X: fixed.Int26_6(x << 6), Y: fixed.Int26_6(y << 6)},
+		Dot:  fixed.Point26_6{X: fixed.Int26_6((x + ox) << 6), Y: fixed.Int26_6((y + oy) << 6)},
 	}
 	d.DrawString(s)
 }
 
 // drawRoundedRect implements a high-fidelity rounded rectangle with manual alpha blending
 func (c *CPUEngine) drawRoundedRect(r image.Rectangle, radius int, col color.RGBA) {
+	ox, oy := int(c.offsetX), int(c.offsetY)
+	r = r.Add(image.Point{ox, oy})
 	for y := r.Min.Y; y < r.Max.Y; y++ {
 		if y < 0 || y >= Height {
 			continue
@@ -73,6 +76,11 @@ func (c *CPUEngine) drawRoundedRect(r image.Rectangle, radius int, col color.RGB
 	}
 }
 func (c *CPUEngine) DrawLine(x1, y1, x2, y2 int, col color.RGBA) {
+	ox, oy := int(c.offsetX), int(c.offsetY)
+	x1 += ox
+	x2 += ox
+	y1 += oy
+	y2 += oy
 	dx := int(math.Abs(float64(x2 - x1)))
 	dy := int(math.Abs(float64(y2 - y1)))
 	sx, sy := 1, 1
