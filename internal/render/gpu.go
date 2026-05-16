@@ -22,8 +22,9 @@ layout (location = 3) in vec4 aRectParams; // [x, y, w, h]
 layout (location = 4) in float aRadius;
 layout (location = 5) in float aDrawType; // 0=Shape, 1=Text
 layout (location = 6) in float aGlow;
-layout (location = 7) in float aSoftness;
-layout (location = 8) in float aIsGlass;
+layout (location = 7) in float aIsGlass;
+layout (location = 8) in vec2 aShadowOffset;
+layout (location = 9) in float aShadowSoftness;
 
 out vec2 FragPos;
 out vec2 FragUV;
@@ -32,8 +33,9 @@ out vec4 RectParams;
 out float Radius;
 out float DrawType;
 out float Glow;
-out float Softness;
 out float IsGlass;
+out vec2 ShadowOffset;
+out float ShadowSoftness;
 
 uniform mat4 projection;
 
@@ -46,8 +48,9 @@ void main() {
     Radius = aRadius;
     DrawType = aDrawType;
     Glow = aGlow;
-    Softness = aSoftness;
     IsGlass = aIsGlass;
+    ShadowOffset = aShadowOffset;
+    ShadowSoftness = aShadowSoftness;
 }
 ` + "\x00"
 
@@ -60,8 +63,9 @@ in vec4 RectParams;
 in float Radius;
 in float DrawType;
 in float Glow;
-in float Softness;
 in float IsGlass;
+in vec2 ShadowOffset;
+in float ShadowSoftness;
 
 out vec4 color;
 
@@ -76,11 +80,16 @@ float sdRoundedRect(vec2 p, vec2 b, float r) {
 
 void main() {
     if (DrawType < 0.5) { // SHAPE
-        vec2 center = RectParams.xy + RectParams.zw * 0.5;
-        vec2 p = FragPos - center;
         vec2 b = RectParams.zw * 0.5;
+        vec2 center = RectParams.xy + b;
+        vec2 p = FragPos - center;
         float d = sdRoundedRect(p, b, Radius);
         
+        // Shadow Calculation
+        float shadowD = sdRoundedRect(FragPos - (center + ShadowOffset), b, Radius);
+        float shadowAlpha = 1.0 - smoothstep(-ShadowSoftness, ShadowSoftness, shadowD);
+        shadowAlpha *= 0.6; // Shadow intensity
+
         float shapeAlpha = 1.0 - smoothstep(-1.0, 1.0, d);
         float glowAlpha = exp(-max(0.0, d) * (10.0 - Glow)) * (Glow / 10.0);
         float finalAlpha = max(shapeAlpha, glowAlpha);
@@ -90,9 +99,11 @@ void main() {
             vec2 screenUV = gl_FragCoord.xy / screenSize;
             vec3 blurred = texture(blurredBg, screenUV).rgb;
             baseColor = mix(blurred, baseColor, FragColor.a);
-            color = vec4(baseColor, shapeAlpha);
+            color = mix(vec4(0.0, 0.0, 0.0, shadowAlpha), vec4(baseColor, 1.0), shapeAlpha);
         } else {
-            color = vec4(baseColor, FragColor.a * finalAlpha);
+            vec4 shadowCol = vec4(0.0, 0.0, 0.0, shadowAlpha * 0.8);
+            vec4 shapeCol = vec4(baseColor, FragColor.a * finalAlpha);
+            color = mix(shadowCol, shapeCol, shapeAlpha);
         }
     } else { // TEXT
         float alpha = texture(textAtlas, FragUV).r;
@@ -162,6 +173,10 @@ type GPUEngine struct {
 	// Animation offsets
 	offsetX float32
 	offsetY float32
+
+	// Shadow state
+	currentShadowOffset [2]float32
+	currentShadowBlur   float32
 }
 
 func New(hdc uintptr) (UIRenderer, error) {
@@ -232,7 +247,9 @@ func (g *GPUEngine) Setup(hdc uintptr) error {
 	gl.EnableVertexAttribArray(7)
 	gl.VertexAttribPointer(7, 1, gl.FLOAT, false, stride, gl.PtrOffset(60))
 	gl.EnableVertexAttribArray(8)
-	gl.VertexAttribPointer(8, 1, gl.FLOAT, false, stride, gl.PtrOffset(64))
+	gl.VertexAttribPointer(8, 2, gl.FLOAT, false, stride, gl.PtrOffset(64))
+	gl.EnableVertexAttribArray(9)
+	gl.VertexAttribPointer(9, 1, gl.FLOAT, false, stride, gl.PtrOffset(72))
 
 	g.blurProgram, err = newProgram(screenQuadShaderSource, blurShaderSource)
 	if err != nil {
@@ -348,19 +365,26 @@ func (g *GPUEngine) DrawText(s string, x, y int, col color.RGBA) {
 }
 
 type vertex struct {
-	Pos      [2]float32
-	UV       [2]float32
-	Color    [4]float32
-	Params   [4]float32 // x, y, w, h
-	Radius   float32
-	DrawType float32 // 0: Shape, 1: Text
-	Glow     float32
-	Padding  float32
-	IsGlass  float32
+	Pos            [2]float32
+	UV             [2]float32
+	Color          [4]float32
+	Params         [4]float32 // x, y, w, h
+	Radius         float32
+	DrawType       float32 // 0: Shape, 1: Text
+	Glow           float32
+	IsGlass        float32
+	ShadowOffset   [2]float32
+	ShadowSoftness float32
+	Padding        float32
 }
 
 func (g *GPUEngine) SetGlow(strength float32) {
 	g.currentGlow = strength
+}
+
+func (g *GPUEngine) SetShadow(ox, oy, blur float32) {
+	g.currentShadowOffset = [2]float32{ox, oy}
+	g.currentShadowBlur = blur
 }
 
 func (g *GPUEngine) Flush() {
@@ -408,14 +432,17 @@ func (g *GPUEngine) drawQuad(r image.Rectangle, radius float32, col color.RGBA, 
 
 	isGlass := g.currentIsGlass
 
+	shOff := g.currentShadowOffset
+	shBlur := g.currentShadowBlur
+
 	quad := []vertex{
-		{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[0], uv[1]}, c, params, radius, drawType, glow, 0, isGlass},
-		{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[2], uv[1]}, c, params, radius, drawType, glow, 0, isGlass},
-		{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[2], uv[3]}, c, params, radius, drawType, glow, 0, isGlass},
+		{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[0], uv[1]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
+		{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[2], uv[1]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
+		{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[2], uv[3]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
 		
-		{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[0], uv[1]}, c, params, radius, drawType, glow, 0, isGlass},
-		{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[2], uv[3]}, c, params, radius, drawType, glow, 0, isGlass},
-		{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[0], uv[3]}, c, params, radius, drawType, glow, 0, isGlass},
+		{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[0], uv[1]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
+		{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[2], uv[3]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
+		{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[0], uv[3]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
 	}
 
 	g.batch = append(g.batch, quad...)
