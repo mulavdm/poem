@@ -72,3 +72,44 @@ func (c *CPUEngine) drawRoundedRect(r image.Rectangle, radius int, col color.RGB
 		}
 	}
 }
+func (c *CPUEngine) DrawLine(x1, y1, x2, y2 int, col color.RGBA) {
+	dx := int(math.Abs(float64(x2 - x1)))
+	dy := int(math.Abs(float64(y2 - y1)))
+	sx, sy := 1, 1
+	if x1 >= x2 {
+		sx = -1
+	}
+	if y1 >= y2 {
+		sy = -1
+	}
+	err := dx - dy
+
+	for {
+		if x1 >= 0 && x1 < Width && y1 >= 0 && y1 < Height {
+			alpha := float64(col.A) / 255.0
+			idx := y1*c.canvas.Stride + x1*4
+
+			bgB := float64(c.canvas.Pix[idx])
+			bgG := float64(c.canvas.Pix[idx+1])
+			bgR := float64(c.canvas.Pix[idx+2])
+
+			c.canvas.Pix[idx] = uint8(float64(col.B)*alpha + bgB*(1-alpha))
+			c.canvas.Pix[idx+1] = uint8(float64(col.G)*alpha + bgG*(1-alpha))
+			c.canvas.Pix[idx+2] = uint8(float64(col.R)*alpha + bgR*(1-alpha))
+			c.canvas.Pix[idx+3] = 255
+		}
+
+		if x1 == x2 && y1 == y2 {
+			break
+		}
+		e2 := 2 * err
+		if e2 > -dy {
+			err -= dy
+			x1 += sx
+		}
+		if e2 < dx {
+			err += dx
+			y1 += sy
+		}
+	}
+}

@@ -18,6 +18,7 @@ type Painter interface {
 	DrawRoundedRect(r image.Rectangle, radius int, col color.RGBA)
 	DrawText(s string, x, y int, col color.RGBA)
 	FillRect(r image.Rectangle, col color.RGBA)
+	DrawLine(x1, y1, x2, y2 int, col color.RGBA)
 }
 
 // ApplicationState acts as your shared backend state data framework
@@ -46,6 +47,8 @@ type ApplicationState struct {
 	// Telemetry
 	CurrentFPS float64
 	CoreMask   uint64
+
+	// VFX
 }
 
 const (
