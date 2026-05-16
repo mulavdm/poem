@@ -46,6 +46,14 @@ func (c *CPUEngine) DrawRoundedRect(r image.Rectangle, radius int, col color.RGB
 	c.drawRoundedRect(r, radius, col)
 }
 
+func (c *CPUEngine) SetGlow(strength float32) {
+	// CPU doesn't support glow yet - maintaining zero-dependency performance promise
+}
+
+func (c *CPUEngine) SetGlass(enabled bool) {
+	// CPU doesn't support real-time glassmorphism yet
+}
+
 func (c *CPUEngine) DrawText(s string, x, y int, col color.RGBA) {
 	c.drawText(s, x, y, col)
 }

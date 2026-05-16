@@ -77,15 +77,15 @@ func (c *ParticleComponent) OnMouseDown(pt image.Point, state *ApplicationState)
 func (c *ParticleComponent) OnMouseUp(pt image.Point, state *ApplicationState) bool { return false }
 func (c *ParticleComponent) OnMouseMove(pt image.Point, state *ApplicationState) bool { return false }
 
-func (c *ParticleComponent) Draw(p Painter, state *ApplicationState) {
+func (ps *ParticleSystem) Draw(p Painter, state *ApplicationState) {
 	dotColor := color.RGBA{0, 150, 255, 40} // Subtle blue
 	lineColor := color.RGBA{0, 100, 200, 20} // Even subtler lines
 
 	// Draw connections (Plexus effect)
-	for i := 0; i < len(c.System.Particles); i++ {
-		p1 := c.System.Particles[i]
-		for j := i + 1; j < len(c.System.Particles); j++ {
-			p2 := c.System.Particles[j]
+	for i := 0; i < len(ps.Particles); i++ {
+		p1 := ps.Particles[i]
+		for j := i + 1; j < len(ps.Particles); j++ {
+			p2 := ps.Particles[j]
 			
 			dx := p1.Pos.X - p2.Pos.X
 			dy := p1.Pos.Y - p2.Pos.Y
@@ -98,7 +98,13 @@ func (c *ParticleComponent) Draw(p Painter, state *ApplicationState) {
 	}
 
 	// Draw particles
-	for _, part := range c.System.Particles {
+	for _, part := range ps.Particles {
 		p.FillRect(image.Rect(part.Pos.X, part.Pos.Y, part.Pos.X+part.Size, part.Pos.Y+part.Size), dotColor)
+	}
+}
+
+func (c *ParticleComponent) Draw(p Painter, state *ApplicationState) {
+	if c.System != nil {
+		c.System.Draw(p, state)
 	}
 }

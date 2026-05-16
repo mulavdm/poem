@@ -16,9 +16,11 @@ type UIRenderer interface {
 // Painter abstracts basic drawing operations for components
 type Painter interface {
 	DrawRoundedRect(r image.Rectangle, radius int, col color.RGBA)
-	DrawText(s string, x, y int, col color.RGBA)
+	DrawText(text string, x, y int, col color.RGBA)
 	FillRect(r image.Rectangle, col color.RGBA)
 	DrawLine(x1, y1, x2, y2 int, col color.RGBA)
+	SetGlow(strength float32)
+	SetGlass(enabled bool)
 }
 
 // ApplicationState acts as your shared backend state data framework
@@ -36,10 +38,18 @@ type ApplicationState struct {
 	CursorID  uintptr // Current cursor handle
 	
 	// Registry for buttons and interactive elements
-	Components []Component
-
-	// Navigation State
+	Components []Component // Legacy/Global components
+	
+	// Page Management
+	Pages       map[string][]Component
 	CurrentPage string
+	TargetPage  string
+	PrevPage    string
+	
+	// Animation State
+	TransitionProgress float32 // 0.0 to 1.0
+	IsTransitioning    bool
+	TransitionType     int // 0: Fade, 1: Slide
 
 	// App Data
 	Volume float32
@@ -49,7 +59,8 @@ type ApplicationState struct {
 	CoreMask   uint64
 
 	// VFX
-	Particles *ParticleSystem
+	Particles    *ParticleSystem
+	GlassEnabled bool
 }
 
 const (
@@ -94,6 +105,27 @@ func (s *ApplicationState) CycleFocus(reverse bool) {
 		}
 	}
 	s.FocusedID = focusable[idx]
+}
+
+func (s *ApplicationState) NavigateTo(page string) {
+	if s.CurrentPage == page || s.IsTransitioning {
+		return
+	}
+	s.PrevPage = s.CurrentPage
+	s.TargetPage = page
+	s.IsTransitioning = true
+	s.TransitionProgress = 0
+}
+
+func (s *ApplicationState) UpdateAnimations(dt float32) {
+	if s.IsTransitioning {
+		s.TransitionProgress += dt * 2.0 // 0.5s transition
+		if s.TransitionProgress >= 1.0 {
+			s.TransitionProgress = 1.0
+			s.CurrentPage = s.TargetPage
+			s.IsTransitioning = false
+		}
+	}
 }
 
 // Component represents a UI element that can be drawn and interacted with
