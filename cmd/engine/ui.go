@@ -115,6 +115,14 @@ func BuildFooter(state *render.ApplicationState) render.Component {
 		Padding: 20,
 		Children: []render.Component{
 			&render.DynamicLabel{
+				CompID: "foot_perf",
+				Pos:    image.Point{0, 0},
+				Color:  color.RGBA{0, 255, 150, 255},
+				GetText: func(s *render.ApplicationState) string {
+					return fmt.Sprintf("FRAME: %.2fms | FPS: %.1f", float64(s.FrameTime.Microseconds())/1000.0, s.CurrentFPS)
+				},
+			},
+			&render.DynamicLabel{
 				CompID: "foot_status",
 				Pos:    image.Point{0, 0},
 				Color:  color.RGBA{100, 120, 150, 255},
@@ -123,11 +131,7 @@ func BuildFooter(state *render.ApplicationState) render.Component {
 					if s.HoveredID != "" {
 						hover = s.HoveredID
 					}
-					active := "NONE"
-					if s.ActiveID != "" {
-						active = s.ActiveID
-					}
-					return fmt.Sprintf("P.O.E.M. READY | THREADS: %d | HOVER: %s | ACTIVE: %s | PAGE: %s", runtime.NumGoroutine(), hover, active, s.CurrentPage)
+					return fmt.Sprintf(" | HOVER: %s | PAGE: %s", hover, s.CurrentPage)
 				},
 			},
 		},

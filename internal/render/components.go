@@ -45,9 +45,11 @@ type GlassPanel struct {
 
 func (p *GlassPanel) Draw(pnt Painter, state *ApplicationState) {
 	pnt.SetGlass(state.GlassEnabled)
+	pnt.SetShadow(0, 4, 15) // Deep shadow for depth
 	col := p.BGColor
 	col.A = p.Opacity
 	pnt.DrawRoundedRect(p.Rect, p.Rounding, col)
+	pnt.SetShadow(0, 0, 0) // Reset shadow
 	pnt.SetGlass(false)
 }
 
@@ -72,9 +74,13 @@ func (b *Button) Draw(pnt Painter, state *ApplicationState) {
 	if state.HoveredID == b.CompID {
 		c = b.HoverColor
 		pnt.SetGlow(8.0) // Intense glow on hover
+		pnt.SetShadow(0, 4, 12)
+	} else {
+		pnt.SetShadow(0, 2, 8)
 	}
 	pnt.DrawRoundedRect(b.Rect, b.Rounding, c)
 	pnt.SetGlow(0)
+	pnt.SetShadow(0, 0, 0)
 	
 	// Center text manually for now
 	tx := b.Rect.Min.X + (b.Rect.Dx()/2) - (len(b.Label)*4)
