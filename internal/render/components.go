@@ -18,7 +18,9 @@ func (p *Panel) ID() string { return p.CompID }
 func (p *Panel) GetID() string { return p.CompID }
 func (p *Panel) Bounds() image.Rectangle { return p.Rect }
 func (p *Panel) Draw(pnt Painter, state *ApplicationState) {
+	pnt.SetGlow(2.0) // Subtle ambient glow for panels
 	pnt.DrawRoundedRect(p.Rect, p.Rounding, p.BGColor)
+	pnt.SetGlow(0)
 }
 func (p *Panel) SetBounds(r image.Rectangle) { p.Rect = r }
 func (p *Panel) HitTest(pt image.Point) string {
@@ -34,6 +36,22 @@ func (p *Panel) OnMouseMove(pt image.Point, state *ApplicationState) bool { retu
 
 func (p *Panel) Focusable() bool { return false }
 func (p *Panel) Walk(fn func(Component)) { fn(p) }
+
+// GlassPanel is a premium panel with real-time blur background
+type GlassPanel struct {
+	Panel
+	Opacity uint8
+}
+
+func (p *GlassPanel) Draw(pnt Painter, state *ApplicationState) {
+	pnt.SetGlass(state.GlassEnabled)
+	col := p.BGColor
+	col.A = p.Opacity
+	pnt.DrawRoundedRect(p.Rect, p.Rounding, col)
+	pnt.SetGlass(false)
+}
+
+func (p *GlassPanel) Walk(fn func(Component)) { fn(p) }
 
 // Button is an interactive element with hover states
 type Button struct {
@@ -53,8 +71,10 @@ func (b *Button) Draw(pnt Painter, state *ApplicationState) {
 	c := b.BaseColor
 	if state.HoveredID == b.CompID {
 		c = b.HoverColor
+		pnt.SetGlow(8.0) // Intense glow on hover
 	}
 	pnt.DrawRoundedRect(b.Rect, b.Rounding, c)
+	pnt.SetGlow(0)
 	
 	// Center text manually for now
 	tx := b.Rect.Min.X + (b.Rect.Dx()/2) - (len(b.Label)*4)
