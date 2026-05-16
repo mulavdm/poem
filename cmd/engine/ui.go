@@ -20,6 +20,9 @@ func BuildShowcaseLayout(state *render.ApplicationState) []render.Component {
 		// Backdrop
 		&render.Panel{CompID: "bg_blur", Rect: image.Rect(0, 0, render.Width, render.Height), BGColor: color.RGBA{10, 10, 15, 255}},
 		
+		// Background Particles
+		&render.ParticleComponent{CompID: "vfx_particles", System: state.Particles},
+
 		// Sidebar Background
 		&render.Panel{CompID: "sidebar_bg", Rect: image.Rect(0, 0, 70, render.Height), BGColor: color.RGBA{15, 15, 25, 255}},
 		BuildSidebar(state),
@@ -269,7 +272,7 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 		// Engine Information
 		&render.Label{CompID: "lbl_engine_info", Pos: image.Point{110, 350}, Text: "ENGINE INFORMATION", Color: color.RGBA{200, 200, 200, 255}},
 		&render.Panel{CompID: "engine_info_box", Rect: image.Rect(110, 365, render.Width-40, 500), BGColor: color.RGBA{15, 20, 30, 255}, Rounding: 8},
-		&render.Label{CompID: "engine_v", Pos: image.Point{125, 395}, Text: "POLYENGINE v0.4.2 // NATIVE CPU PIPELINE", Color: color.RGBA{0, 255, 150, 255}},
+		&render.Label{CompID: "engine_v", Pos: image.Point{125, 395}, Text: "POLYENGINE v0.4.2 // OPERATIONAL ENGINE MATRIX", Color: color.RGBA{0, 255, 150, 255}},
 		&render.Label{CompID: "engine_arch", Pos: image.Point{125, 425}, Text: fmt.Sprintf("ARCHITECTURE: %s // OS: %s", runtime.GOARCH, runtime.GOOS), Color: color.RGBA{150, 160, 180, 255}},
 		&render.Label{CompID: "engine_compiler", Pos: image.Point{125, 455}, Text: fmt.Sprintf("COMPILER: %s", runtime.Version()), Color: color.RGBA{150, 160, 180, 255}},
 	}

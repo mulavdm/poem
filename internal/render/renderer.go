@@ -49,6 +49,7 @@ type ApplicationState struct {
 	CoreMask   uint64
 
 	// VFX
+	Particles *ParticleSystem
 }
 
 const (

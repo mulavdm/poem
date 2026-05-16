@@ -216,6 +216,7 @@ func main() {
 
 	activeState.StartTime = time.Now()
 	activeState.CoreMask = (1 << uint(runtime.NumCPU())) - 1
+	activeState.Particles = render.NewParticleSystem(100, image.Rect(0, 0, render.Width, render.Height))
 
 	// Initialize UI Components (The Showcase Layout)
 	activeState.Components = BuildShowcaseLayout(activeState)
@@ -231,6 +232,7 @@ func main() {
 			dt := now.Sub(lastFrame).Seconds()
 			if dt > 0 {
 				activeState.CurrentFPS = 1.0 / dt
+				activeState.Particles.Update(dt)
 			}
 			lastFrame = now
 			win32.InvalidateRect(hwnd, nil, false)
