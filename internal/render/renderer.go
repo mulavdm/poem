@@ -22,6 +22,8 @@ type Painter interface {
 	SetGlow(strength float32)
 	SetGlass(enabled bool)
 	SetShadow(ox, oy, blur float32)
+	SetOffset(x, y float32)
+	Flush()
 }
 
 // ApplicationState acts as your shared backend state data framework
@@ -109,25 +111,84 @@ func (s *ApplicationState) CycleFocus(reverse bool) {
 	s.FocusedID = focusable[idx]
 }
 
-func (s *ApplicationState) NavigateTo(page string) {
-	if s.CurrentPage == page || s.IsTransitioning {
+func (s *ApplicationState) NavigateTo(pageID string) {
+	if s.CurrentPage == pageID || s.IsTransitioning {
 		return
 	}
 	s.PrevPage = s.CurrentPage
-	s.TargetPage = page
-	s.IsTransitioning = true
+	s.TargetPage = pageID
+	s.CurrentPage = pageID
 	s.TransitionProgress = 0
+	s.IsTransitioning = true
 }
 
 func (s *ApplicationState) UpdateAnimations(dt float32) {
 	if s.IsTransitioning {
-		s.TransitionProgress += dt * 2.0 // 0.5s transition
+		s.TransitionProgress += dt * 2.5 // Speed of transition
 		if s.TransitionProgress >= 1.0 {
 			s.TransitionProgress = 1.0
-			s.CurrentPage = s.TargetPage
 			s.IsTransitioning = false
 		}
 	}
+}
+
+// RenderPipeline is the universal orchestration logic for the POEM engine.
+// It ensures that both CPU and GPU backends follow the exact same drawing sequence.
+func RenderPipeline(p Painter, s *ApplicationState) {
+	// 1. BACKGROUND PARTICLES
+	if s.Particles != nil {
+		s.Particles.Draw(p, s)
+	}
+	p.Flush()
+
+	// 2. HIT TESTING (Universal)
+	mousePoint := image.Point{s.MouseX, s.MouseY}
+	s.HoveredID = ""
+	if page, ok := s.Pages[s.CurrentPage]; ok {
+		for i := len(page) - 1; i >= 0; i-- {
+			if id := page[i].HitTest(mousePoint); id != "" {
+				s.HoveredID = id
+				break
+			}
+		}
+	}
+
+	// 3. UI PASS (Draw current page with transitions)
+	p.SetOffset(0, 0)
+
+	if s.IsTransitioning && s.TransitionProgress < 1.0 {
+		progress := s.TransitionProgress
+		
+		// Draw previous page (sliding out)
+		if comps, ok := s.Pages[s.PrevPage]; ok {
+			p.SetOffset(-progress*float32(Width), 0)
+			for _, comp := range comps {
+				comp.Draw(p, s)
+			}
+			p.Flush()
+		}
+
+		// Draw current page (sliding in)
+		if comps, ok := s.Pages[s.CurrentPage]; ok {
+			p.SetOffset((1.0-progress)*float32(Width), 0)
+			for _, comp := range comps {
+				comp.Draw(p, s)
+			}
+			p.Flush()
+		}
+	} else {
+		// Draw current page normally
+		if page, ok := s.Pages[s.CurrentPage]; ok {
+			for _, comp := range page {
+				comp.Draw(p, s)
+			}
+			p.Flush()
+		}
+	}
+
+	// 4. OVERLAYS (Independent of scroll/transition)
+	p.SetOffset(0, 0)
+	// Add global overlays here if needed
 }
 
 // Component represents a UI element that can be drawn and interacted with
