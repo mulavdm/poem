@@ -21,3 +21,5 @@
 # Build artifacts
 /engine
 /engine.exe
+
+crash.log

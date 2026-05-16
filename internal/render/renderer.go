@@ -21,6 +21,7 @@ type Painter interface {
 	DrawLine(x1, y1, x2, y2 int, col color.RGBA)
 	SetGlow(strength float32)
 	SetGlass(enabled bool)
+	SetShadow(ox, oy, blur float32)
 }
 
 // ApplicationState acts as your shared backend state data framework
@@ -61,6 +62,7 @@ type ApplicationState struct {
 	// VFX
 	Particles    *ParticleSystem
 	GlassEnabled bool
+	FrameTime    time.Duration
 }
 
 const (

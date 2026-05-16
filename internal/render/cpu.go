@@ -54,6 +54,10 @@ func (c *CPUEngine) SetGlass(enabled bool) {
 	// CPU doesn't support real-time glassmorphism yet
 }
 
+func (c *CPUEngine) SetShadow(ox, oy, blur float32) {
+	// CPU doesn't support SDF shadows yet
+}
+
 func (c *CPUEngine) DrawText(s string, x, y int, col color.RGBA) {
 	c.drawText(s, x, y, col)
 }
