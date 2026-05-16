@@ -240,6 +240,7 @@ func main() {
 	lastFrame := time.Now()
 	go func() {
 		for {
+			start := time.Now()
 			time.Sleep(16 * time.Millisecond)
 			now := time.Now()
 			dt := now.Sub(lastFrame).Seconds()
@@ -249,6 +250,7 @@ func main() {
 				activeState.UpdateAnimations(float32(dt))
 			}
 			lastFrame = now
+			activeState.FrameTime = time.Since(start)
 			win32.InvalidateRect(hwnd, nil, false)
 		}
 	}()
