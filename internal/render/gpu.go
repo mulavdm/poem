@@ -387,6 +387,11 @@ func (g *GPUEngine) SetShadow(ox, oy, blur float32) {
 	g.currentShadowBlur = blur
 }
 
+func (g *GPUEngine) SetOffset(x, y float32) {
+	g.offsetX = x
+	g.offsetY = y
+}
+
 func (g *GPUEngine) Flush() {
 	if len(g.batch) == 0 {
 		return
@@ -486,49 +491,14 @@ func (g *GPUEngine) Paint(hdc uintptr, state *ApplicationState) {
 	gl.ClearColor(0.05, 0.05, 0.08, 1.0)
 	gl.Clear(gl.COLOR_BUFFER_BIT)
 
-	// Draw Background (particles) to screen first
-	if state.Particles != nil {
-		state.Particles.Draw(g, state)
-	}
-	g.Flush()
-
 	// Reset batch state for UI
 	g.batchDrawType = -1
 	g.batchIsGlass = -1
 	g.currentGlow = 0
 	g.currentIsGlass = 0
 
-	// Draw components based on current page and transition
-	if state.IsTransitioning && state.TransitionProgress < 1.0 {
-		progress := state.TransitionProgress
-		
-		// Draw previous page (sliding out to the left)
-		if comps, ok := state.Pages[state.PrevPage]; ok {
-			g.offsetX = -progress * float32(Width)
-			for _, comp := range comps {
-				comp.Draw(g, state)
-			}
-			g.Flush()
-		}
-
-		// Draw current page (sliding in from the right)
-		if comps, ok := state.Pages[state.CurrentPage]; ok {
-			g.offsetX = (1.0 - progress) * float32(Width)
-			for _, comp := range comps {
-				comp.Draw(g, state)
-			}
-			g.Flush()
-		}
-	} else {
-		// Draw current page normally
-		g.offsetX = 0
-		if comps, ok := state.Pages[state.CurrentPage]; ok {
-			for _, comp := range comps {
-				comp.Draw(g, state)
-			}
-		}
-	}
-	g.offsetX = 0 // Reset for final draws
+	// Use the shared render pipeline
+	RenderPipeline(g, state)
 
 	// Final flush
 	g.Flush()
