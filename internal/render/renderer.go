@@ -3,6 +3,7 @@ package render
 import (
 	"image"
 	"image/color"
+	"math"
 	"time"
 )
 
@@ -31,24 +32,24 @@ type ApplicationState struct {
 	ClickCount int
 	StatusText string
 	StartTime  time.Time
-	
+
 	// Input State
 	MouseX    int
 	MouseY    int
 	HoveredID string
 	FocusedID string
-	ActiveID  string // ID of the component currently capturing the mouse (e.g., for dragging)
+	ActiveID  string  // ID of the component currently capturing the mouse (e.g., for dragging)
 	CursorID  uintptr // Current cursor handle
-	
+
 	// Registry for buttons and interactive elements
 	Components []Component // Legacy/Global components
-	
+
 	// Page Management
 	Pages       map[string][]Component
 	CurrentPage string
 	TargetPage  string
 	PrevPage    string
-	
+
 	// Animation State
 	TransitionProgress float32 // 0.0 to 1.0
 	IsTransitioning    bool
@@ -158,7 +159,7 @@ func RenderPipeline(p Painter, s *ApplicationState) {
 
 	if s.IsTransitioning && s.TransitionProgress < 1.0 {
 		progress := s.TransitionProgress
-		
+
 		// Draw previous page (sliding out)
 		if comps, ok := s.Pages[s.PrevPage]; ok {
 			p.SetOffset(-progress*float32(Width), 0)
@@ -188,7 +189,17 @@ func RenderPipeline(p Painter, s *ApplicationState) {
 
 	// 4. OVERLAYS (Independent of scroll/transition)
 	p.SetOffset(0, 0)
-	// Add global overlays here if needed
+
+	// Global System Status (Bottom Right)
+	statusCol := color.RGBA{0, 255, 150, 180}
+	elapsed := time.Since(s.StartTime).Seconds()
+	pulse := uint8(150 + math.Sin(elapsed*5)*100)
+	statusCol.A = pulse
+
+	p.DrawText("SYSTEM OPERATIONAL // ENCRYPTED", Width-280, Height-25, statusCol)
+
+	// Small diagnostic line
+	p.DrawLine(Width-285, Height-15, Width-20, Height-15, color.RGBA{0, 255, 150, 50})
 }
 
 // Component represents a UI element that can be drawn and interacted with

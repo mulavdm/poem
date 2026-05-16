@@ -7,8 +7,6 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-	"math"
-	"time"
 	"unsafe"
 
 	"go_native_gpu_gui/internal/win32"
@@ -88,7 +86,7 @@ func (c *CPUEngine) Paint(hdc uintptr, state *ApplicationState) {
 		b := uint8(20 + ratio*15)
 		line := c.canvas.Pix[y*c.canvas.Stride : (y+1)*c.canvas.Stride]
 		for x := 0; x < Width; x++ {
-			line[x*4] = b 
+			line[x*4] = b
 			line[x*4+1] = g
 			line[x*4+2] = r
 			line[x*4+3] = 255
@@ -98,13 +96,7 @@ func (c *CPUEngine) Paint(hdc uintptr, state *ApplicationState) {
 	// 2. ORCHESTRATE UI (Shared Logic)
 	RenderPipeline(c, state)
 
-	// 3. MANUAL OVERLAYS (Performance pulse, etc.)
-	c.offsetX = 0 
-	elapsed := time.Since(state.StartTime).Seconds()
-	pulse := math.Sin(elapsed*3) * 5
-	c.drawRoundedRect(image.Rect(650-int(pulse), 220-int(pulse), 750+int(pulse), 320+int(pulse)), 50, color.RGBA{0, 255, 200, 100})
-
-	// 4. BLIT TO MONITOR
+	// 3. BLIT TO MONITOR
 	win32.StretchDIBits(
 		hdc, 0, 0, int32(Width), int32(Height), 0, 0, int32(Width), int32(Height),
 		uintptr(unsafe.Pointer(&c.canvas.Pix[0])),
