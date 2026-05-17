@@ -28,6 +28,12 @@ type Painter interface {
 	Flush()
 }
 
+// ScrollContainer defines the interface ScrollViews implement to scroll focused items into view
+type ScrollContainer interface {
+	Component
+	ScrollToChild(childID string, childBounds image.Rectangle, state *ApplicationState) bool
+}
+
 // ApplicationState acts as your shared backend state data framework
 type ApplicationState struct {
 	ClickCount int
@@ -83,6 +89,22 @@ type ApplicationState struct {
 	ScrollDragStart map[string]int
 	ScrollStartY    map[string]int
 	ScrollCurrent   map[string]float64
+
+	// Persistent Input State
+	TextInputValues map[string]string
+	SliderValues    map[string]float32
+
+	// Hotkeys registry
+	Hotkeys map[string]HotkeyHandler
+}
+
+type HotkeyHandler func(state *ApplicationState)
+
+func (s *ApplicationState) RegisterHotkey(shortcut string, handler HotkeyHandler) {
+	if s.Hotkeys == nil {
+		s.Hotkeys = make(map[string]HotkeyHandler)
+	}
+	s.Hotkeys[shortcut] = handler
 }
 
 const (
@@ -93,12 +115,17 @@ const (
 
 func (s *ApplicationState) CycleFocus(reverse bool) {
 	var focusable []string
-	for _, c := range s.Components {
-		c.Walk(func(comp Component) {
-			if comp.Focusable() {
-				focusable = append(focusable, comp.ID())
-			}
-		})
+	var focusableBounds = make(map[string]image.Rectangle)
+
+	if comps, ok := s.Pages[s.CurrentPage]; ok {
+		for _, c := range comps {
+			c.Walk(func(comp Component) {
+				if comp.Focusable() {
+					focusable = append(focusable, comp.ID())
+					focusableBounds[comp.ID()] = comp.Bounds()
+				}
+			})
+		}
 	}
 
 	if len(focusable) == 0 {
@@ -127,6 +154,17 @@ func (s *ApplicationState) CycleFocus(reverse bool) {
 		}
 	}
 	s.FocusedID = focusable[idx]
+
+	// Automatically scroll the focused component into view if it is inside a ScrollContainer
+	if comps, ok := s.Pages[s.CurrentPage]; ok {
+		for _, c := range comps {
+			c.Walk(func(comp Component) {
+				if sc, ok := comp.(ScrollContainer); ok {
+					sc.ScrollToChild(s.FocusedID, focusableBounds[s.FocusedID], s)
+				}
+			})
+		}
+	}
 }
 
 func (s *ApplicationState) NavigateTo(pageID string) {

@@ -3,6 +3,7 @@ package components
 import (
 	"image"
 	"image/color"
+	"math"
 	"time"
 
 	"go_native_gpu_gui/pkg/render/types"
@@ -81,6 +82,14 @@ func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 	} else {
 		pnt.SetShadow(0, 2, 8)
 	}
+
+	// Draw glowing focus outline ring if focused
+	if state.FocusedID == b.CompID {
+		pnt.SetGlow(6.0)
+		pnt.DrawRoundedRect(image.Rect(b.Rect.Min.X-2, b.Rect.Min.Y-2, b.Rect.Max.X+2, b.Rect.Max.Y+2), b.Rounding+2, color.RGBA{0, 150, 255, 200})
+		pnt.SetGlow(0)
+	}
+
 	pnt.DrawRoundedRect(b.Rect, b.Rounding, c)
 	pnt.SetGlow(0)
 	pnt.SetShadow(0, 0, 0)
@@ -97,7 +106,15 @@ func (b *Button) HitTest(pt image.Point) string {
 	}
 	return ""
 }
-func (b *Button) OnKey(key uint32, char rune, state *types.ApplicationState) bool { return false }
+func (b *Button) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
+	if state.FocusedID == b.CompID && (key == 13 || char == '\r') {
+		if b.OnClick != nil {
+			b.OnClick(state)
+			return true
+		}
+	}
+	return false
+}
 func (b *Button) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
 	if b.OnClick != nil {
 		b.OnClick(state)
@@ -186,6 +203,7 @@ type TextInput struct {
 	BGColor     color.RGBA
 	TextColor   color.RGBA
 	Rounding    int
+	OnSubmit    func(text string, state *types.ApplicationState)
 }
 
 func (t *TextInput) ID() string                  { return t.CompID }
@@ -200,6 +218,22 @@ func (t *TextInput) HitTest(pt image.Point) string {
 }
 
 func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
+	// Restore state if present
+	if state.TextInputValues != nil {
+		if val, ok := state.TextInputValues[t.CompID]; ok {
+			t.Text = val
+		} else {
+			state.TextInputValues[t.CompID] = t.Text
+		}
+	}
+
+	// Draw glowing focus outline ring if focused
+	if state.FocusedID == t.CompID {
+		pnt.SetGlow(6.0)
+		pnt.DrawRoundedRect(image.Rect(t.Rect.Min.X-2, t.Rect.Min.Y-2, t.Rect.Max.X+2, t.Rect.Max.Y+2), t.Rounding+2, color.RGBA{0, 150, 255, 200})
+		pnt.SetGlow(0)
+	}
+
 	// Draw background box
 	pnt.DrawRoundedRect(t.Rect, t.Rounding, t.BGColor)
 
@@ -233,16 +267,31 @@ func (t *TextInput) OnKey(key uint32, char rune, state *types.ApplicationState) 
 	}
 
 	const VK_BACK = 0x08
+	const VK_RETURN = 0x0D
+
+	if key == VK_RETURN || char == '\r' {
+		if t.OnSubmit != nil {
+			t.OnSubmit(t.Text, state)
+			return true
+		}
+		return false
+	}
 
 	if key == VK_BACK {
 		if len(t.Text) > 0 {
 			t.Text = t.Text[:len(t.Text)-1]
+		}
+		if state.TextInputValues != nil {
+			state.TextInputValues[t.CompID] = t.Text
 		}
 		return true
 	}
 
 	if char >= 32 && char <= 126 { // Printable ASCII
 		t.Text += string(char)
+		if state.TextInputValues != nil {
+			state.TextInputValues[t.CompID] = t.Text
+		}
 		return true
 	}
 
@@ -277,6 +326,24 @@ func (s *Slider) HitTest(pt image.Point) string {
 	return ""
 }
 func (s *Slider) Draw(pnt types.Painter, state *types.ApplicationState) {
+	// Restore state if present
+	if s.CompID == "sld_vol" {
+		s.Value = state.Volume
+	} else if state.SliderValues != nil {
+		if val, ok := state.SliderValues[s.CompID]; ok {
+			s.Value = val
+		} else {
+			state.SliderValues[s.CompID] = s.Value
+		}
+	}
+
+	// Draw glowing focus outline ring if focused
+	if state.FocusedID == s.CompID {
+		pnt.SetGlow(6.0)
+		pnt.DrawRoundedRect(image.Rect(s.Rect.Min.X-2, s.Rect.Min.Y-2, s.Rect.Max.X+2, s.Rect.Max.Y+2), 4, color.RGBA{0, 150, 255, 200})
+		pnt.SetGlow(0)
+	}
+
 	if state.HoveredID == s.CompID {
 		state.CursorID = state.HandCursor
 	}
@@ -299,11 +366,55 @@ func (s *Slider) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.DrawRoundedRect(thumbRect, 4, col)
 }
 
-func (s *Slider) OnKey(key uint32, char rune, state *types.ApplicationState) bool { return false }
+func (s *Slider) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
+	if state.FocusedID != s.CompID {
+		return false
+	}
+	const VK_LEFT = 0x25
+	const VK_RIGHT = 0x27
+
+	step := (s.Max - s.Min) * 0.05 // 5% step size
+	if step <= 0 {
+		step = 1.0
+	}
+
+	if key == VK_LEFT {
+		val := math.Round(float64(s.Value-step)/float64(step)) * float64(step)
+		s.Value = float32(val)
+		if s.Value < s.Min {
+			s.Value = s.Min
+		}
+		if s.CompID == "sld_vol" {
+			state.Volume = s.Value
+		} else if state.SliderValues != nil {
+			state.SliderValues[s.CompID] = s.Value
+		}
+		return true
+	}
+	if key == VK_RIGHT {
+		val := math.Round(float64(s.Value+step)/float64(step)) * float64(step)
+		s.Value = float32(val)
+		if s.Value > s.Max {
+			s.Value = s.Max
+		}
+		if s.CompID == "sld_vol" {
+			state.Volume = s.Value
+		} else if state.SliderValues != nil {
+			state.SliderValues[s.CompID] = s.Value
+		}
+		return true
+	}
+	return false
+}
 
 func (s *Slider) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
 	state.ActiveID = s.CompID
 	s.updateValue(pt.X)
+	if s.CompID == "sld_vol" {
+		state.Volume = s.Value
+	} else if state.SliderValues != nil {
+		state.SliderValues[s.CompID] = s.Value
+	}
 	return true
 }
 
@@ -315,6 +426,11 @@ func (s *Slider) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
 func (s *Slider) OnMouseMove(pt image.Point, state *types.ApplicationState) bool {
 	if state.ActiveID == s.CompID {
 		s.updateValue(pt.X)
+		if s.CompID == "sld_vol" {
+			state.Volume = s.Value
+		} else if state.SliderValues != nil {
+			state.SliderValues[s.CompID] = s.Value
+		}
 		return true
 	}
 	return false

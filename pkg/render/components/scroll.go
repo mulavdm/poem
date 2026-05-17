@@ -385,3 +385,42 @@ func (s *ScrollView) Walk(fn func(types.Component)) {
 		child.Walk(fn)
 	}
 }
+
+func (s *ScrollView) ScrollToChild(childID string, childBounds image.Rectangle, state *types.ApplicationState) bool {
+	var found bool
+	s.Walk(func(c types.Component) {
+		if c.ID() == childID {
+			found = true
+		}
+	})
+	if !found {
+		return false
+	}
+
+	// Calculate child's Y bounds relative to the ScrollView's content
+	relMinY := childBounds.Min.Y - s.Rect.Min.Y
+	relMaxY := childBounds.Max.Y - s.Rect.Min.Y
+	viewH := s.Rect.Dy()
+
+	// Scroll to make child fully visible with beautiful breathing room padding
+	padding := 20
+	if relMinY-padding < s.ScrollY {
+		s.ScrollY = relMinY - padding
+	} else if relMaxY+padding > s.ScrollY+viewH {
+		s.ScrollY = relMaxY + padding - viewH
+	}
+
+	// Clamp ScrollY
+	maxScroll := s.ContentH - viewH
+	if s.ScrollY < 0 {
+		s.ScrollY = 0
+	}
+	if maxScroll > 0 && s.ScrollY > maxScroll {
+		s.ScrollY = maxScroll
+	}
+
+	if state.ScrollPositions != nil {
+		state.ScrollPositions[s.CompID] = s.ScrollY
+	}
+	return true
+}

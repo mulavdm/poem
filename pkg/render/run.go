@@ -63,6 +63,8 @@ func Run(config AppConfig) {
 		ScrollDragStart: make(map[string]int),
 		ScrollStartY:    make(map[string]int),
 		ScrollCurrent:   make(map[string]float64),
+		TextInputValues: make(map[string]string),
+		SliderValues:    make(map[string]float32),
 	}
 	globalState.CursorID = globalState.ArrowCursor
 	globalBuildPages = config.BuildPagesFn
@@ -330,6 +332,21 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 		}
 		const VK_TAB = 0x09
 		const VK_SHIFT = 0x10
+		const VK_ESCAPE = 0x1B
+		const VK_CONTROL = 0x11
+
+		ctrlPressed := (win32.GetKeyState(VK_CONTROL) < 0) || (win32.GetKeyState(0xA2) < 0) || (win32.GetKeyState(0xA3) < 0)
+		fmt.Printf("[ENGINE KEYLOG] WM_KEYDOWN: wparam=%d (0x%02X) | CtrlPressed=%t | FocusedID=%q\n",
+			wparam, wparam, ctrlPressed, globalState.FocusedID)
+
+		// 1. Escape clears active focus
+		if wparam == VK_ESCAPE {
+			globalState.FocusedID = ""
+			triggerRepaint(hwnd)
+			return 0
+		}
+
+		// 2. Tab cycling focus
 		if wparam == VK_TAB {
 			reverse := win32.GetKeyState(VK_SHIFT) < 0
 			globalState.CycleFocus(reverse)
@@ -337,10 +354,34 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 			return 0
 		}
 
+		// 3. Global hotkeys (e.g. Ctrl+S)
+		if ctrlPressed {
+			shortcut := ""
+			if wparam == 'S' || wparam == 's' {
+				shortcut = "Ctrl+S"
+			}
+			if shortcut != "" && globalState.Hotkeys != nil {
+				if handler, ok := globalState.Hotkeys[shortcut]; ok {
+					handler(globalState)
+					if globalBuildPages != nil {
+						globalBuildPages(globalState)
+					}
+					triggerRepaint(hwnd)
+					return 0
+				}
+			}
+		}
+
+		// 4. Keyboard propagation to active component
 		if globalState.FocusedID != "" {
 			if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
 				for _, c := range comps {
 					if c.OnKey(uint32(wparam), 0, globalState) {
+						if comp := libFindComponent(globalState.FocusedID); comp != nil {
+							if s, ok := comp.(*components.Slider); ok && s.CompID == "sld_vol" {
+								globalState.Volume = s.Value
+							}
+						}
 						if globalBuildPages != nil {
 							globalBuildPages(globalState)
 						}
