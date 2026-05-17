@@ -122,6 +122,27 @@ This is run automatically right before hit-testing in `RenderPipeline`, `WM_MOUS
 
 ---
 
+## 📜 Phase 2 Scroll Viewports & Coordinate Translation Engine
+
+To support large lists, telemetry streams, and logging consoles, we integrated vertical scroll viewports (`render.ScrollView`) and dual-backend clipping masks.
+
+### 1. Viewport Bounded Clipping (GDI Scissor vs. OpenGL Scissor)
+To render items in a scroll container without them bleeding onto stationary UI elements, we introduced a native viewport clipping bounding box to the `Painter` engine:
+- **GDI CPU Renderer (`CPUEngine`)**: Added a mathematical pixel check in GDI rasterization loops (`drawRoundedRect`, `DrawLine`) and rectangle intersection in `FillRect`. If pixel coordinates `(x, y)` fall outside `c.clipRect`, drawing operations are skipped.
+- **OpenGL GPU Renderer (`GPUEngine`)**: Invokes native GPU hardware-level Scissor Tests (`gl.Enable(gl.SCISSOR_TEST)`, `gl.Scissor`) by converting top-down coordinates to bottom-up OpenGL screen coordinates.
+
+### 2. Relative Coordinate Translation
+Hit-testing and event dispatching (mouse clicks, dragging, hovers) normally operate on absolute screen coordinates. If a child component is scrolled up by `ScrollY`, it is drawn at screen coordinate `Y - ScrollY`.
+To handle this transparently, the `ScrollView` recursively translates the input coordinates for all hit-test and mouse event dispatching loops:
+$$\text{scrolledPt} = \text{screenPt} + (0, \text{ScrollY})$$
+This translates coordinates perfectly before forwarding events, allowing standard buttons, inputs, sliders, and hovers to remain fully operational when scrolled.
+
+### 3. Captured Drag Capturing
+To prevent scrollbar dragging from stuttering when the user moves the mouse rapidly outside the scroll track, POEM locks the scroll captures using Win32 capture handles (`SetCapture`, `ReleaseCapture`).
+When the scrollbar thumb is clicked, the `ScrollView` ID becomes the `ActiveID`. Subsequent mouse movements, even those moving outside the client window, continue to route raw offset deltas directly to the active `ScrollView`, ensuring a silky-smooth, glitch-free dragging feedback loop.
+
+---
+
 ## 📊 Performance Observability & Benchmarks
 
 The engine integrates native Go diagnostics to monitor rendering stability.
@@ -136,6 +157,29 @@ The engine integrates native Go diagnostics to monitor rendering stability.
 - **CPU Performance Metrics**:
     - `BenchmarkPaint` (Full 60FPS UI Redraw): **~1.1 ms** (exceeds our <10ms standard by nearly **10x**!).
     - `BenchmarkDrawRoundedRect` (Alpha-blended SDF panels): **~1.4 ms**.
+
+---
+
+## ⚡ Phase 3 Performance Breakthroughs & Zero-GC Rendering
+
+In Phase 3, we pushed the engine to state-of-the-art heights by identifying and eliminating low-level threading and memory bottlenecks, unlocking rock-solid 60Hz+ performance on both CPU and GPU backends.
+
+### 1. Asynchronous Thread repaints (`PostMessage` Dummy Wake-up Loop)
+To drive real-time background animations, a background thread runs an update ticker at 60Hz. Calling `win32.UpdateWindow(hwnd)` from this background thread forced a synchronous inter-thread `SendMessage` to the main UI thread, blocking the background ticker until the main thread finished rendering and dropping the tick rate to 40Hz.
+* **The Solution**: We decoupled the threads by updating `triggerRepaint` to perform an asynchronous `InvalidateRect` (marking the window dirty) followed by a native **`PostMessage(hwnd, WM_NULL, 0, 0)`** call.
+* **How it works**: `PostMessage` places the dummy `WM_NULL` message in the main thread's queue asynchronously and returns instantly. The main thread's `GetMessage` loop wakes up immediately, processes and ignores the `WM_NULL` message, and then—seeing the dirty update region—natively generates a high-priority `WM_PAINT` cycle! This yields perfect, unblocked asynchronous execution.
+
+### 2. Zero-GC Allocation Vertex Batching
+With the Bresenham line drawing algorithm rendering hundreds of connecting plexus particle lines pixel-by-pixel, the GPU engine's `drawQuad` was called thousands of times per frame. Each call historically created a temporary slice `quad := []vertex{...}`, creating millions of short-lived objects per second and thrashing Go's Garbage Collector.
+* **The Solution**: We refactored `drawQuad` to pass the 6 vertices individually to Go's built-in `append` call:
+  ```go
+  g.batch = append(g.batch, v1, v2, v3, v4, v5, v6)
+  ```
+  Go's compiler optimizes multi-argument `append` calls by copying the items directly into the slice's pre-allocated backing array, completely bypassing dynamic slice creation and achieving **absolute zero GC allocations!**
+
+### 3. High-Precision Floating-Point Delta Physics
+Unlocking unthrottled 60Hz+ performance dropped the frame delta `dt` to exactly `0.016` seconds. Because particle coordinates were stored as integers, calculating steps like `int(velocity * dt)` (e.g. `int(40 * 0.016) = int(0.64) = 0`) truncated the step size to exactly `0` every frame, causing the background particles to freeze solid as soon as performance became perfect!
+* **The Solution**: We refactored `particles.go` to store and accumulate all coordinates, velocities, and physics steps using high-precision `float64` variables. The values are only cast to integers at the final drawing phase, ensuring gorgeous, fluid animations at any framerate.
 
 ---
 

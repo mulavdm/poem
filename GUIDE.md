@@ -322,3 +322,48 @@ for _, comp := range page {
 ```
 Downstream developers never need to manually align components—nested children bounds are fully updated, responsive, and ready for hover interactions automatically out-of-the-box!
 
+---
+
+## 📜 6. Composable Scroll Viewports
+
+POEM features a high-performance, fully composable vertical scrolling container (`render.ScrollView`) equipped with boundary clipping, scrollbar dragging, and coordinate translation.
+
+### A. Viewport Bounded Clipping
+When rendering massive, high-volume lists or logs, downstream elements must be clipped to prevent them from bleeding onto stationary sections (like headers, sidebars, and background panels). 
+
+POEM implements this by adding a native viewport clipping bounding box to the `Painter` engine. Elements outside the ScrollView `Rect` are automatically clipped:
+- **Software Path (GDI)**: Pixels outside the active clipping rectangle are skipped during pixel-rasterization loops.
+- **Hardware Path (OpenGL)**: Employs GPU-level Scissor tests (`gl.Enable(gl.SCISSOR_TEST)`, `gl.Scissor`) to clip the viewport with sub-millisecond drawing performance.
+
+### B. Nested Layout Composition Example
+To build a scrollable view, simply wrap a vertical `render.FlexBox` container inside a `render.ScrollView` and place as many interactive components (labels, buttons, text fields) as you want inside:
+
+```go
+&render.ScrollView{
+    CompID: "my_diagnostics_scroll",
+    Rect:   image.Rect(100, 150, 500, 650), // Fixed viewport bounds (400x500)
+    Children: []render.Component{
+        &render.FlexBox{
+            CompID:    "inner_scroll_content",
+            Direction: render.Vertical,
+            Padding:   15,
+            Gap:       15,
+            Children: []render.Component{
+                &render.Label{CompID: "lbl_header", Text: "MASSIVE LIST CONTENT"},
+                &render.Button{CompID: "scroll_btn_1", Rect: image.Rect(0, 0, 150, 40), Label: "CLICK ME"},
+                &render.TextInput{CompID: "scroll_txt_1", Rect: image.Rect(0, 0, 150, 45), Placeholder: "Type here..."},
+                // Add as many children as needed...
+            },
+        },
+    },
+}
+```
+
+### C. Automated Coordinate Space Translation
+A major challenge with scrolled viewports is ensuring that mouse clicks and hover coordinates correctly target the scrolled elements. 
+
+POEM **completely abstracts this coordinate translation**! The `ScrollView` recursively intercepts hit-testing and pointer inputs:
+- Translates screen coordinates to scrolled layout space: `scrolledPt = pt.Add(image.Point{0, s.ScrollY})`
+- Evaluates hover states and dispatches focus clicks perfectly at their scrolling offsets.
+- Downstream developers get 100% functional, hover-reactive, and click-sensitive components out-of-the-box inside scrolling panels!
+

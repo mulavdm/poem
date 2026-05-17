@@ -9,7 +9,7 @@ This document outlines the strategic progression milestones for expanding the PO
 | Phase | Feature Vector | Principal Package Bounds | Status | Architectural Impact |
 | :--- | :--- | :--- | :--- | :--- |
 | **Phase 1** | **📉 Real-Time Performance Charting** | `pkg/render/components/chart.go`, `pkg/render/types/types.go` | **[x] COMPLETED** | **Sleek Data Observability:** Provides a native `render.LineChart` component with Cosine spline smoothing, glowing alpha gradients, dynamic OS cursors, and layout synchronization. |
-| **Phase 2** | **📜 Dynamic Scroll Viewports** | `pkg/render/layout/scroll.go`, `pkg/render/components/scroll.go` | `[ ] PLANNED` | **Massive Content Rendering:** Allows layouts to scroll vertically with relative offset coordinates, catching mouse wheel actions (`WM_MOUSEWHEEL`), and drawing a glassmorphic sliding scrollbar. |
+| **Phase 2** | **📜 Dynamic Scroll Viewports** | `pkg/render/components/scroll.go`, `pkg/render/types/types.go` | **[x] COMPLETED** | **Massive Content Rendering:** Allows layouts to scroll vertically with relative offset coordinates, catching mouse wheel actions (`WM_MOUSEWHEEL`), and drawing a glassmorphic sliding scrollbar. |
 | **Phase 3** | **⌨️ Accessibility Focus & Hotkeys** | `pkg/render/types/focus.go`, `pkg/render/run.go` | `[ ] PLANNED` | **Power-User Productivity:** Implements a global Keyboard Controller managing standard submission hotkeys (`Ctrl+S`, `Enter`, `Esc`), sequential tab navigation, and focus capture. |
 | **Phase 4** | **🎛️ Acoustic Native Sound Engine** | `internal/win32/audio.go`, `pkg/render/types/audio.go` | `[ ] PLANNED` | **Sleek Audio Feedback:** Binds low-level wave synthesis (`waveOut`) to Win32 threads to output lightweight click and hover chime feedback without blocking the main event loops. |
 
@@ -48,3 +48,29 @@ type ApplicationState struct {
 2. **Glowing Background Fills**: Added a 3-layer translucent glow gradient under the curve (descending opacities at Alpha 30, 15, and 6) giving a gorgeous glassmorphic look.
 3. **Dynamic Windows Cursors**: preloaded system handles once at boot, resetting the handle every frame and reactively updating to a link-hand (`IDC_HAND`) or text-IBeam (`IDC_IBEAM`) based on element hovers via native Win32 `WM_SETCURSOR` intercepts.
 4. **Layout Synchronization Pass**: Resolved layout latency by recursively executing a pre-evaluation layout synchronization pass (`comp.SetBounds(comp.Bounds())`) immediately before executing hit-testing checks, ensuring child elements nested inside complex containers (like `FlexBox` headers and sidebar nav columns) react dynamically to hovers and clicks.
+
+---
+
+## 🛠️ Phase 2 Technical Specification & Verification Summary: `render.ScrollView`
+
+The second expansion phase added high-performance vertical scroll containers (`render.ScrollView`), bounding box clippers, and native event propagation.
+
+### 📐 Component Design
+The `ScrollView` wraps any complex child layout structure (typically a single vertical `FlexBox` containing numerous sub-components):
+```go
+type ScrollView struct {
+    CompID     string
+    Rect       image.Rectangle
+    Children   []types.Component
+    ScrollY    int
+    ContentH   int
+    ScrollbarW int
+}
+```
+
+### 🎨 Rendering & Clipping Deliverables
+1. **Painter-Level Scissor/Clipping**: Added `SetClip(image.Rectangle)` to the core `Painter` interface. On GDI (`CPUEngine`), pixel drawing is mathematically restricted within bounds. On OpenGL (`GPUEngine`), native Scissor Tests (`gl.Enable(gl.SCISSOR_TEST)`, `gl.Scissor`) isolate the rendering layout without bleeding into stationary sections.
+2. **GPU Shape Projection Bug Fix**: Offsets the coordinate bounding `params` in GPU `drawQuad` to ensure SDF rounded corner formulas align perfectly at scrolled coordinates.
+3. **Glassmorphic Scrollbars**: Renders an elegant semi-translucent track (`color.RGBA{255, 255, 255, 10}`) and a draggable thumb that glows neon green (`color.RGBA{0, 255, 150, 150}`) on hover or drag.
+4. **Native Win32 Mouse Wheel Capture**: Registered `WM_MOUSEWHEEL` (0x020A) inside the main `libWndProc` message procedure to capture scrolling direction and scroll offset increments dynamically.
+5. **Coordinate Translation**: Translates screen coordinates to scrolled layout coordinates recursively, ensuring hovered states, clicked buttons, sliders, and inputs inside the scrolling panel remain fully reactive.

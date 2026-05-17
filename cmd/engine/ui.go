@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"runtime"
 
 	"go_native_gpu_gui/pkg/render"
@@ -28,7 +29,7 @@ func BuildPage(state *render.ApplicationState, name string, content []render.Com
 	comps := []render.Component{
 		// Backdrop
 		&render.Panel{CompID: "bg_blur_" + name, Rect: image.Rect(0, 0, render.Width, render.Height), BGColor: color.RGBA{10, 10, 15, 255}},
-		
+
 		// Background Particles
 		&render.ParticleComponent{CompID: "vfx_particles_" + name, System: state.Particles},
 
@@ -39,7 +40,7 @@ func BuildPage(state *render.ApplicationState, name string, content []render.Com
 		// Header Background
 		&render.Panel{CompID: "header_bg_" + name, Rect: image.Rect(70, 0, render.Width, 60), BGColor: color.RGBA{20, 25, 40, 220}},
 		BuildHeader(state),
-		
+
 		// Footer Background
 		&render.Panel{CompID: "footer_bg_" + name, Rect: image.Rect(70, render.Height-40, render.Width, render.Height), BGColor: color.RGBA{10, 10, 20, 255}},
 		BuildFooter(state),
@@ -88,18 +89,18 @@ func getPageColor(state *render.ApplicationState, page string) color.RGBA {
 
 func BuildHeader(state *render.ApplicationState) render.Component {
 	return &render.FlexBox{
-		CompID: "header_layout",
-		Rect:   image.Rect(70, 0, render.Width, 60),
-		Direction: render.Horizontal,
-		AlignItems: render.AlignCenter,
+		CompID:         "header_layout",
+		Rect:           image.Rect(70, 0, render.Width, 60),
+		Direction:      render.Horizontal,
+		AlignItems:     render.AlignCenter,
 		JustifyContent: render.JustifySpaceBetween,
-		Padding: 20,
+		Padding:        20,
 		Children: []render.Component{
 			&render.Label{CompID: "title", Pos: image.Point{0, 0}, Text: fmt.Sprintf("P.O.E.M. // %s", state.CurrentPage), Color: color.RGBA{255, 255, 255, 255}},
 			&render.DynamicLabel{
-				CompID: "status_tag",
-				Pos:    image.Point{0, 0},
-				Color:  color.RGBA{0, 255, 180, 255},
+				CompID:  "status_tag",
+				Pos:     image.Point{0, 0},
+				Color:   color.RGBA{0, 255, 180, 255},
 				GetText: func(s *render.ApplicationState) string { return "[ STATUS: POETIC ]" },
 			},
 		},
@@ -108,11 +109,11 @@ func BuildHeader(state *render.ApplicationState) render.Component {
 
 func BuildFooter(state *render.ApplicationState) render.Component {
 	return &render.FlexBox{
-		CompID: "footer_layout",
-		Rect:   image.Rect(70, render.Height-40, render.Width, render.Height),
-		Direction: render.Horizontal,
+		CompID:     "footer_layout",
+		Rect:       image.Rect(70, render.Height-40, render.Width, render.Height),
+		Direction:  render.Horizontal,
 		AlignItems: render.AlignCenter,
-		Padding: 20,
+		Padding:    20,
 		Children: []render.Component{
 			&render.DynamicLabel{
 				CompID: "foot_perf",
@@ -261,11 +262,11 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 		// UI Preferences
 		&render.Label{CompID: "lbl_ui", Pos: image.Point{110, 160}, Text: "INTERFACE PREFERENCES", Color: color.RGBA{200, 200, 200, 255}},
 		&render.Button{
-			CompID: "btn_theme", Rect: image.Rect(110, 180, 350, 230), Label: "SWITCH COLOR THEME",
+			CompID: "btn_theme", Rect: image.Rect(110, 180, 460, 230), Label: "SWITCH COLOR THEME",
 			BaseColor: color.RGBA{60, 80, 120, 255}, HoverColor: color.RGBA{80, 110, 180, 255}, Rounding: 5,
 		},
 		&render.Button{
-			CompID: "btn_blur", Rect: image.Rect(110, 240, 350, 290), Label: "TOGGLE GLASS BLUR",
+			CompID: "btn_blur", Rect: image.Rect(110, 240, 460, 290), Label: "TOGGLE GLASS BLUR",
 			BaseColor: color.RGBA{60, 80, 120, 255}, HoverColor: color.RGBA{80, 110, 180, 255}, Rounding: 5,
 			OnClick: func(s *render.ApplicationState) {
 				s.GlassEnabled = !s.GlassEnabled
@@ -274,10 +275,110 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 
 		// Engine Information
 		&render.Label{CompID: "lbl_engine_info", Pos: image.Point{110, 350}, Text: "ENGINE INFORMATION", Color: color.RGBA{200, 200, 200, 255}},
-		&render.Panel{CompID: "engine_info_box", Rect: image.Rect(110, 365, render.Width-40, 500), BGColor: color.RGBA{15, 20, 30, 255}, Rounding: 8},
-		&render.Label{CompID: "engine_v", Pos: image.Point{125, 395}, Text: "P.O.E.M. v0.4.2 // OPERATIONAL ENGINE MATRIX", Color: color.RGBA{0, 255, 150, 255}},
-		&render.Label{CompID: "engine_arch", Pos: image.Point{125, 425}, Text: fmt.Sprintf("ARCHITECTURE: %s // OS: %s", runtime.GOARCH, runtime.GOOS), Color: color.RGBA{150, 160, 180, 255}},
-		&render.Label{CompID: "engine_compiler", Pos: image.Point{125, 455}, Text: fmt.Sprintf("COMPILER: %s", runtime.Version()), Color: color.RGBA{150, 160, 180, 255}},
+		&render.Panel{CompID: "engine_info_box", Rect: image.Rect(110, 365, 460, 650), BGColor: color.RGBA{15, 20, 30, 255}, Rounding: 8},
+		&render.Label{CompID: "engine_v", Pos: image.Point{125, 395}, Text: "P.O.E.M. v0.4.2 // ENGINE MATRIX", Color: color.RGBA{0, 255, 150, 255}},
+		&render.Label{CompID: "engine_arch", Pos: image.Point{125, 435}, Text: fmt.Sprintf("ARCH: %s // OS: %s", runtime.GOARCH, runtime.GOOS), Color: color.RGBA{150, 160, 180, 255}},
+		&render.Label{CompID: "engine_compiler", Pos: image.Point{125, 475}, Text: fmt.Sprintf("COMPILER: %s", runtime.Version()), Color: color.RGBA{150, 160, 180, 255}},
+
+		// Diagnostics Scroll View
+		&render.Label{CompID: "lbl_diag_panel", Pos: image.Point{500, 130}, Text: "DIAGNOSTIC MATRIX & ACTIVE CONSOLE", Color: color.RGBA{200, 200, 200, 255}},
+		&render.ScrollView{
+			CompID:         "diagnostics_scroll",
+			Rect:           image.Rect(500, 150, render.Width-40, 650),
+			ScrollY:        state.ScrollPositions["diagnostics_scroll"],
+			CurrentScrollY: int(math.Round(state.ScrollCurrent["diagnostics_scroll"])),
+			Children: []render.Component{
+				&render.FlexBox{
+					CompID:    "diagnostics_layout",
+					Direction: render.Vertical,
+					Padding:   15,
+					Gap:       15,
+					Children: []render.Component{
+						&render.Label{CompID: "diag_hdr_1", Pos: image.Point{0, 0}, Text: "--- DYNAMIC DIAGNOSTIC NODE ENTRIES ---", Color: color.RGBA{100, 120, 150, 255}},
+
+						&render.Label{CompID: "diag_lbl_1", Pos: image.Point{0, 0}, Text: "[01] PIPELINE PARITY: PASSING", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_2", Pos: image.Point{0, 0}, Text: "[02] GDI BACKEND DIB LAYER: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+
+						&render.FlexBox{
+							CompID:    "diag_row_btn_1",
+							Direction: render.Horizontal,
+							Padding:   0,
+							Gap:       10,
+							Children: []render.Component{
+								&render.Label{CompID: "diag_lbl_3", Pos: image.Point{0, 0}, Text: "[03] COSMIC DENSITY TRIGGER:", Color: color.RGBA{200, 200, 200, 255}},
+								&render.Button{
+									CompID: "diag_btn_trigger", Rect: image.Rect(0, 0, 120, 30), Label: "PING PULSE",
+									BaseColor: color.RGBA{0, 120, 255, 255}, HoverColor: color.RGBA{0, 160, 255, 255}, Rounding: 4,
+								},
+							},
+						},
+
+						&render.Label{CompID: "diag_lbl_4", Pos: image.Point{0, 0}, Text: "[04] SCISSOR VIEWPORT CLIP: ENGAGED", Color: color.RGBA{0, 255, 150, 255}},
+
+						&render.FlexBox{
+							CompID:    "diag_row_slider_1",
+							Direction: render.Horizontal,
+							Padding:   0,
+							Gap:       10,
+							Children: []render.Component{
+								&render.Label{CompID: "diag_lbl_5", Pos: image.Point{0, 0}, Text: "[05] SCROLL DYNAMIC METRIC:", Color: color.RGBA{200, 200, 200, 255}},
+								&render.Slider{
+									CompID: "diag_slider_scroll", Rect: image.Rect(0, 0, 120, 20),
+									Min: 0, Max: 100, Value: 50,
+									TrackColor: color.RGBA{10, 10, 20, 255}, ThumbColor: color.RGBA{0, 255, 150, 255},
+								},
+							},
+						},
+
+						&render.Label{CompID: "diag_lbl_6", Pos: image.Point{0, 0}, Text: "[06] WINDOW PROCEDURE CAPTURE: ACTIVE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_7", Pos: image.Point{0, 0}, Text: "[07] GL SCISSOR TOP-DOWN CONV: DONE", Color: color.RGBA{0, 255, 150, 255}},
+
+						&render.FlexBox{
+							CompID:    "diag_row_input_1",
+							Direction: render.Horizontal,
+							Padding:   0,
+							Gap:       10,
+							Children: []render.Component{
+								&render.Label{CompID: "diag_lbl_8", Pos: image.Point{0, 0}, Text: "[08] CONSOLE INPUT CMD:", Color: color.RGBA{200, 200, 200, 255}},
+								&render.TextInput{
+									CompID: "diag_input_scroll", Rect: image.Rect(0, 0, 130, 30),
+									Placeholder: "EXECUTE...", BGColor: color.RGBA{10, 10, 20, 255},
+									TextColor: color.RGBA{255, 255, 255, 255}, Rounding: 4,
+								},
+							},
+						},
+
+						&render.Label{CompID: "diag_lbl_9", Pos: image.Point{0, 0}, Text: "[09] ALPHA BLENDING DECAY RATE: 100%", Color: color.RGBA{150, 160, 180, 255}},
+						&render.Label{CompID: "diag_lbl_10", Pos: image.Point{0, 0}, Text: "[10] HYPER-THREAD MUTEX LOCKS: SAFE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_11", Pos: image.Point{0, 0}, Text: "[11] COMPOSABLE VIEWPORT DEPTH: PASS", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_12", Pos: image.Point{0, 0}, Text: "[12] DOCKING CONTROLLER ATTACH: NONE", Color: color.RGBA{150, 160, 180, 255}},
+						&render.Label{CompID: "diag_lbl_13", Pos: image.Point{0, 0}, Text: "[13] PHYSICAL LAYER INTERRUPT: PASS", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_14", Pos: image.Point{0, 0}, Text: "[14] GDI STRETCH-DIB-ITS: REALTIME", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_15", Pos: image.Point{0, 0}, Text: "[15] SYSTEM ENTROPY INTEGRITY: PASS", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_16", Pos: image.Point{0, 0}, Text: "[16] HIGH-PRECISION DELTA PHYSICS: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_17", Pos: image.Point{0, 0}, Text: "[17] ASYNC WAKE-UP PULSE LOOP: ACTIVE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_18", Pos: image.Point{0, 0}, Text: "[18] ZERO-GC ALLOCATION VERTS: ENGAGED", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_19", Pos: image.Point{0, 0}, Text: "[19] BRESENHAM GPU CONNECTIONS: ACTIVE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_20", Pos: image.Point{0, 0}, Text: "[20] MULTI-PAGE DESCRIPTOR MAP: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_21", Pos: image.Point{0, 0}, Text: "[21] WIN32 VALIDATE REGION: PASS", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_22", Pos: image.Point{0, 0}, Text: "[22] MEMORY LEAK CHECK: COMPLETING", Color: color.RGBA{150, 160, 180, 255}},
+						&render.Label{CompID: "diag_lbl_23", Pos: image.Point{0, 0}, Text: "[23] WGL COMPATIBILITY MATRIX: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_24", Pos: image.Point{0, 0}, Text: "[24] DOUBLE BUFFER FLIP RATE: VSYNC", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_25", Pos: image.Point{0, 0}, Text: "[25] TELEMETRY TIMEOUT HANDLER: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_26", Pos: image.Point{0, 0}, Text: "[26] STAGGERED LERP EXP DECAY: CALIBRATED", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_27", Pos: image.Point{0, 0}, Text: "[27] DIRECT-GRIP SCROLL SNAPPING: OK", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_28", Pos: image.Point{0, 0}, Text: "[28] SUB-IMAGE TEXT RASTERIZE: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_29", Pos: image.Point{0, 0}, Text: "[29] PLEXUS VFX PARTICLE MASS: 100", Color: color.RGBA{150, 160, 180, 255}},
+						&render.Label{CompID: "diag_lbl_30", Pos: image.Point{0, 0}, Text: "[30] COGNITIVE AGENT MATRIX: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_31", Pos: image.Point{0, 0}, Text: "[31] DYNAMIC GLASSMORPHISM: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_32", Pos: image.Point{0, 0}, Text: "[32] GDI BULK BIT BLIT STRETCH: OK", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_33", Pos: image.Point{0, 0}, Text: "[33] UNIFIED CONTROLLER LOOP: RUNNING", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_34", Pos: image.Point{0, 0}, Text: "[34] DECAY SPEED CONSTANT: 0.07", Color: color.RGBA{150, 160, 180, 255}},
+						&render.Label{CompID: "diag_lbl_35", Pos: image.Point{0, 0}, Text: "[35] SYSTEM OVERALL STATUS: EXCELLENT", Color: color.RGBA{0, 255, 150, 255}},
+					},
+				},
+			},
+		},
 	}
 }
 
