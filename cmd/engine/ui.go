@@ -6,7 +6,7 @@ import (
 	"image/color"
 	"runtime"
 
-	"go_native_gpu_gui/internal/render"
+	"go_native_gpu_gui/pkg/render"
 )
 
 // BuildAllPages populates the application state's page registry.
