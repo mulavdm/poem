@@ -36,6 +36,9 @@ var (
 
 	procWglCreateCtx = opengl32.NewProc("wglCreateContext")
 	procWglMakeCur   = opengl32.NewProc("wglMakeCurrent")
+
+	winmm          = syscall.NewLazyDLL("winmm.dll")
+	procPlaySoundW = winmm.NewProc("PlaySoundW")
 )
 
 func RegisterClass(wc *WNDCLASS) (uintptr, error) {
@@ -206,4 +209,15 @@ func GET_X_LPARAM(lp uintptr) int16 {
 
 func GET_Y_LPARAM(lp uintptr) int16 {
 	return int16(lp >> 16)
+}
+
+const (
+	SND_ASYNC     = 0x0001
+	SND_NODEFAULT = 0x0002
+	SND_MEMORY    = 0x0004
+)
+
+func PlaySound(sound uintptr, hmod uintptr, flags uint32) bool {
+	ret, _, _ := procPlaySoundW.Call(sound, hmod, uintptr(flags))
+	return ret != 0
 }

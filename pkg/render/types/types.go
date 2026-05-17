@@ -96,6 +96,15 @@ type ApplicationState struct {
 
 	// Hotkeys registry
 	Hotkeys map[string]HotkeyHandler
+
+	// Acoustic Native Sound Engine
+	AudioEnabled     bool
+	AudioHoverBuffer []byte
+	AudioClickBuffer []byte
+	AudioSavedBuffer []byte
+	LastHoverTime    time.Time
+	LastClickTime    time.Time
+	LastSuccessTime  time.Time
 }
 
 type HotkeyHandler func(state *ApplicationState)

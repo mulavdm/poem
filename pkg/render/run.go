@@ -65,7 +65,12 @@ func Run(config AppConfig) {
 		ScrollCurrent:   make(map[string]float64),
 		TextInputValues: make(map[string]string),
 		SliderValues:    make(map[string]float32),
+		AudioEnabled:    true,
 	}
+	globalState.AudioHoverBuffer = win32.SynthesizeHover()
+	globalState.AudioClickBuffer = win32.SynthesizeClick()
+	globalState.AudioSavedBuffer = win32.SynthesizeSuccess()
+
 	globalState.CursorID = globalState.ArrowCursor
 	globalBuildPages = config.BuildPagesFn
 
@@ -225,6 +230,11 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 		newFocus := libFindHoveredComponent(pt)
 		globalState.FocusedID = newFocus
 
+		// Hook real-time click sound for interactive elements
+		if newFocus != "" {
+			globalState.PlayClick()
+		}
+
 		pt = image.Point{X: int(win32.GET_X_LPARAM(lparam)), Y: int(win32.GET_Y_LPARAM(lparam))}
 		globalState.ActiveID = libFindHoveredComponent(pt)
 		if globalState.ActiveID != "" {
@@ -282,6 +292,14 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 				}
 			}
 		}
+
+		// Trigger high-fidelity hover tick on active interactive component changes
+		if newHover != "" && newHover != globalState.HoveredID {
+			if comp := libFindComponent(newHover); comp != nil && comp.Focusable() {
+				globalState.PlayHover()
+			}
+		}
+
 		globalState.HoveredID = newHover
 
 		if globalState.ActiveID != "" {
