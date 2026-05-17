@@ -30,6 +30,7 @@ Every major rendering or layout change **MUST** be validated through the interna
 - **GDI Blitting**: Never use `SetPixel`. Use `CPUEngine.canvas` and `StretchDIBits` for bulk transfers.
 - **Alpha Blending**: Optimization is key. Manual loops are preferred over generic library calls if it improves per-pixel performance.
 - **Pointer Safety**: Ensure Win32 pointers are properly managed to prevent GC interference during syscalls.
+- **Documentation Integrity**: ALWAYS update all relevant documentation (`README.md`, `ARCHITECTURE.md`, `GEMINI.md`, and `GUIDE.md`) immediately after making API, layout, or structural changes to ensure downstream developers have an accurate, real-world SSoT (Single Source of Truth).
 
 ---
 
