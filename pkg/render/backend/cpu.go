@@ -14,10 +14,12 @@ import (
 )
 
 type CPUEngine struct {
-	canvas     *image.RGBA
-	bitmapInfo win32.BITMAPINFO
-	offsetX    float32
-	offsetY    float32
+	canvas      *image.RGBA
+	bitmapInfo  win32.BITMAPINFO
+	offsetX     float32
+	offsetY     float32
+	clipRect    image.Rectangle
+	clipEnabled bool
 }
 
 func New(hdc uintptr) (types.UIRenderer, error) {
@@ -64,6 +66,15 @@ func (c *CPUEngine) SetOffset(x, y float32) {
 	c.offsetY = y
 }
 
+func (c *CPUEngine) SetClip(r image.Rectangle) {
+	if r.Empty() {
+		c.clipEnabled = false
+	} else {
+		c.clipEnabled = true
+		c.clipRect = r
+	}
+}
+
 func (c *CPUEngine) Flush() {
 	// CPU rendering is immediate, no flushing needed
 }
@@ -75,7 +86,17 @@ func (c *CPUEngine) DrawText(s string, x, y int, col color.RGBA) {
 func (c *CPUEngine) FillRect(r image.Rectangle, col color.RGBA) {
 	ox, oy := int(c.offsetX), int(c.offsetY)
 	r = r.Add(image.Point{ox, oy})
-	draw.Draw(c.canvas, r, &image.Uniform{col}, image.Point{}, draw.Src)
+	if c.clipEnabled {
+		r = r.Intersect(c.clipRect)
+		if r.Empty() {
+			return
+		}
+	}
+	if col.A < 255 {
+		draw.Draw(c.canvas, r, &image.Uniform{col}, image.Point{}, draw.Over)
+	} else {
+		draw.Draw(c.canvas, r, &image.Uniform{col}, image.Point{}, draw.Src)
+	}
 }
 
 func (c *CPUEngine) Paint(hdc uintptr, state *types.ApplicationState) {

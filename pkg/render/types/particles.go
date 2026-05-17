@@ -8,8 +8,10 @@ import (
 )
 
 type Particle struct {
-	Pos image.Point
-	Vel image.Point
+	X    float64
+	Y    float64
+	VX   float64
+	VY   float64
 	Size int
 }
 
@@ -28,14 +30,10 @@ func NewParticleSystem(count int, bounds image.Rectangle) *ParticleSystem {
 
 	for i := 0; i < count; i++ {
 		ps.Particles[i] = Particle{
-			Pos: image.Point{
-				X: ps.rng.Intn(bounds.Dx()),
-				Y: ps.rng.Intn(bounds.Dy()),
-			},
-			Vel: image.Point{
-				X: ps.rng.Intn(100) - 50,
-				Y: ps.rng.Intn(100) - 50,
-			},
+			X:    float64(ps.rng.Intn(bounds.Dx())),
+			Y:    float64(ps.rng.Intn(bounds.Dy())),
+			VX:   float64(ps.rng.Intn(100) - 50),
+			VY:   float64(ps.rng.Intn(100) - 50),
 			Size: ps.rng.Intn(3) + 1,
 		}
 	}
@@ -43,23 +41,34 @@ func NewParticleSystem(count int, bounds image.Rectangle) *ParticleSystem {
 }
 
 func (ps *ParticleSystem) Update(dt float64) {
+	boundsW := float64(ps.Bounds.Dx())
+	boundsH := float64(ps.Bounds.Dy())
+
 	for i := range ps.Particles {
 		p := &ps.Particles[i]
-		
-		// Update position based on velocity and delta time
-		p.Pos.X += int(float64(p.Vel.X) * dt)
-		p.Pos.Y += int(float64(p.Vel.Y) * dt)
 
-		// Wrap around
-		if p.Pos.X < 0 { p.Pos.X = ps.Bounds.Dx() }
-		if p.Pos.X > ps.Bounds.Dx() { p.Pos.X = 0 }
-		if p.Pos.Y < 0 { p.Pos.Y = ps.Bounds.Dy() }
-		if p.Pos.Y > ps.Bounds.Dy() { p.Pos.Y = 0 }
+		// Update position based on velocity and delta time in float64 space
+		p.X += p.VX * dt
+		p.Y += p.VY * dt
+
+		// Wrap around boundaries
+		if p.X < 0 {
+			p.X = boundsW
+		}
+		if p.X > boundsW {
+			p.X = 0
+		}
+		if p.Y < 0 {
+			p.Y = boundsH
+		}
+		if p.Y > boundsH {
+			p.Y = 0
+		}
 	}
 }
 
 func (ps *ParticleSystem) Draw(p Painter, state *ApplicationState) {
-	dotColor := color.RGBA{0, 150, 255, 40} // Subtle blue
+	dotColor := color.RGBA{0, 150, 255, 40}  // Subtle blue
 	lineColor := color.RGBA{0, 100, 200, 20} // Even subtler lines
 
 	// Draw connections (Plexus effect)
@@ -67,19 +76,21 @@ func (ps *ParticleSystem) Draw(p Painter, state *ApplicationState) {
 		p1 := ps.Particles[i]
 		for j := i + 1; j < len(ps.Particles); j++ {
 			p2 := ps.Particles[j]
-			
-			dx := p1.Pos.X - p2.Pos.X
-			dy := p1.Pos.Y - p2.Pos.Y
+
+			dx := p1.X - p2.X
+			dy := p1.Y - p2.Y
 			distSq := dx*dx + dy*dy
-			
-			if distSq < 10000 { // Max distance squared
-				p.DrawLine(p1.Pos.X, p1.Pos.Y, p2.Pos.X, p2.Pos.Y, lineColor)
+
+			if distSq < 10000 { // Max distance squared (100^2)
+				p.DrawLine(int(p1.X), int(p1.Y), int(p2.X), int(p2.Y), lineColor)
 			}
 		}
 	}
 
 	// Draw particles
 	for _, part := range ps.Particles {
-		p.FillRect(image.Rect(part.Pos.X, part.Pos.Y, part.Pos.X+part.Size, part.Pos.Y+part.Size), dotColor)
+		px := int(part.X)
+		py := int(part.Y)
+		p.FillRect(image.Rect(px, py, px+part.Size, py+part.Size), dotColor)
 	}
 }

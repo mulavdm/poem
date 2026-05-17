@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"strings"
 	"unsafe"
 
@@ -173,11 +174,11 @@ type GPUEngine struct {
 	projection  [16]float32
 
 	// Glassmorphism Buffers
-	fbo          uint32
-	fboTex       uint32
-	pingpongFbo  [2]uint32
-	pingpongTex  [2]uint32
-	quadVao      uint32
+	fbo         uint32
+	fboTex      uint32
+	pingpongFbo [2]uint32
+	pingpongTex [2]uint32
+	quadVao     uint32
 
 	batch           []vertex
 	currentDrawType float32
@@ -197,26 +198,26 @@ type GPUEngine struct {
 
 func New(hdc uintptr) (types.UIRenderer, error) {
 	fmt.Println("🚀 Factory: Spawning Hardware-Accelerated GPU Engine")
-	
+
 	pfd := win32.PIXELFORMATDESCRIPTOR{Flags: 4 | 32, PixelType: 0, ColorBits: 32, DepthBits: 24}
 	pfd.Size = uint16(unsafe.Sizeof(pfd))
 	pfd.Version = 1
-	
+
 	pf, err := win32.ChoosePixelFormat(hdc, &pfd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to choose pixel format: %v", err)
 	}
-	
+
 	err = win32.SetPixelFormat(hdc, pf, &pfd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to set pixel format: %v", err)
 	}
-	
+
 	hglrc, err := win32.WglCreateContext(hdc)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create wgl context: %v", err)
 	}
-	
+
 	err = win32.WglMakeCurrent(hdc, hglrc)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make wgl context current: %v", err)
@@ -335,7 +336,7 @@ func (g *GPUEngine) setupFbos() {
 
 func (g *GPUEngine) SetSize(w, h int) {
 	gl.Viewport(0, 0, int32(w), int32(h))
-	
+
 	// Orthographic projection matrix
 	left, right := float32(0), float32(w)
 	bottom, top := float32(h), float32(0) // Top-down coordinate system
@@ -358,11 +359,55 @@ func (g *GPUEngine) FillRect(r image.Rectangle, col color.RGBA) {
 }
 
 func (g *GPUEngine) DrawLine(x1, y1, x2, y2 int, col color.RGBA) {
-	w := x2 - x1
-	h := y2 - y1
-	if w == 0 { w = 1 }
-	if h == 0 { h = 1 }
-	g.FillRect(image.Rect(x1, y1, x1+w, y1+h), col)
+	// Optimize horizontal lines
+	if y1 == y2 {
+		minX, maxX := x1, x2
+		if minX > maxX {
+			minX, maxX = maxX, minX
+		}
+		g.FillRect(image.Rect(minX, y1, maxX+1, y1+1), col)
+		return
+	}
+
+	// Optimize vertical lines
+	if x1 == x2 {
+		minY, maxY := y1, y2
+		if minY > maxY {
+			minY, maxY = maxY, minY
+		}
+		g.FillRect(image.Rect(x1, minY, x1+1, maxY+1), col)
+		return
+	}
+
+	// Draw diagonal lines using Bresenham's Line Algorithm
+	dx := int(math.Abs(float64(x2 - x1)))
+	dy := int(math.Abs(float64(y2 - y1)))
+	sx, sy := 1, 1
+	if x1 >= x2 {
+		sx = -1
+	}
+	if y1 >= y2 {
+		sy = -1
+	}
+	err := dx - dy
+
+	for {
+		// Draw 1px pixel block
+		g.FillRect(image.Rect(x1, y1, x1+1, y1+1), col)
+
+		if x1 == x2 && y1 == y2 {
+			break
+		}
+		e2 := 2 * err
+		if e2 > -dy {
+			err -= dy
+			x1 += sx
+		}
+		if e2 < dx {
+			err += dx
+			y1 += sy
+		}
+	}
 }
 
 func (g *GPUEngine) DrawText(s string, x, y int, col color.RGBA) {
@@ -372,7 +417,7 @@ func (g *GPUEngine) DrawText(s string, x, y int, col color.RGBA) {
 		if !ok {
 			continue
 		}
-		
+
 		rect := image.Rect(currX, y, currX+char.Width, y+char.Height)
 		g.drawQuad(rect, 0, col, 1, [4]float32{char.U1, char.V1, char.U2, char.V2})
 		currX += char.Advance
@@ -393,16 +438,32 @@ func (g *GPUEngine) SetOffset(x, y float32) {
 	g.offsetY = y
 }
 
+func (g *GPUEngine) SetClip(r image.Rectangle) {
+	g.Flush()
+	if r.Empty() {
+		gl.Disable(gl.SCISSOR_TEST)
+	} else {
+		gl.Enable(gl.SCISSOR_TEST)
+		// OpenGL is bottom-up; translate top-down bounds
+		gl.Scissor(
+			int32(r.Min.X),
+			int32(types.Height-r.Max.Y),
+			int32(r.Dx()),
+			int32(r.Dy()),
+		)
+	}
+}
+
 func (g *GPUEngine) Flush() {
 	if len(g.batch) == 0 {
 		return
 	}
 
 	gl.UseProgram(g.program)
-	
+
 	projLoc := gl.GetUniformLocation(g.program, gl.Str("projection\x00"))
 	gl.UniformMatrix4fv(projLoc, 1, false, &g.projection[0])
-	
+
 	gl.Uniform2f(gl.GetUniformLocation(g.program, gl.Str("screenSize\x00")), float32(types.Width), float32(types.Height))
 
 	if g.batchDrawType > 0.5 {
@@ -431,27 +492,27 @@ func (g *GPUEngine) drawQuad(r image.Rectangle, radius float32, col color.RGBA, 
 	g.batchIsGlass = g.currentIsGlass
 
 	c := [4]float32{float32(col.R) / 255, float32(col.G) / 255, float32(col.B) / 255, float32(col.A) / 255}
-	params := [4]float32{float32(r.Min.X), float32(r.Min.Y), float32(r.Dx()), float32(r.Dy())}
+	params := [4]float32{float32(r.Min.X) + g.offsetX, float32(r.Min.Y) + g.offsetY, float32(r.Dx()), float32(r.Dy())}
 
 	glow := g.currentGlow
-	if drawType > 0.5 { glow = 0 }
+	if drawType > 0.5 {
+		glow = 0
+	}
 
 	isGlass := g.currentIsGlass
 
 	shOff := g.currentShadowOffset
 	shBlur := g.currentShadowBlur
 
-	quad := []vertex{
-		{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[0], uv[1]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
-		{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[2], uv[1]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
-		{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[2], uv[3]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
-		
-		{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[0], uv[1]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
-		{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[2], uv[3]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
-		{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[0], uv[3]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
-	}
+	g.batch = append(g.batch,
+		vertex{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[0], uv[1]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
+		vertex{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[2], uv[1]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
+		vertex{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[2], uv[3]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
 
-	g.batch = append(g.batch, quad...)
+		vertex{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Min.Y) + g.offsetY}, [2]float32{uv[0], uv[1]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
+		vertex{[2]float32{float32(r.Max.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[2], uv[3]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
+		vertex{[2]float32{float32(r.Min.X) + g.offsetX, float32(r.Max.Y) + g.offsetY}, [2]float32{uv[0], uv[3]}, c, params, radius, drawType, glow, isGlass, shOff, shBlur, 0},
+	)
 }
 
 func (g *GPUEngine) Paint(hdc uintptr, state *types.ApplicationState) {
@@ -472,7 +533,7 @@ func (g *GPUEngine) Paint(hdc uintptr, state *types.ApplicationState) {
 	for i := 0; i < 4; i++ { // 2 iterations (horizontal + vertical)
 		gl.BindFramebuffer(gl.FRAMEBUFFER, g.pingpongFbo[b2i(!horizontal)])
 		gl.Uniform1i(gl.GetUniformLocation(g.blurProgram, gl.Str("horizontal\x00")), int32(b2i(horizontal)))
-		
+
 		var tex uint32
 		if firstIteration {
 			tex = g.fboTex
@@ -481,7 +542,7 @@ func (g *GPUEngine) Paint(hdc uintptr, state *types.ApplicationState) {
 			tex = g.pingpongTex[b2i(horizontal)]
 		}
 		gl.BindTexture(gl.TEXTURE_2D, tex)
-		
+
 		gl.BindVertexArray(g.quadVao)
 		gl.DrawArrays(gl.TRIANGLE_STRIP, 0, 4)
 		horizontal = !horizontal
@@ -508,7 +569,9 @@ func (g *GPUEngine) Paint(hdc uintptr, state *types.ApplicationState) {
 }
 
 func b2i(b bool) int {
-	if b { return 1 }
+	if b {
+		return 1
+	}
 	return 0
 }
 

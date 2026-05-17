@@ -53,12 +53,16 @@ func Run(config AppConfig) {
 
 	// 3. Initialize application state
 	globalState = &types.ApplicationState{
-		StatusText:   "Engine Running Synchronized Component Tree",
-		Volume:       75.0,
-		GlassEnabled: true,
-		ArrowCursor:  win32.LoadCursor(0, 32512), // IDC_ARROW (32512)
-		HandCursor:   win32.LoadCursor(0, 32649), // IDC_HAND (32649)
-		IBeamCursor:  win32.LoadCursor(0, 32513), // IDC_IBEAM (32513)
+		StatusText:      "Engine Running Synchronized Component Tree",
+		Volume:          75.0,
+		GlassEnabled:    true,
+		ArrowCursor:     win32.LoadCursor(0, 32512), // IDC_ARROW (32512)
+		HandCursor:      win32.LoadCursor(0, 32649), // IDC_HAND (32649)
+		IBeamCursor:     win32.LoadCursor(0, 32513), // IDC_IBEAM (32513)
+		ScrollPositions: make(map[string]int),
+		ScrollDragStart: make(map[string]int),
+		ScrollStartY:    make(map[string]int),
+		ScrollCurrent:   make(map[string]float64),
 	}
 	globalState.CursorID = globalState.ArrowCursor
 	globalBuildPages = config.BuildPagesFn
@@ -72,9 +76,9 @@ func Run(config AppConfig) {
 	windowName, _ := syscall.UTF16PtrFromString(windowTitle)
 
 	wc := win32.WNDCLASS{
-		Style:         3,
-		PfnWndProc:    syscall.NewCallback(libWndProc),
-		ClassName:     className,
+		Style:      3,
+		PfnWndProc: syscall.NewCallback(libWndProc),
+		ClassName:  className,
 	}
 	win32.RegisterClass(&wc)
 
@@ -124,6 +128,7 @@ func Run(config AppConfig) {
 			dt := now.Sub(lastFrame).Seconds()
 			if dt > 0 {
 				globalState.CurrentFPS = 1.0 / dt
+				globalState.LastDt = dt
 				globalState.Particles.Update(dt)
 				globalState.UpdateAnimations(float32(dt))
 
@@ -149,7 +154,7 @@ func Run(config AppConfig) {
 			}
 			lastFrame = now
 			globalState.FrameTime = time.Since(start)
-			win32.InvalidateRect(hwnd, nil, false)
+			triggerRepaint(hwnd)
 		}
 	}()
 
@@ -175,10 +180,22 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 		break
 	case 0x000F: // WM_PAINT
 		if globalEngine != nil && globalState != nil {
+			now := time.Now()
+			var paintDt float64 = 0.0166 // default fallback
+			if !globalState.LastPaintTime.IsZero() {
+				paintDt = now.Sub(globalState.LastPaintTime).Seconds()
+			}
+			globalState.LastPaintTime = now
+			if paintDt > 0.1 {
+				paintDt = 0.1
+			}
+			globalState.RenderDt = paintDt
+
 			if globalBuildPages != nil {
 				globalBuildPages(globalState)
 			}
 			globalEngine.Paint(globalHdc, globalState)
+			win32.ValidateRect(hwnd, nil)
 		}
 		return 0
 	case 0x0005: // WM_SIZE
@@ -223,14 +240,24 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 		}
 
 		globalState.StatusText = fmt.Sprintf("Interaction Captured: %d Clicks Recorded | Focus: %s", globalState.ClickCount, newFocus)
-		win32.InvalidateRect(hwnd, nil, false)
+		triggerRepaint(hwnd)
 		return 0
 	case 0x0202: // WM_LBUTTONUP
-		if globalState != nil {
+		if globalState == nil {
+			return 0
+		}
+		pt := image.Point{X: int(win32.GET_X_LPARAM(lparam)), Y: int(win32.GET_Y_LPARAM(lparam))}
+		if globalState.ActiveID != "" {
+			if comp := libFindComponent(globalState.ActiveID); comp != nil {
+				comp.OnMouseUp(pt, globalState)
+				if globalBuildPages != nil {
+					globalBuildPages(globalState)
+				}
+			}
 			globalState.ActiveID = ""
 		}
 		win32.ReleaseCapture()
-		win32.InvalidateRect(hwnd, nil, false)
+		triggerRepaint(hwnd)
 		return 0
 	case 0x0200: // WM_MOUSEMOVE
 		if globalState == nil {
@@ -264,12 +291,36 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 					if globalBuildPages != nil {
 						globalBuildPages(globalState)
 					}
-					win32.InvalidateRect(hwnd, nil, false)
+					triggerRepaint(hwnd)
 				}
 			}
 		} else if newHover != "" {
 			if comp := libFindComponent(newHover); comp != nil {
 				comp.OnMouseMove(pt, globalState)
+			}
+		}
+		return 0
+	case 0x020A: // WM_MOUSEWHEEL
+		if globalState == nil {
+			return 0
+		}
+		delta := int(int16(wparam >> 16))
+		pt := image.Point{globalState.MouseX, globalState.MouseY}
+
+		if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+			for _, comp := range comps {
+				comp.Walk(func(c types.Component) {
+					if sc, ok := c.(types.ScrollableComponent); ok {
+						if pt.In(c.Bounds()) {
+							if sc.OnMouseWheel(pt, delta, globalState) {
+								if globalBuildPages != nil {
+									globalBuildPages(globalState)
+								}
+								triggerRepaint(hwnd)
+							}
+						}
+					}
+				})
 			}
 		}
 		return 0
@@ -282,7 +333,7 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 		if wparam == VK_TAB {
 			reverse := win32.GetKeyState(VK_SHIFT) < 0
 			globalState.CycleFocus(reverse)
-			win32.InvalidateRect(hwnd, nil, false)
+			triggerRepaint(hwnd)
 			return 0
 		}
 
@@ -293,7 +344,7 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 						if globalBuildPages != nil {
 							globalBuildPages(globalState)
 						}
-						win32.InvalidateRect(hwnd, nil, false)
+						triggerRepaint(hwnd)
 						break
 					}
 				}
@@ -311,7 +362,7 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 						if globalBuildPages != nil {
 							globalBuildPages(globalState)
 						}
-						win32.InvalidateRect(hwnd, nil, false)
+						triggerRepaint(hwnd)
 						break
 					}
 				}
@@ -359,4 +410,9 @@ func libFindHoveredComponent(pt image.Point) string {
 		}
 	}
 	return ""
+}
+
+func triggerRepaint(hwnd uintptr) {
+	win32.InvalidateRect(hwnd, nil, false)
+	win32.PostMessage(hwnd, 0, 0, 0) // WM_NULL dummy message to wake up GetMessage loop asynchronously
 }

@@ -24,6 +24,7 @@ type Painter interface {
 	SetGlass(enabled bool)
 	SetShadow(ox, oy, blur float32)
 	SetOffset(x, y float32)
+	SetClip(r image.Rectangle)
 	Flush()
 }
 
@@ -34,12 +35,12 @@ type ApplicationState struct {
 	StartTime  time.Time
 
 	// Input State
-	MouseX    int
-	MouseY    int
-	HoveredID string
-	FocusedID string
-	ActiveID  string  // ID of the component currently capturing the mouse (e.g., for dragging)
-	CursorID  uintptr // Active dynamic cursor handle
+	MouseX      int
+	MouseY      int
+	HoveredID   string
+	FocusedID   string
+	ActiveID    string  // ID of the component currently capturing the mouse (e.g., for dragging)
+	CursorID    uintptr // Active dynamic cursor handle
 	ArrowCursor uintptr // System IDC_ARROW cursor
 	HandCursor  uintptr // System IDC_HAND cursor
 	IBeamCursor uintptr // System IDC_IBEAM cursor
@@ -66,13 +67,22 @@ type ApplicationState struct {
 	CoreMask   uint64
 
 	// VFX
-	Particles    *ParticleSystem
-	GlassEnabled bool
-	FrameTime    time.Duration
+	Particles     *ParticleSystem
+	GlassEnabled  bool
+	FrameTime     time.Duration
+	LastDt        float64
+	LastPaintTime time.Time
+	RenderDt      float64
 
 	// Live Telemetry Stream History Slices
 	FPSHistory  []float32
 	HeapHistory []float32
+
+	// Persistent Scroll Viewport State
+	ScrollPositions map[string]int
+	ScrollDragStart map[string]int
+	ScrollStartY    map[string]int
+	ScrollCurrent   map[string]float64
 }
 
 const (
@@ -230,6 +240,12 @@ type Component interface {
 	OnMouseMove(pt image.Point, state *ApplicationState) bool
 	Focusable() bool
 	Walk(fn func(Component))
+}
+
+// ScrollableComponent represents a component that responds to mouse wheel actions
+type ScrollableComponent interface {
+	Component
+	OnMouseWheel(pt image.Point, delta int, state *ApplicationState) bool
 }
 
 var (
