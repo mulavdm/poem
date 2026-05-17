@@ -18,6 +18,7 @@ func BuildAllPages(state *render.ApplicationState) {
 
 	state.RegisterHotkey("Ctrl+S", func(s *render.ApplicationState) {
 		s.StatusText = "Configuration Matrix Saved Successfully! [Visual Plexus Density Synced]"
+		s.PlaySuccess()
 	})
 
 	if state.CurrentPage == "" {
@@ -276,6 +277,25 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 				s.GlassEnabled = !s.GlassEnabled
 			},
 		},
+		&render.Button{
+			CompID: "btn_audio", Rect: image.Rect(110, 300, 460, 350),
+			Label: func() string {
+				if state.AudioEnabled {
+					return "MUTE AUDIO FEEDBACK"
+				}
+				return "UNMUTE AUDIO FEEDBACK"
+			}(),
+			BaseColor: color.RGBA{60, 80, 120, 255}, HoverColor: color.RGBA{80, 110, 180, 255}, Rounding: 5,
+			OnClick: func(s *render.ApplicationState) {
+				s.AudioEnabled = !s.AudioEnabled
+				if s.AudioEnabled {
+					s.StatusText = "Acoustic Audio Feedback Enabled // OK"
+					s.PlaySuccess()
+				} else {
+					s.StatusText = "Acoustic Audio Feedback Muted // OK"
+				}
+			},
+		},
 
 		// Engine Information
 		&render.Label{CompID: "lbl_engine_info", Pos: image.Point{110, 350}, Text: "ENGINE INFORMATION", Color: color.RGBA{200, 200, 200, 255}},
@@ -353,6 +373,7 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 									TextColor: color.RGBA{255, 255, 255, 255}, Rounding: 4,
 									OnSubmit: func(text string, s *render.ApplicationState) {
 										s.StatusText = fmt.Sprintf("Console Command Executed: '%s' // OK", text)
+										s.PlaySuccess()
 									},
 								},
 							},
@@ -398,6 +419,7 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 									BaseColor: color.RGBA{0, 150, 255, 255}, HoverColor: color.RGBA{0, 180, 255, 255}, Rounding: 4,
 									OnClick: func(s *render.ApplicationState) {
 										s.StatusText = "Bottom Trigger Activated! Auto-Glide Centering works perfectly!"
+										s.PlaySuccess()
 									},
 								},
 								&render.TextInput{
@@ -406,6 +428,7 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 									TextColor: color.RGBA{255, 255, 255, 255}, Rounding: 4,
 									OnSubmit: func(text string, s *render.ApplicationState) {
 										s.StatusText = fmt.Sprintf("Bottom Input Received: '%s'", text)
+										s.PlaySuccess()
 									},
 								},
 							},

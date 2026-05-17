@@ -107,7 +107,7 @@ func (b *Button) HitTest(pt image.Point) string {
 	return ""
 }
 func (b *Button) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
-	if state.FocusedID == b.CompID && (key == 13 || char == '\r') {
+	if state.FocusedID == b.CompID && (key == 13 || key == 32) { // Enter or Space
 		if b.OnClick != nil {
 			b.OnClick(state)
 			return true
@@ -269,7 +269,7 @@ func (t *TextInput) OnKey(key uint32, char rune, state *types.ApplicationState) 
 	const VK_BACK = 0x08
 	const VK_RETURN = 0x0D
 
-	if key == VK_RETURN || char == '\r' {
+	if key == VK_RETURN {
 		if t.OnSubmit != nil {
 			t.OnSubmit(t.Text, state)
 			return true
