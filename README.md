@@ -1,24 +1,55 @@
 # PolyEngine: Hybrid Frameworkless GUI Engine in Go
 
-A lightweight, modular, zero-framework desktop window engine implemented in Go. This project features a polymorphic architecture that switches between a **Pure Go CPU Software Renderer** (zero external dependencies) and a **Hardware-Accelerated GPU Pipeline** (OpenGL Core Profile) using Go build tags.
+A lightweight, highly modular, zero-framework desktop window engine implemented in Go. This project features a polymorphic architecture that switches between a **Pure Go CPU Software Renderer** (zero external dependencies) and a **Hardware-Accelerated GPU Pipeline** (OpenGL Core Profile) using Go build tags.
+
+Originally a prototype engine, PolyEngine is now fully packaged as an **importable standalone library (`pkg/render`)** so that any external Go application (like the Book Manager) can easily construct stunning, premium user interfaces.
 
 ---
 
 ## 🏗️ Project Architecture
 
-The engine is decoupled into modular packages to ensure maintainability and idiomatic Go structure.
+The engine is decoupled into modular packages to isolate concerns and enforce a strict acyclic dependency flow:
 
 ```text
 .
-├── cmd/engine/         # Main entry point & Win32 Event Loop
+├── cmd/engine/         # Main demo entry point dogfooding the library
+├── pkg/
+│   └── render/         # Public Standalone Library
+│       ├── render.go   # Type Aliases & Constants (Single Import Interface)
+│       ├── run.go      # Native Win32 Event Pump & Application Runner
+│       ├── types/      # Painter, UIRenderer, Component Contracts & ApplicationState
+│       ├── components/ # Declarative Primitives (Panel, Button, TextInput, Slider, etc.)
+│       ├── layout/     # Axis-Aligned FlexBox calculations
+│       └── backend/    # CPU and GPU Painting Implementations (conditional tags)
 ├── internal/
-│   ├── render/         # Rendering Abstractions & Strategies
-│   │   ├── renderer.go # Shared Interfaces & App State
-│   │   ├── cpu.go      # Software Rasterizer (!gpu tag)
-│   │   └── gpu.go      # OpenGL Pipeline (gpu tag)
-│   └── win32/          # Native Syscalls & Windows Structs
+│   └── win32/          # Private Syscalls & Native Windows Structs
 ├── ARCHITECTURE.md     # Technical Deep-Dive & Engineering Log
 └── GEMINI.md           # Developer Guide for AI Assistants
+```
+
+---
+
+## 🚀 How to Consume the POEM Library
+
+A client Go application only requires a **single import statement** to gain access to the complete component registry, layout tools, and window runner:
+
+```go
+package main
+
+import (
+	"go_native_gpu_gui/pkg/render"
+)
+
+func main() {
+	render.Run(render.AppConfig{
+		Title:  "Book Manager // Realized",
+		Width:  1024,
+		Height: 768,
+		BuildPagesFn: func(state *render.ApplicationState) {
+			// Populate page registry components reactively here!
+		},
+	})
+}
 ```
 
 ---
@@ -30,12 +61,12 @@ The CPU mode is **zero-dependency** and requires only the Go standard library (p
 
 **Build Command:**
 ```bash
-go build -o engine.exe ./cmd/engine
+go build -o poem_cpu.exe ./cmd/engine
 ```
 
 **Run:**
 ```bash
-./engine.exe
+./poem_cpu.exe
 ```
 
 ### 2. Hardware GPU Mode (OpenGL)
@@ -43,12 +74,12 @@ The GPU mode pipelines rendering directly to the graphics card. It requires a C 
 
 **Build Command:**
 ```bash
-go build -tags gpu -o engine_gpu.exe ./cmd/engine
+go build -tags gpu -o poem_gpu.exe ./cmd/engine
 ```
 
 **Run:**
 ```bash
-./engine_gpu.exe
+./poem_gpu.exe
 ```
 
 ---
@@ -66,21 +97,26 @@ go build -ldflags="-s -w -H=windowsgui" -o PolyEngine.exe ./cmd/engine
 
 ## 📂 Developer Guide: Extending the Engine
 
-### Adding Application State
-Modify `internal/render/renderer.go`:
+### Adding Application State variables
+Modify **[types.go](file:///d:/Programming/GUIProject/POEM/pkg/render/types/types.go)**:
 ```go
 type ApplicationState struct {
     ClickCount int
     StatusText string
-    // Add your custom variables here
+    // Add your custom variables here!
 }
 ```
 
-### Custom CPU Components
-Modify `internal/render/cpu.go`. Use the `CPUEngine.Paint` method to draw primitives using Go's `image/draw` package or the custom `drawRoundedRect` and `drawText` helpers.
+### Adding New UI Primitives
+1. Create your component struct in **[components.go](file:///d:/Programming/GUIProject/POEM/pkg/render/components/components.go)** implementing the `types.Component` interface.
+2. Re-export the component inside **[render.go](file:///d:/Programming/GUIProject/POEM/pkg/render/render.go)** using type aliasing:
+   ```go
+   type MyNewComponent = components.MyNewComponent
+   ```
 
-### Native Window Messages
-Modify `cmd/engine/main.go` in the `wndProc` function to handle more Win32 events (e.g., `WM_KEYDOWN`, `WM_SIZE`).
+### Modifying Painting Logic
+- **For CPU Rasterization**: Adjust the `CPUEngine` methods in **[cpu.go](file:///d:/Programming/GUIProject/POEM/pkg/render/backend/cpu.go)**.
+- **For GPU Graphics**: Adjust the `GPUEngine` shader pipeline in **[gpu.go](file:///d:/Programming/GUIProject/POEM/pkg/render/backend/gpu.go)**.
 
 ---
 

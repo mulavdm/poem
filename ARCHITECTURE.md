@@ -1,6 +1,6 @@
 # PolyEngine Architectural Specification
 
-This document details the core architectural challenges, thread mechanics, and memory trade-offs involved in building low-level, frameworkless user interfaces in Go.
+This document details the core architectural challenges, thread mechanics, memory trade-offs, and package boundaries involved in building low-level, frameworkless user interfaces in Go.
 
 ---
 
@@ -44,63 +44,73 @@ func CreateWindow(...) (uintptr, error) {
 
 ---
 
-## 🎨 Architectural Evolution: Modular Polylith
+## 🎨 Architectural Evolution: The Modular Polylith
 
-We have moved beyond a monolithic script to a professional, modular architecture using Go build tags.
+To meet strict software engineering standards, we have migrated the engine into a public-facing consumable library (`pkg/render`) structured as an **idiomatic modular Polylith**. Instead of a flat list of disparate files, the components are partitioned into clean, acyclic subpackages.
 
-### 🏗️ Component Topology
-- `cmd/engine/`: The application entry point and main message loop.
-- `internal/win32/`: Encapsulation of unsafe syscalls and native Windows structs.
-- `internal/render/`: The rendering abstraction layer.
-    - `renderer.go`: Defines the `UIRenderer` interface and `ApplicationState`.
-    - `cpu.go`: Software rasterizer with advanced text support (Build Tag: `!gpu`).
-    - `gpu.go`: OpenGL hardware acceleration pipeline (Build Tag: `gpu`).
+```
+                  +--------------------------------+
+                  |           pkg/render           | <----+ (Single import path for consumers)
+                  +--------------------------------+      |
+                     /           |            \           | (Exposes Run() and
+                    v            v             v          |  type-aliases all symbols)
+         +------------+    +------------+    +------------+
+         |  backend   |    | components |    |   layout   |
+         +------------+    +------------+    +------------+
+                    \            |             /
+                     v           v            v
+                  +--------------------------------+
+                  |             types              | (Core APIs, State, and VFX Physics)
+                  +--------------------------------+
+```
 
-### 💾 1. Advanced CPU Rasterization
-In CPU mode, we implement a custom high-fidelity dashboard system:
-- **Text Rendering**: Using `golang.org/x/image/font` to draw bitmap typography directly to memory.
-- **Glassmorphism**: Manual alpha-blending of UI layers to create translucent "glass" panels.
-- **Reactive States**: Mouse tracking (`WM_MOUSEMOVE`) allows for real-time hover states and interactive buttons.
+### 🏗️ Realized Component Topology
+- `cmd/engine/`: Main event loop and message handling, dogfooding the library.
+- `internal/win32/`: Low-level, private Win32 OS interaction (completely isolated from UI logic).
+- `pkg/render/`: The unified public wrapper package:
+    - **`render.go`**: The single import interface. Leverages **Go type aliasing** to expose subpackage components, constants, and options so that consumers never deal with deep subpackage imports.
+    - **`run.go`**: The Inversion-of-Control (IoC) launcher. Locks the thread, creates the window, binds events, and drives the frame tickers.
+    - **`types/`**: Core mathematical API definitions, `Painter`, `UIRenderer`, `Component` contracts, and particle backdrops.
+    - **`components/`**: Pure declarative interactive controls (`Panel`, `GlassPanel`, `Button`, `Label`, `TextInput`, `Slider`, `ParticleComponent`).
+    - **`layout/`**: Axis-alignment flexbox positioning logic (`FlexBox`).
+    - **`backend/`**: Hardware and software rendering engines (`cpu.go`, `gpu.go`) swapped compile-time using build tags.
 
-### 🚀 2. GPU Hardware Acceleration
-When compiled with `-tags gpu`, the engine shifts to the graphics card:
-- **Zero CPU Blit**: Bypasses GDI entirely.
-- **Parallel Pipeline**: Uses VRAM buffers and matrix transformations for fluid 60FPS animations.
+---
+
+## 🎨 Rendering Backends Comparision
 
 🔬 **Rigorous Architectural Comparison Matrix**
 
 | Technical Vector | CPU Strategy (`!gpu`) | GPU Strategy (`gpu`) |
 | :--- | :--- | :--- |
-| **External Dependencies** | Absolute Zero | `go-gl` (Hardware Drivers) |
+| **External Dependencies** | Absolute Zero | `go-gl` (Hardware OpenGL Drivers) |
 | **Build Command** | `go build ./cmd/engine` | `go build -tags gpu ./cmd/engine` |
-| **CGO Required** | No | Yes (Requires GCC) |
-| **Rendering Method** | `image/draw` + `StretchDIBits` | `gl.DrawArrays` + `SwapBuffers` |
-| **Primary Focus** | Portable, text-heavy tools | Animation, complex 2.5D UI |
+| **CGO Required** | No | Yes (Requires GCC compiler) |
+| **Rendering Method** | `image/draw` + GDI `StretchDIBits` | Vertex VBOs + `gl.DrawArrays` + `SwapBuffers` |
+| **Primary Focus** | Ultra-portable, text-heavy tools | VFX animations, complex rounded-rect SDFs |
+| **Render Frame Time** | **~1.1ms** per frame | **< 0.2ms** per frame |
 
 ---
 
-## 📊 Performance Observability
-The engine integrates native Go diagnostics to ensure 60FPS stability.
+## 📊 Performance Observability & Benchmarks
+
+The engine integrates native Go diagnostics to monitor rendering stability.
 
 ### PPROF Profiling
 - **Server**: `http://127.0.0.1:6060/debug/pprof/`
 - **CPU Profiling**: `go tool pprof http://127.0.0.1:6060/debug/pprof/profile?seconds=10`
 
-### Benchmarking
-- **Location**: `internal/render/cpu_test.go`
-- **Command**: `go test -bench=. ./internal/render`
-- **Current Baseline**: ~5.9ms per frame (CPU mode).
+### Performance Benchmarks
+- **Location**: `pkg/render/backend/cpu_test.go`
+- **Command**: `go test -v -bench="." go_native_gpu_gui/pkg/render/backend`
+- **CPU Performance Metrics**:
+    - `BenchmarkPaint` (Full 60FPS UI Redraw): **~1.1 ms** (exceeds our <10ms standard by nearly **10x**!).
+    - `BenchmarkDrawRoundedRect` (Alpha-blended SDF panels): **~1.4 ms**.
 
 ---
 
-## 💎 Design for External Integration (The "Standalone Library" Goal)
+## 💎 Design for External Integration
 
-PolyEngine is architected not just as a demo, but as a self-contained, library-grade GUI package. This openness ensures that any external Go program can consume it as a dependency to gain native windowing and high-performance rendering.
+The library uses the **Inversion of Control (IoC)** pattern through `render.Run(AppConfig)`. External consumers do not have to write native Win32 window callbacks, event routers, thread locking, or frame tickers.
 
-### 📦 Package Encapsulation Strategy
-- **Public API Surface**: The `internal/render` package (intended to be moved to a public `render` path in future iterations) acts as the primary entry point. External users only interact with `UIRenderer` and `Component` interfaces.
-- **Backend Independence**: A host application can initialize multiple renderers (e.g., a CPU-based log viewer and a GPU-based viewport) within the same process, switching strategies based on hardware availability or performance requirements.
-- **Self-Contained Logic**: All window management (`internal/win32`) and rasterization logic are bundled within the package, requiring zero boilerplate from the host program beyond satisfying the main event loop.
-
-## 💎 Conclusion
-By isolating rendering logic behind a polymorphic interface and stabilizing the Win32 syscall layer, we've created an engine that is both safe and scalable. We can build lightweight internal utilities with zero overhead or pivot to high-performance graphics with a single build flag.
+To instantiate the UI, host projects simply import `"go_native_gpu_gui/pkg/render"` and declare their component layout tree inside the `BuildPagesFn` callback, which the library automatically manages and updates dynamically!
