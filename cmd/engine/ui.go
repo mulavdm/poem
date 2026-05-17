@@ -16,6 +16,10 @@ func BuildAllPages(state *render.ApplicationState) {
 		state.Pages = make(map[string][]render.Component)
 	}
 
+	state.RegisterHotkey("Ctrl+S", func(s *render.ApplicationState) {
+		s.StatusText = "Configuration Matrix Saved Successfully! [Visual Plexus Density Synced]"
+	})
+
 	if state.CurrentPage == "" {
 		state.CurrentPage = render.PageDashboard
 	}
@@ -309,6 +313,9 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 								&render.Button{
 									CompID: "diag_btn_trigger", Rect: image.Rect(0, 0, 120, 30), Label: "PING PULSE",
 									BaseColor: color.RGBA{0, 120, 255, 255}, HoverColor: color.RGBA{0, 160, 255, 255}, Rounding: 4,
+									OnClick: func(s *render.ApplicationState) {
+										s.StatusText = "Pulse Ping Signal Dispatched: [0xFF09]"
+									},
 								},
 							},
 						},
@@ -344,6 +351,9 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 									CompID: "diag_input_scroll", Rect: image.Rect(0, 0, 130, 30),
 									Placeholder: "EXECUTE...", BGColor: color.RGBA{10, 10, 20, 255},
 									TextColor: color.RGBA{255, 255, 255, 255}, Rounding: 4,
+									OnSubmit: func(text string, s *render.ApplicationState) {
+										s.StatusText = fmt.Sprintf("Console Command Executed: '%s' // OK", text)
+									},
 								},
 							},
 						},
@@ -375,6 +385,31 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 						&render.Label{CompID: "diag_lbl_33", Pos: image.Point{0, 0}, Text: "[33] UNIFIED CONTROLLER LOOP: RUNNING", Color: color.RGBA{0, 255, 150, 255}},
 						&render.Label{CompID: "diag_lbl_34", Pos: image.Point{0, 0}, Text: "[34] DECAY SPEED CONSTANT: 0.07", Color: color.RGBA{150, 160, 180, 255}},
 						&render.Label{CompID: "diag_lbl_35", Pos: image.Point{0, 0}, Text: "[35] SYSTEM OVERALL STATUS: EXCELLENT", Color: color.RGBA{0, 255, 150, 255}},
+
+						// Interactive elements at the bottom to test viewport autoscroll centering glide
+						&render.FlexBox{
+							CompID:    "diag_row_test_bottom",
+							Direction: render.Horizontal,
+							Padding:   0,
+							Gap:       10,
+							Children: []render.Component{
+								&render.Button{
+									CompID: "diag_btn_test_bottom", Rect: image.Rect(0, 0, 150, 30), Label: "BOTTOM TRIGGER",
+									BaseColor: color.RGBA{0, 150, 255, 255}, HoverColor: color.RGBA{0, 180, 255, 255}, Rounding: 4,
+									OnClick: func(s *render.ApplicationState) {
+										s.StatusText = "Bottom Trigger Activated! Auto-Glide Centering works perfectly!"
+									},
+								},
+								&render.TextInput{
+									CompID: "diag_input_test_bottom", Rect: image.Rect(0, 0, 150, 30),
+									Placeholder: "BOTTOM INPUT...", BGColor: color.RGBA{10, 10, 20, 255},
+									TextColor: color.RGBA{255, 255, 255, 255}, Rounding: 4,
+									OnSubmit: func(text string, s *render.ApplicationState) {
+										s.StatusText = fmt.Sprintf("Bottom Input Received: '%s'", text)
+									},
+								},
+							},
+						},
 					},
 				},
 			},

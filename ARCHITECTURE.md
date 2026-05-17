@@ -182,9 +182,52 @@ Unlocking unthrottled 60Hz+ performance dropped the frame delta `dt` to exactly 
 * **The Solution**: We refactored `particles.go` to store and accumulate all coordinates, velocities, and physics steps using high-precision `float64` variables. The values are only cast to integers at the final drawing phase, ensuring gorgeous, fluid animations at any framerate.
 
 ---
-
 ## 💎 Design for External Integration
 
 The library uses the **Inversion of Control (IoC)** pattern through `render.Run(AppConfig)`. External consumers do not have to write native Win32 window callbacks, event routers, thread locking, or frame tickers.
 
 To instantiate the UI, host projects simply import `"go_native_gpu_gui/pkg/render"` and declare their component layout tree inside the `BuildPagesFn` callback, which the library automatically manages and updates dynamically!
+
+---
+
+## ⌨️ Keyboard Focus & Global Hotkey Engine Architecture
+
+The framework features a dedicated, low-latency, and highly decoupled keyboard controller integrated directly into the native Win32 message procedure (`libWndProc`).
+
+### 1. Sequential Focus Cycling Pass (`CycleFocus`)
+Focus navigation is managed sequentially via `Tab` and `Shift+Tab`. To prevent legacy state corruption, `CycleFocus`:
+1. Traverses components declared inside the active page registry (`s.Pages[s.CurrentPage]`) instead of a static global registry.
+2. Recursively walks the component hierarchy to collect all interactive widgets returning `Focusable() bool { return true }` (e.g. `Button`, `TextInput`, `Slider`).
+3. Determines the index of the currently focused widget ID, shifts the focus pointer forward or backward (clamped to slice boundaries), and triggers a repaint.
+
+### 2. Polymorphic Scroll Centering (`ScrollContainer`)
+To automatically glide focused items into view when navigating massive lists, we established the `types.ScrollContainer` interface:
+```go
+type ScrollContainer interface {
+    Component
+    ScrollToChild(childID string, childBounds image.Rectangle, state *ApplicationState) bool
+}
+```
+* **Circular Import Avoidance**: By defining this interface inside `pkg/render/types` instead of `pkg/render/components`, we keep our package layout clean and fully compliant with Go's package tree dependencies.
+* **Centered Centering Math with Boundary Spacing**: `ScrollView` implements `ScrollToChild`. It dynamically queries if the target child is a descendant, computes its Y bounds relative to the viewport top coordinate (independent of LERP visual scroll offsets), and shifts `ScrollY` up or down to gracefully center the element inside the visible viewport. It incorporates a `20px` safety boundary padding to prevent focused elements and their visual glow rings from clipping against the viewport edges.
+
+### 3. Glow Ring Painter Pipeline Integration
+Focused interactive elements are visually emphasized using glowing outline rings. Inside `Button.Draw`, `TextInput.Draw`, and `Slider.Draw`:
+- We query `state.FocusedID == CompID`.
+- We draw a larger boundary rect (2px offset gutter) using `p.SetGlow(6.0)` and standard translucent neon colors (`color.RGBA{0, 150, 255, 200}`).
+- This layers the neon focus ring behind the widget box, producing a gorgeous, premium outline accent.
+
+### 4. Declarative Keyboard Adjustments & Event Submissions
+Interactive components capture specialized keystroke operations:
+- **`Button.OnKey`**: Intercepts `Enter` (`VK_RETURN` = 13) and executes the button's `OnClick` closure.
+- **`Slider.OnKey`**: Captures `Left Arrow` (`VK_LEFT`) and `Right Arrow` (`VK_RIGHT`) keys to mathematically increment or decrement the slider value. It snaps values to the nearest 5% increment (`math.Round((Value ± step) / step) * step`) to clean up any precise decimal offsets left behind from custom mouse dragging.
+- **`TextInput.OnKey`**: Adds support for an optional `OnSubmit` callback, executed instantly whenever `Enter` is hit inside a focused text input.
+
+### 5. Win32 Key Dispatching Loop
+Inside the native `libWndProc` under `WM_KEYDOWN` (0x0100):
+- **Escape (`VK_ESCAPE`)**: Resets `globalState.FocusedID = ""` to clear keyboard capture instantly.
+- **Tab Cycling**: Checks modifier states via `win32.GetKeyState(VK_SHIFT) < 0` to trigger forward/reverse cycling.
+- **Modifier Shortcuts (Ctrl+S)**: Detects Left, Right, and Generic Control modifier pressed states simultaneously. Queries registered global listeners from the new `state.Hotkeys` map and fires handlers.
+- **Engine Keylogger**: Logs keystroke virtual key codes and active Control modifiers to standard output in real-time, providing immediate visibility during debugging.
+- **Event Propagation**: Dispatches keys directly to the focused component's `OnKey(...)` method, facilitating modular key handling.
+

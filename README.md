@@ -4,6 +4,8 @@ A lightweight, highly modular, zero-framework desktop window engine implemented 
 
 Originally a prototype engine, PolyEngine is now fully packaged as an **importable standalone library (`pkg/render`)** so that any external Go application (like the Book Manager) can easily construct stunning, premium user interfaces.
 
+POEM also includes a complete, low-latency **Keyboard Controller & Focus Navigation Engine** supporting active-page focus cycling (`Tab` / `Shift+Tab`), glowing neon outline focus indicators, automatic scroll view centering, modular input bindings (such as left/right arrows for sliders, and Enter clicks for buttons), and declarative global hotkeys (like `Ctrl+S`).
+
 ---
 
 ## 🏗️ Project Architecture

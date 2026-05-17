@@ -367,3 +367,53 @@ POEM **completely abstracts this coordinate translation**! The `ScrollView` recu
 - Evaluates hover states and dispatches focus clicks perfectly at their scrolling offsets.
 - Downstream developers get 100% functional, hover-reactive, and click-sensitive components out-of-the-box inside scrolling panels!
 
+---
+
+## ⌨️ 7. Keyboard Focus & Hotkeys
+
+POEM features a fully integrated keyboard focus and accessibility engine, offering sequential focus cycling, high-contrast neon glowing outlines, automatic scroll centering, and customizable global hotkey listeners.
+
+### A. Focus Cycling and Glowing Outline Rings
+Interactive widgets (`Button`, `TextInput`, `Slider`) return `Focusable() bool { return true }`.
+- **Focus Navigation**: Tapping `Tab` or `Shift+Tab` cycles keyboard focus sequentially across focusable elements on the active page.
+- **Neon Outline Styling**: The focused component automatically draws a high-contrast glowing neon focus ring (`color.RGBA{0, 150, 255, 200}` with 2px offset) to guide the keyboard navigator.
+- **Escape Clearing**: Tapping `Esc` clears active focus at any time.
+
+### B. Polymorphic Autoscrolling Centering
+When focus cycles to off-screen elements inside a scrolling container, the `ScrollView` automatically glides to center the focused element into view. The parent container handles this polymorphically using the type-agnostic `ScrollContainer` interface:
+```go
+type ScrollContainer interface {
+    Component
+    ScrollToChild(childID string, childBounds image.Rectangle, state *ApplicationState) bool
+}
+```
+
+### C. Standard Key Triggers & Input Submissions
+Focused components handle key triggers natively:
+- **Buttons**: Pressing `Enter` on a focused button executes its `OnClick` action instantly.
+- **Sliders**: Pressing the `Left Arrow` or `Right Arrow` keys increments or decrements the slider value by exactly 5% steps.
+- **Text Inputs**: Pressing `Enter` inside a text field fires the optional `OnSubmit` callback:
+  ```go
+  &render.TextInput{
+      CompID: "console_cmd",
+      Rect:   image.Rect(0, 0, 150, 40),
+      Placeholder: "COMMAND...",
+      OnSubmit: func(text string, state *render.ApplicationState) {
+          state.StatusText = "Executed: " + text
+      },
+  }
+  ```
+
+### D. Global Shortcuts Registration (Ctrl+S)
+You can declare custom keyboard listeners on the `ApplicationState` that run asynchronously whenever modifier shortcuts are triggered:
+```go
+func BuildAllPages(state *render.ApplicationState) {
+    // Register global hotkey
+    state.RegisterHotkey("Ctrl+S", func(s *render.ApplicationState) {
+        s.StatusText = "Configuration Saved Successfully!"
+    })
+}
+```
+Whenever the user hits `Ctrl+S`, the registered handler fires, updates state, and repaints the screen immediately!
+
+
