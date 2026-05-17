@@ -92,6 +92,36 @@ To meet strict software engineering standards, we have migrated the engine into 
 
 ---
 
+## 🚀 Phase 1 Implementations & Engine Hardening
+
+To establish state-of-the-art vector performance, custom cursor styling, and responsive layout hit-testing, we integrated three primary architecture innovations into POEM:
+
+### 1. Cosine Spline Curve Telemetry (`LineChart`)
+Traditional linear graphs produce jagged, unpolished vector segments. To solve this without adding external rendering engines, we engineered per-pixel **Cosine Interpolation** spline equations directly into our `LineChart` component:
+$$y = y_1 \cdot (1 - t') + y_2 \cdot t'$$
+$$t' = \frac{1 - \cos(t \cdot \pi)}{2}$$
+This maps discrete heap memory telemetry arrays into smooth wave-like paths in microsecond execution times.
+*   **Translucent Fills**: To create a premium backdrop, the area below the curve is filled using 3 separate fading vertical gradient bands (opacities at Alpha 30, 15, and 6) giving a frosted glassmorphic glow.
+
+### 2. State-Driven Dynamic Cursor System
+To isolate native Windows syscalls from components, we built a fully state-driven, dynamic mouse cursor subsystem:
+- **Global Preloading**: System handles for Arrow (`IDC_ARROW` = 32512), Click-Hand (`IDC_HAND` = 32649), and Text-IBeam (`IDC_IBEAM` = 32513) are cached once at startup.
+- **Pipeline Frame Reset**: The orchestrator `RenderPipeline` resets the active cursor to `state.ArrowCursor` at the start of every paint tick.
+- **Immediate-Mode Claims**: During `Draw()`, hovering components claim their cursor handles by mutating `state.CursorID`.
+- **Win32 Message Hook**: `libWndProc` intercepts the native `WM_SETCURSOR` (0x0020) message. If the mouse is inside the window's client area (`HTCLIENT`), it pushes the active `state.CursorID` handle directly to the OS kernel, allowing instantaneous, low-latency pointer updates.
+
+### 3. Recursive Pre-Evaluation Layout Synchronization Pass
+A recurring issue in declarative frameworks is temporal layout lag—when component trees rebuild, layout children are initially created with relative coordinates at `(0, 0)`. If hit-testing occurs before they are drawn, hover states fail because bounds have not yet been evaluated by layout formulas.
+To solve this, we introduced a **recursive pre-evaluation layout synchronization pass**:
+```go
+for _, comp := range page {
+    comp.SetBounds(comp.Bounds())
+}
+```
+This is run automatically right before hit-testing in `RenderPipeline`, `WM_MOUSEMOVE`, and the mouse-click dispatcher. It recursively triggers `performLayout()` on all nested structures (like `FlexBox`), guaranteeing that every element is positioned at its exact, finalized desktop coordinates before interactive mouse hit-tests are computed.
+
+---
+
 ## 📊 Performance Observability & Benchmarks
 
 The engine integrates native Go diagnostics to monitor rendering stability.

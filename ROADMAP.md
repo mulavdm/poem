@@ -6,18 +6,18 @@ This document outlines the strategic progression milestones for expanding the PO
 
 ## 🗺️ Strategic Milestones Matrix
 
-| Phase | Feature Vector | Principal Package Bounds | Architectural Impact |
-| :--- | :--- | :--- | :--- |
-| **Phase 1** | **📉 Real-Time Performance Charting** | `pkg/render/components/chart.go`, `pkg/render/types/types.go` | **Sleek Data Observability:** Provides a native `render.LineChart` component utilizing high-fidelity vector lines to display real-time analytics (FPS, Memory heap) without external chart engines. |
-| **Phase 2** | **📜 Dynamic Scroll Viewports** | `pkg/render/layout/scroll.go`, `pkg/render/components/scroll.go` | **Massive Content Rendering:** Allows layouts to scroll vertically with relative offset coordinates, catching mouse wheel actions (`WM_MOUSEWHEEL`), and drawing a glassmorphic sliding scrollbar. |
-| **Phase 3** | **⌨️ Accessibility Focus & Hotkeys** | `pkg/render/types/focus.go`, `pkg/render/run.go` | **Power-User Productivity:** Implements a global Keyboard Controller managing standard submission hotkeys (`Ctrl+S`, `Enter`, `Esc`), sequential tab navigation, and focus capture. |
-| **Phase 4** | **🎛️ Acoustic Native Sound Engine** | `internal/win32/audio.go`, `pkg/render/types/audio.go` | **Sleek Audio Feedback:** Binds low-level wave synthesis (`waveOut`) to Win32 threads to output lightweight click and hover chime feedback without blocking the main event loops. |
+| Phase | Feature Vector | Principal Package Bounds | Status | Architectural Impact |
+| :--- | :--- | :--- | :--- | :--- |
+| **Phase 1** | **📉 Real-Time Performance Charting** | `pkg/render/components/chart.go`, `pkg/render/types/types.go` | **[x] COMPLETED** | **Sleek Data Observability:** Provides a native `render.LineChart` component with Cosine spline smoothing, glowing alpha gradients, dynamic OS cursors, and layout synchronization. |
+| **Phase 2** | **📜 Dynamic Scroll Viewports** | `pkg/render/layout/scroll.go`, `pkg/render/components/scroll.go` | `[ ] PLANNED` | **Massive Content Rendering:** Allows layouts to scroll vertically with relative offset coordinates, catching mouse wheel actions (`WM_MOUSEWHEEL`), and drawing a glassmorphic sliding scrollbar. |
+| **Phase 3** | **⌨️ Accessibility Focus & Hotkeys** | `pkg/render/types/focus.go`, `pkg/render/run.go` | `[ ] PLANNED` | **Power-User Productivity:** Implements a global Keyboard Controller managing standard submission hotkeys (`Ctrl+S`, `Enter`, `Esc`), sequential tab navigation, and focus capture. |
+| **Phase 4** | **🎛️ Acoustic Native Sound Engine** | `internal/win32/audio.go`, `pkg/render/types/audio.go` | `[ ] PLANNED` | **Sleek Audio Feedback:** Binds low-level wave synthesis (`waveOut`) to Win32 threads to output lightweight click and hover chime feedback without blocking the main event loops. |
 
 ---
 
-## 🛠️ Phase 1 Technical Specification: `render.LineChart`
+## 🛠️ Phase 1 Technical Specification & Verification Summary: `render.LineChart`
 
-The first expansion focus is to replace static load chart placeholders in POEM and downstream projects with a high-fidelity vector curve plotting component.
+The first expansion phase replaced static load chart placeholders in POEM and downstream projects with a high-fidelity vector curve plotting component, alongside a dynamic cursor subsystem.
 
 ### 📐 Component Design
 The component is fully declarative, reading telemetry data feeds directly from the application state:
@@ -34,7 +34,7 @@ type LineChart struct {
 ```
 
 ### 🧠 Real-Time Telemetry Feeds
-We will expand the universal `ApplicationState` in `pkg/render/types/types.go` to capture telemetry historical circular buffers (capped at 100 nodes) directly from Go's `runtime.ReadMemStats` and frame duration counters:
+We expanded the universal `ApplicationState` in `pkg/render/types/types.go` to capture telemetry historical circular buffers directly from Go's `runtime.ReadMemStats` and frame duration counters:
 ```go
 type ApplicationState struct {
     ...
@@ -43,10 +43,8 @@ type ApplicationState struct {
 }
 ```
 
-### 🎨 Rendering Algorithm
-1. **Backdrop Card**: Renders a rounded background card (using `p.DrawRoundedRect` or `p.FillRect`).
-2. **Title Heading**: Places a diagnostic title heading and scale boundaries (`p.DrawText`).
-3. **Vector Curve Calculation**:
-   - Spreads the $X$ coordinates evenly across the card width.
-   - Maps the $Y$ values relative to the maximum and minimum points in the telemetry slice.
-   - Iterates through the calculated coordinates, drawing anti-aliased segment bridges using `p.DrawLine(x1, y1, x2, y2, col)`.
+### 🎨 Completed Rendering & Interaction Deliverables
+1. **Cosine Splines Spline Curve Interpolation**: Replaced jagged linear segments with beautiful, wave-like curves calculated using per-pixel $y = y_1(1-t') + y_2(t')$ trigonometric splines.
+2. **Glowing Background Fills**: Added a 3-layer translucent glow gradient under the curve (descending opacities at Alpha 30, 15, and 6) giving a gorgeous glassmorphic look.
+3. **Dynamic Windows Cursors**: preloaded system handles once at boot, resetting the handle every frame and reactively updating to a link-hand (`IDC_HAND`) or text-IBeam (`IDC_IBEAM`) based on element hovers via native Win32 `WM_SETCURSOR` intercepts.
+4. **Layout Synchronization Pass**: Resolved layout latency by recursively executing a pre-evaluation layout synchronization pass (`comp.SetBounds(comp.Bounds())`) immediately before executing hit-testing checks, ensuring child elements nested inside complex containers (like `FlexBox` headers and sidebar nav columns) react dynamically to hovers and clicks.

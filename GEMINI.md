@@ -30,6 +30,9 @@ Every major rendering or layout change **MUST** be validated through the interna
 - **GDI Blitting**: Never use `SetPixel`. Use `CPUEngine.canvas` and `StretchDIBits` for bulk transfers.
 - **Alpha Blending**: Optimization is key. Manual loops are preferred over generic library calls if it improves per-pixel performance.
 - **Pointer Safety**: Ensure Win32 pointers are properly managed to prevent GC interference during syscalls.
+- **Go Slice Copies**: Avoid caching slice headers inside static component fields. Page rebuilding (e.g., inside `WM_PAINT`) refreshes the slice references, capturing dynamically updated lengths.
+- **Dynamic Cursors**: Components should reactively mutate `state.CursorID` inside their `Draw()` calls to claim a cursor shape. System cursors are pre-loaded at application boot.
+- **Layout Sync & Hit-Testing**: Hit-testing occurs before drawing. To prevent coordinate mismatch of nested components, always run a recursive layout synchronization pass (`comp.SetBounds(comp.Bounds())`) immediately before evaluating hovers or mouse interactions.
 - **Documentation Integrity**: ALWAYS update all relevant documentation (`README.md`, `ARCHITECTURE.md`, `GEMINI.md`, and `GUIDE.md`) immediately after making API, layout, or structural changes to ensure downstream developers have an accurate, real-world SSoT (Single Source of Truth).
 
 ---

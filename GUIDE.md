@@ -123,6 +123,21 @@ Fully functional text-input controls capturing focused keyboard strokes.
 }
 ```
 
+### F. Real-Time Telemetry Line Charts
+A high-fidelity vector component that plots historical numerical datasets in real-time. Features automated per-pixel **Cosine Interpolation** spline-smoothing and a **3-layer translucent glowing background area fill**.
+
+```go
+&render.LineChart{
+    CompID:    "mem_heap_chart",
+    Rect:      image.Rect(120, 400, 700, 650),
+    BGColor:   color.RGBA{10, 10, 20, 255},
+    LineColor: color.RGBA{0, 255, 150, 255}, // Neon green glow
+    Data:      state.HeapHistory,             // Slice of float32 telemetry
+    Title:     "REALTIME HEAP MONITOR (MB)",
+    Rounding:  10,
+}
+```
+
 ---
 
 ## 🔲 3. Layout Control using FlexBox
@@ -270,3 +285,40 @@ func BuildAllPages(state *render.ApplicationState) {
 	}
 }
 ```
+
+---
+
+## 🖱️ 5. Dynamic Cursors & Layout Synchronization
+
+POEM features a fully state-driven, dynamic mouse cursor and recursive layout-synchronization subsystem.
+
+### A. Automatic Mouse Pointer Transformations
+When building custom components or wrapping interactions, you can dynamically control the system mouse cursor by updating `state.CursorID` inside your component's `Draw` or event method.
+
+The core pipeline automatically resets `state.CursorID` to `state.ArrowCursor` at the start of every frame, allowing components to claim cursor states reactively:
+
+- **Standard Pointers**: Default reset inside the coordinate pipelines.
+- **Interactive Clicking Hand (`state.HandCursor`)**: Set automatically when hovering over `Button` or `Slider` components.
+- **Text I-Beam (`state.IBeamCursor`)**: Set automatically when hovering over `TextInput` controls.
+
+```go
+func (b *MyComponent) Draw(pnt types.Painter, state *types.ApplicationState) {
+    if state.HoveredID == b.CompID {
+        // Shift mouse pointer to the OS interaction hand!
+        state.CursorID = state.HandCursor
+    }
+}
+```
+
+### B. Recursive Layout Synchronization Pass
+Because layout components (such as `FlexBox` nested rows/columns) place items dynamically, coordinate positions of children might mismatch hit-testing if computed mid-frame. 
+
+To prevent this, POEM runs an automated **recursive layout synchronization pass** right before evaluating hit-tests or mouse interactions:
+```go
+// Pre-align and calculate nested child bounds instantly before click/hover evaluation
+for _, comp := range page {
+    comp.SetBounds(comp.Bounds())
+}
+```
+Downstream developers never need to manually align components—nested children bounds are fully updated, responsive, and ready for hover interactions automatically out-of-the-box!
+
