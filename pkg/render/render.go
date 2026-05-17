@@ -22,6 +22,7 @@ type DynamicLabel = components.DynamicLabel
 type TextInput = components.TextInput
 type Slider = components.Slider
 type ParticleComponent = components.ParticleComponent
+type LineChart = components.LineChart
 
 // Re-export Layouts
 type FlexBox = layout.FlexBox

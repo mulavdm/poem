@@ -66,6 +66,10 @@ type ApplicationState struct {
 	Particles    *ParticleSystem
 	GlassEnabled bool
 	FrameTime    time.Duration
+
+	// Live Telemetry Stream History Slices
+	FPSHistory  []float32
+	HeapHistory []float32
 }
 
 const (

@@ -339,8 +339,15 @@ func BuildAnalytics(state *render.ApplicationState) []render.Component {
 		},
 
 		// Simulated Chart Area
-		&render.Label{CompID: "lbl_chart", Pos: image.Point{500, 160}, Text: "REALTIME LOAD GRAPH", Color: color.RGBA{200, 200, 200, 255}},
-		&render.Panel{CompID: "chart_bg", Rect: image.Rect(500, 180, render.Width-40, 480), BGColor: color.RGBA{10, 10, 20, 255}, Rounding: 10},
-		&render.Label{CompID: "chart_placeholder", Pos: image.Point{X: 520, Y: 330}, Text: "[ LIVE DATA STREAM PENDING ]", Color: color.RGBA{60, 70, 90, 255}},
+		&render.Label{CompID: "lbl_chart", Pos: image.Point{500, 160}, Text: "REALTIME HEAP MONITOR", Color: color.RGBA{200, 200, 200, 255}},
+		&render.LineChart{
+			CompID:    "mem_load_chart",
+			Rect:      image.Rect(500, 180, render.Width-40, 480),
+			BGColor:   color.RGBA{10, 10, 20, 255},
+			LineColor: color.RGBA{0, 255, 150, 255},
+			Data:      state.HeapHistory,
+			Title:     "REALTIME HEAP GRAPH (MB)",
+			Rounding:  10,
+		},
 	}
 }

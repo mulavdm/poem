@@ -112,6 +112,7 @@ func Run(config AppConfig) {
 	// Drive animation loop
 	lastFrame := time.Now()
 	go func() {
+		var telemetryTimer float64
 		for {
 			start := time.Now()
 			time.Sleep(16 * time.Millisecond)
@@ -121,6 +122,26 @@ func Run(config AppConfig) {
 				globalState.CurrentFPS = 1.0 / dt
 				globalState.Particles.Update(dt)
 				globalState.UpdateAnimations(float32(dt))
+
+				telemetryTimer += dt
+				if telemetryTimer >= 0.1 { // Track heap and FPS every 100ms
+					telemetryTimer = 0
+
+					// Update FPS history (cap at 100)
+					globalState.FPSHistory = append(globalState.FPSHistory, float32(globalState.CurrentFPS))
+					if len(globalState.FPSHistory) > 100 {
+						globalState.FPSHistory = globalState.FPSHistory[1:]
+					}
+
+					// Update Heap allocation history in MB (cap at 100)
+					var m runtime.MemStats
+					runtime.ReadMemStats(&m)
+					heapMB := float32(m.Alloc) / 1024 / 1024
+					globalState.HeapHistory = append(globalState.HeapHistory, heapMB)
+					if len(globalState.HeapHistory) > 100 {
+						globalState.HeapHistory = globalState.HeapHistory[1:]
+					}
+				}
 			}
 			lastFrame = now
 			globalState.FrameTime = time.Since(start)
@@ -143,6 +164,9 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	switch msg {
 	case 0x000F: // WM_PAINT
 		if globalEngine != nil && globalState != nil {
+			if globalBuildPages != nil {
+				globalBuildPages(globalState)
+			}
 			globalEngine.Paint(globalHdc, globalState)
 		}
 		return 0
