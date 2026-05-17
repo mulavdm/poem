@@ -20,9 +20,9 @@ type LineChart struct {
 	Rounding  int
 }
 
-func (c *LineChart) ID() string             { return c.CompID }
-func (c *LineChart) GetID() string          { return c.CompID }
-func (c *LineChart) Bounds() image.Rectangle { return c.Rect }
+func (c *LineChart) ID() string                  { return c.CompID }
+func (c *LineChart) GetID() string               { return c.CompID }
+func (c *LineChart) Bounds() image.Rectangle     { return c.Rect }
 func (c *LineChart) SetBounds(r image.Rectangle) { c.Rect = r }
 func (c *LineChart) HitTest(pt image.Point) string {
 	if pt.In(c.Rect) {
@@ -30,13 +30,13 @@ func (c *LineChart) HitTest(pt image.Point) string {
 	}
 	return ""
 }
-func (c *LineChart) Focusable() bool { return false }
+func (c *LineChart) Focusable() bool               { return false }
 func (c *LineChart) Walk(fn func(types.Component)) { fn(c) }
 
 func (c *LineChart) OnKey(key uint32, char rune, state *types.ApplicationState) bool { return false }
-func (c *LineChart) OnMouseDown(pt image.Point, state *types.ApplicationState) bool { return false }
-func (c *LineChart) OnMouseUp(pt image.Point, state *types.ApplicationState) bool { return false }
-func (c *LineChart) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
+func (c *LineChart) OnMouseDown(pt image.Point, state *types.ApplicationState) bool  { return false }
+func (c *LineChart) OnMouseUp(pt image.Point, state *types.ApplicationState) bool    { return false }
+func (c *LineChart) OnMouseMove(pt image.Point, state *types.ApplicationState) bool  { return false }
 
 func (c *LineChart) Draw(pnt types.Painter, state *types.ApplicationState) {
 	// 1. Draw the ambient glow and main backing card
@@ -45,16 +45,16 @@ func (c *LineChart) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.SetGlow(0)
 
 	// Draw chart title
-	pnt.DrawText(c.Title, c.Rect.Min.X + 20, c.Rect.Min.Y + 30, color.RGBA{180, 190, 210, 255})
+	pnt.DrawText(c.Title, c.Rect.Min.X+20, c.Rect.Min.Y+30, color.RGBA{180, 190, 210, 255})
 
 	// 2. Define grid and graph inner bounds (with padding)
 	pad := 20
 	hdrH := 45
 	graphRect := image.Rect(
-		c.Rect.Min.X + pad,
-		c.Rect.Min.Y + hdrH + pad,
-		c.Rect.Max.X - pad - 60, // Leave margin for Y axis values
-		c.Rect.Max.Y - pad,
+		c.Rect.Min.X+pad,
+		c.Rect.Min.Y+hdrH+pad,
+		c.Rect.Max.X-pad-60, // Leave margin for Y axis values
+		c.Rect.Max.Y-pad,
 	)
 
 	if graphRect.Dx() <= 0 || graphRect.Dy() <= 0 {
@@ -71,7 +71,7 @@ func (c *LineChart) Draw(pnt types.Painter, state *types.ApplicationState) {
 	// 4. Handle empty/insufficient data edge cases
 	numPts := len(c.Data)
 	if numPts < 2 {
-		pnt.DrawText("[ NO TELEMETRY STREAM DETECTED ]", graphRect.Min.X + 40, graphRect.Min.Y + graphRect.Dy()/2, color.RGBA{100, 110, 130, 255})
+		pnt.DrawText("[ NO TELEMETRY STREAM DETECTED ]", graphRect.Min.X+40, graphRect.Min.Y+graphRect.Dy()/2, color.RGBA{100, 110, 130, 255})
 		return
 	}
 
@@ -99,12 +99,12 @@ func (c *LineChart) Draw(pnt types.Painter, state *types.ApplicationState) {
 
 	// Draw Y-axis boundary texts
 	textCol := color.RGBA{120, 130, 150, 255}
-	pnt.DrawText(fmt.Sprintf("%.1f", maxVal), graphRect.Max.X + 10, graphRect.Min.Y - 5, textCol)
-	pnt.DrawText(fmt.Sprintf("%.1f", minVal), graphRect.Max.X + 10, graphRect.Max.Y + 15, textCol)
+	pnt.DrawText(fmt.Sprintf("%.1f", maxVal), graphRect.Max.X+10, graphRect.Min.Y-5, textCol)
+	pnt.DrawText(fmt.Sprintf("%.1f", minVal), graphRect.Max.X+10, graphRect.Max.Y+15, textCol)
 
 	// Draw current latest value
 	latestVal := c.Data[numPts-1]
-	pnt.DrawText(fmt.Sprintf("CURRENT: %.2f", latestVal), c.Rect.Max.X - 160, c.Rect.Min.Y + 30, c.LineColor)
+	pnt.DrawText(fmt.Sprintf("CURRENT: %.2f", latestVal), c.Rect.Max.X-160, c.Rect.Min.Y+30, c.LineColor)
 
 	// 6. Draw fading gradient area and curve line using per-pixel Cosine Interpolation
 	dx := graphRect.Dx()
@@ -117,7 +117,7 @@ func (c *LineChart) Draw(pnt types.Painter, state *types.ApplicationState) {
 	for x := graphRect.Min.X; x <= graphRect.Max.X; x++ {
 		// Proportion of horizontal position from 0.0 to 1.0
 		xRatio := float32(x-graphRect.Min.X) / float32(dx)
-		
+
 		// Map ratio to decimal index inside the data slice
 		pos := xRatio * float32(numPts-1)
 		idx := int(pos)

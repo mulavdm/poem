@@ -6,33 +6,36 @@ import (
 )
 
 var (
-	user32            = syscall.NewLazyDLL("user32.dll")
-	gdi32             = syscall.NewLazyDLL("gdi32.dll")
-	opengl32          = syscall.NewLazyDLL("opengl32.dll")
+	user32   = syscall.NewLazyDLL("user32.dll")
+	gdi32    = syscall.NewLazyDLL("gdi32.dll")
+	opengl32 = syscall.NewLazyDLL("opengl32.dll")
 
-	procRegisterClass = user32.NewProc("RegisterClassW")
-	procCreateWindow  = user32.NewProc("CreateWindowExW")
-	procGetDC         = user32.NewProc("GetDC")
-	procDefWindowProc = user32.NewProc("DefWindowProcW")
-	procGetMessage    = user32.NewProc("GetMessageW")
-	procTranslateMsg  = user32.NewProc("TranslateMessage")
-	procDispatchMsg   = user32.NewProc("DispatchMessageW")
-	procPostQuitMsg   = user32.NewProc("PostQuitMessage")
-	procShowWindow    = user32.NewProc("ShowWindow")
+	procRegisterClass  = user32.NewProc("RegisterClassW")
+	procCreateWindow   = user32.NewProc("CreateWindowExW")
+	procGetDC          = user32.NewProc("GetDC")
+	procDefWindowProc  = user32.NewProc("DefWindowProcW")
+	procGetMessage     = user32.NewProc("GetMessageW")
+	procTranslateMsg   = user32.NewProc("TranslateMessage")
+	procDispatchMsg    = user32.NewProc("DispatchMessageW")
+	procPostQuitMsg    = user32.NewProc("PostQuitMessage")
+	procPostMessage    = user32.NewProc("PostMessageW")
+	procShowWindow     = user32.NewProc("ShowWindow")
 	procInvalidateRect = user32.NewProc("InvalidateRect")
-	procGetKeyState   = user32.NewProc("GetKeyState")
-	procSetCapture    = user32.NewProc("SetCapture")
+	procValidateRect   = user32.NewProc("ValidateRect")
+	procGetKeyState    = user32.NewProc("GetKeyState")
+	procSetCapture     = user32.NewProc("SetCapture")
 	procReleaseCapture = user32.NewProc("ReleaseCapture")
-	procSetCursor     = user32.NewProc("SetCursor")
-	procLoadCursor    = user32.NewProc("LoadCursorW")
+	procSetCursor      = user32.NewProc("SetCursor")
+	procLoadCursor     = user32.NewProc("LoadCursorW")
+	procUpdateWindow   = user32.NewProc("UpdateWindow")
 
 	procStretchDIBits = gdi32.NewProc("StretchDIBits")
 	procChoosePF      = gdi32.NewProc("ChoosePixelFormat")
 	procSetPF         = gdi32.NewProc("SetPixelFormat")
 	procSwapBuffers   = gdi32.NewProc("SwapBuffers")
 
-	procWglCreateCtx  = opengl32.NewProc("wglCreateContext")
-	procWglMakeCur    = opengl32.NewProc("wglMakeCurrent")
+	procWglCreateCtx = opengl32.NewProc("wglCreateContext")
+	procWglMakeCur   = opengl32.NewProc("wglMakeCurrent")
 )
 
 func RegisterClass(wc *WNDCLASS) (uintptr, error) {
@@ -84,6 +87,11 @@ func PostQuitMessage(exitCode int32) {
 	procPostQuitMsg.Call(uintptr(exitCode))
 }
 
+func PostMessage(hwnd uintptr, msg uint32, wparam, lparam uintptr) bool {
+	ret, _, _ := procPostMessage.Call(hwnd, uintptr(msg), wparam, lparam)
+	return ret != 0
+}
+
 func ShowWindow(hwnd uintptr, cmdShow int32) {
 	procShowWindow.Call(hwnd, uintptr(cmdShow))
 }
@@ -94,6 +102,14 @@ func InvalidateRect(hwnd uintptr, rect *RECT, erase bool) {
 		eraseVal = 1
 	}
 	procInvalidateRect.Call(hwnd, uintptr(unsafe.Pointer(rect)), uintptr(eraseVal))
+}
+
+func UpdateWindow(hwnd uintptr) {
+	procUpdateWindow.Call(hwnd)
+}
+
+func ValidateRect(hwnd uintptr, rect *RECT) {
+	procValidateRect.Call(hwnd, uintptr(unsafe.Pointer(rect)))
 }
 
 func GetKeyState(nVirtKey int32) int16 {
@@ -122,22 +138,22 @@ func LoadCursor(hInstance uintptr, cursorName uintptr) uintptr {
 }
 
 const (
-	IDC_ARROW  = 32512
-	IDC_IBEAM  = 32513
-	IDC_WAIT   = 32514
-	IDC_CROSS  = 32515
-	IDC_UPARROW = 32516
-	IDC_SIZE   = 32640
-	IDC_ICON   = 32641
-	IDC_SIZENWSE = 32642
-	IDC_SIZENESW = 32643
-	IDC_SIZEWE = 32644
-	IDC_SIZENS = 32645
-	IDC_SIZEALL = 32646
-	IDC_NO     = 32648
-	IDC_HAND   = 32649
+	IDC_ARROW       = 32512
+	IDC_IBEAM       = 32513
+	IDC_WAIT        = 32514
+	IDC_CROSS       = 32515
+	IDC_UPARROW     = 32516
+	IDC_SIZE        = 32640
+	IDC_ICON        = 32641
+	IDC_SIZENWSE    = 32642
+	IDC_SIZENESW    = 32643
+	IDC_SIZEWE      = 32644
+	IDC_SIZENS      = 32645
+	IDC_SIZEALL     = 32646
+	IDC_NO          = 32648
+	IDC_HAND        = 32649
 	IDC_APPSTARTING = 32650
-	IDC_HELP   = 32651
+	IDC_HELP        = 32651
 )
 
 func StretchDIBits(hdc uintptr, xDest, yDest, wDest, hDest, xSrc, ySrc, wSrc, hSrc int32, bits uintptr, bmi *BITMAPINFO) {

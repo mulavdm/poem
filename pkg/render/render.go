@@ -23,6 +23,7 @@ type TextInput = components.TextInput
 type Slider = components.Slider
 type ParticleComponent = components.ParticleComponent
 type LineChart = components.LineChart
+type ScrollView = components.ScrollView
 
 // Re-export Layouts
 type FlexBox = layout.FlexBox

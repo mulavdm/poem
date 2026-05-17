@@ -5,6 +5,7 @@ package backend
 import (
 	"image"
 	"image/color"
+	"image/draw"
 	"math"
 
 	"golang.org/x/image/font"
@@ -17,8 +18,14 @@ import (
 // drawText renders basic bitmap text onto the CPU canvas
 func (c *CPUEngine) drawText(s string, x, y int, col color.RGBA) {
 	ox, oy := int(c.offsetX), int(c.offsetY)
+	var dst draw.Image = c.canvas
+	if c.clipEnabled {
+		if sub, ok := c.canvas.SubImage(c.clipRect).(draw.Image); ok {
+			dst = sub
+		}
+	}
 	d := &font.Drawer{
-		Dst:  c.canvas,
+		Dst:  dst,
 		Src:  image.NewUniform(col),
 		Face: basicfont.Face7x13,
 		Dot:  fixed.Point26_6{X: fixed.Int26_6((x + ox) << 6), Y: fixed.Int26_6((y + oy) << 6)},
@@ -36,6 +43,9 @@ func (c *CPUEngine) drawRoundedRect(r image.Rectangle, radius int, col color.RGB
 		}
 		for x := r.Min.X; x < r.Max.X; x++ {
 			if x < 0 || x >= types.Width {
+				continue
+			}
+			if c.clipEnabled && !image.Pt(x, y).In(c.clipRect) {
 				continue
 			}
 
@@ -97,17 +107,19 @@ func (c *CPUEngine) DrawLine(x1, y1, x2, y2 int, col color.RGBA) {
 
 	for {
 		if x1 >= 0 && x1 < types.Width && y1 >= 0 && y1 < types.Height {
-			alpha := float64(col.A) / 255.0
-			idx := y1*c.canvas.Stride + x1*4
+			if !c.clipEnabled || image.Pt(x1, y1).In(c.clipRect) {
+				alpha := float64(col.A) / 255.0
+				idx := y1*c.canvas.Stride + x1*4
 
-			bgB := float64(c.canvas.Pix[idx])
-			bgG := float64(c.canvas.Pix[idx+1])
-			bgR := float64(c.canvas.Pix[idx+2])
+				bgB := float64(c.canvas.Pix[idx])
+				bgG := float64(c.canvas.Pix[idx+1])
+				bgR := float64(c.canvas.Pix[idx+2])
 
-			c.canvas.Pix[idx] = uint8(float64(col.B)*alpha + bgB*(1-alpha))
-			c.canvas.Pix[idx+1] = uint8(float64(col.G)*alpha + bgG*(1-alpha))
-			c.canvas.Pix[idx+2] = uint8(float64(col.R)*alpha + bgR*(1-alpha))
-			c.canvas.Pix[idx+3] = 255
+				c.canvas.Pix[idx] = uint8(float64(col.B)*alpha + bgB*(1-alpha))
+				c.canvas.Pix[idx+1] = uint8(float64(col.G)*alpha + bgG*(1-alpha))
+				c.canvas.Pix[idx+2] = uint8(float64(col.R)*alpha + bgR*(1-alpha))
+				c.canvas.Pix[idx+3] = 255
+			}
 		}
 
 		if x1 == x2 && y1 == y2 {

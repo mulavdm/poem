@@ -44,10 +44,44 @@ type FlexBox struct {
 	Children       []types.Component
 }
 
-func (f *FlexBox) ID() string { return f.CompID }
+func (f *FlexBox) ID() string    { return f.CompID }
 func (f *FlexBox) GetID() string { return f.CompID }
 
-func (f *FlexBox) Bounds() image.Rectangle { return f.Rect }
+func (f *FlexBox) Bounds() image.Rectangle {
+	if f.Rect.Dx() == 0 || f.Rect.Dy() == 0 {
+		w := 0
+		h := 0
+		if f.Direction == Vertical {
+			h = 2 * f.Padding
+			for i, child := range f.Children {
+				cb := child.Bounds()
+				h += cb.Dy()
+				if cb.Dx() > w {
+					w = cb.Dx()
+				}
+				if i < len(f.Children)-1 {
+					h += f.Gap
+				}
+			}
+			w += 2 * f.Padding
+		} else {
+			w = 2 * f.Padding
+			for i, child := range f.Children {
+				cb := child.Bounds()
+				w += cb.Dx()
+				if cb.Dy() > h {
+					h = cb.Dy()
+				}
+				if i < len(f.Children)-1 {
+					w += f.Gap
+				}
+			}
+			h += 2 * f.Padding
+		}
+		return image.Rect(f.Rect.Min.X, f.Rect.Min.Y, f.Rect.Min.X+w, f.Rect.Min.Y+h)
+	}
+	return f.Rect
+}
 
 func (f *FlexBox) SetBounds(r image.Rectangle) {
 	f.Rect = r

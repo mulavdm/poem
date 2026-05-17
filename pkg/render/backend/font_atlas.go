@@ -19,10 +19,10 @@ type FontAtlas struct {
 }
 
 type CharInfo struct {
-	U1, V1 float32 // Top-left
-	U2, V2 float32 // Bottom-right
-	Width  int
-	Height int
+	U1, V1  float32 // Top-left
+	U2, V2  float32 // Bottom-right
+	Width   int
+	Height  int
 	Advance int
 }
 
