@@ -77,6 +77,7 @@ func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 		c = b.HoverColor
 		pnt.SetGlow(8.0) // Intense glow on hover
 		pnt.SetShadow(0, 4, 12)
+		state.CursorID = state.HandCursor
 	} else {
 		pnt.SetShadow(0, 2, 8)
 	}
@@ -200,6 +201,10 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 	// Draw background box
 	pnt.DrawRoundedRect(t.Rect, t.Rounding, t.BGColor)
 	
+	if state.HoveredID == t.CompID {
+		state.CursorID = state.IBeamCursor
+	}
+	
 	// Draw text or placeholder
 	disp := t.Text
 	col := t.TextColor
@@ -270,6 +275,10 @@ func (s *Slider) HitTest(pt image.Point) string {
 	return ""
 }
 func (s *Slider) Draw(pnt types.Painter, state *types.ApplicationState) {
+	if state.HoveredID == s.CompID {
+		state.CursorID = state.HandCursor
+	}
+
 	// Draw track
 	trackH := 4
 	trackRect := image.Rect(s.Rect.Min.X, s.Rect.Min.Y + s.Rect.Dy()/2 - trackH/2, s.Rect.Max.X, s.Rect.Min.Y + s.Rect.Dy()/2 + trackH/2)

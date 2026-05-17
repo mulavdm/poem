@@ -39,7 +39,10 @@ type ApplicationState struct {
 	HoveredID string
 	FocusedID string
 	ActiveID  string  // ID of the component currently capturing the mouse (e.g., for dragging)
-	CursorID  uintptr // Current cursor handle
+	CursorID  uintptr // Active dynamic cursor handle
+	ArrowCursor uintptr // System IDC_ARROW cursor
+	HandCursor  uintptr // System IDC_HAND cursor
+	IBeamCursor uintptr // System IDC_IBEAM cursor
 
 	// Registry for buttons and interactive elements
 	Components []Component // Legacy/Global components
@@ -140,6 +143,9 @@ func (s *ApplicationState) UpdateAnimations(dt float32) {
 // RenderPipeline is the universal orchestration logic for the POEM engine.
 // It ensures that both CPU and GPU backends follow the exact same drawing sequence.
 func RenderPipeline(p Painter, s *ApplicationState) {
+	// Reset active cursor to default arrow at the beginning of each drawing tick
+	s.CursorID = s.ArrowCursor
+
 	// 1. BACKGROUND PARTICLES
 	if s.Particles != nil {
 		s.Particles.Draw(p, s)
@@ -150,6 +156,10 @@ func RenderPipeline(p Painter, s *ApplicationState) {
 	mousePoint := image.Point{s.MouseX, s.MouseY}
 	s.HoveredID = ""
 	if page, ok := s.Pages[s.CurrentPage]; ok {
+		// Run a recursive layout pass first to ensure all child component bounds are calculated
+		for _, comp := range page {
+			comp.SetBounds(comp.Bounds())
+		}
 		for i := len(page) - 1; i >= 0; i-- {
 			if id := page[i].HitTest(mousePoint); id != "" {
 				s.HoveredID = id

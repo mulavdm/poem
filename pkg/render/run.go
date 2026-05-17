@@ -56,7 +56,11 @@ func Run(config AppConfig) {
 		StatusText:   "Engine Running Synchronized Component Tree",
 		Volume:       75.0,
 		GlassEnabled: true,
+		ArrowCursor:  win32.LoadCursor(0, 32512), // IDC_ARROW (32512)
+		HandCursor:   win32.LoadCursor(0, 32649), // IDC_HAND (32649)
+		IBeamCursor:  win32.LoadCursor(0, 32513), // IDC_IBEAM (32513)
 	}
+	globalState.CursorID = globalState.ArrowCursor
 	globalBuildPages = config.BuildPagesFn
 
 	// 4. Create Win32 window
@@ -162,6 +166,13 @@ func Run(config AppConfig) {
 
 func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	switch msg {
+	case 0x0020: // WM_SETCURSOR
+		// HTCLIENT (client area) is 1. If cursor is inside client area, force pointer refresh
+		if (lparam&0xFFFF) == 1 && globalState != nil && globalState.CursorID != 0 {
+			win32.SetCursor(globalState.CursorID)
+			return 1 // Return TRUE to indicate handled
+		}
+		break
 	case 0x000F: // WM_PAINT
 		if globalEngine != nil && globalState != nil {
 			if globalBuildPages != nil {
@@ -231,6 +242,10 @@ func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 
 		newHover := ""
 		if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+			// Layout sync pass
+			for _, comp := range comps {
+				comp.SetBounds(comp.Bounds())
+			}
 			for i := len(comps) - 1; i >= 0; i-- {
 				if id := comps[i].HitTest(pt); id != "" {
 					newHover = id
@@ -333,6 +348,10 @@ func libFindHoveredComponent(pt image.Point) string {
 		return ""
 	}
 	if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+		// Layout sync pass
+		for _, comp := range comps {
+			comp.SetBounds(comp.Bounds())
+		}
 		for i := len(comps) - 1; i >= 0; i-- {
 			if id := comps[i].HitTest(pt); id != "" {
 				return id
