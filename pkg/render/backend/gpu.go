@@ -1,6 +1,6 @@
 //go:build gpu
 
-package render
+package backend
 
 import (
 	"fmt"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"go_native_gpu_gui/internal/win32"
+	"go_native_gpu_gui/pkg/render/types"
 )
 
 const vertexShaderSource = `
@@ -86,7 +87,8 @@ void main() {
         float d = sdRoundedRect(p, b, Radius);
         
         // Shadow Calculation
-        float shadowD = sdRoundedRect(FragPos - (center + ShadowOffset), b, Radius);
+        vec2 shadowP = FragPos - (center + ShadowOffset);
+        float shadowD = sdRoundedRect(shadowP, b, Radius);
         float shadowAlpha = 1.0 - smoothstep(-ShadowSoftness, ShadowSoftness, shadowD);
         shadowAlpha *= 0.6; // Shadow intensity
 
@@ -148,6 +150,20 @@ void main() {
 }
 ` + "\x00"
 
+type vertex struct {
+	Pos            [2]float32
+	UV             [2]float32
+	Color          [4]float32
+	Params         [4]float32 // x, y, w, h
+	Radius         float32
+	DrawType       float32 // 0: Shape, 1: Text
+	Glow           float32
+	IsGlass        float32
+	ShadowOffset   [2]float32
+	ShadowSoftness float32
+	Padding        float32
+}
+
 type GPUEngine struct {
 	program     uint32
 	blurProgram uint32
@@ -179,7 +195,7 @@ type GPUEngine struct {
 	currentShadowBlur   float32
 }
 
-func New(hdc uintptr) (UIRenderer, error) {
+func New(hdc uintptr) (types.UIRenderer, error) {
 	fmt.Println("🚀 Factory: Spawning Hardware-Accelerated GPU Engine")
 	
 	pfd := win32.PIXELFORMATDESCRIPTOR{Flags: 4 | 32, PixelType: 0, ColorBits: 32, DepthBits: 24}
@@ -260,7 +276,7 @@ func (g *GPUEngine) Setup(hdc uintptr) error {
 	gl.Enable(gl.BLEND)
 	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
-	g.SetSize(Width, Height)
+	g.SetSize(types.Width, types.Height)
 	return nil
 }
 
@@ -279,7 +295,7 @@ func (g *GPUEngine) setupFbos() {
 
 	gl.GenTextures(1, &g.fboTex)
 	gl.BindTexture(gl.TEXTURE_2D, g.fboTex)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, int32(Width), int32(Height), 0, gl.RGB, gl.UNSIGNED_BYTE, nil)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, int32(types.Width), int32(types.Height), 0, gl.RGB, gl.UNSIGNED_BYTE, nil)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, g.fboTex, 0)
@@ -290,7 +306,7 @@ func (g *GPUEngine) setupFbos() {
 	for i := 0; i < 2; i++ {
 		gl.BindFramebuffer(gl.FRAMEBUFFER, g.pingpongFbo[i])
 		gl.BindTexture(gl.TEXTURE_2D, g.pingpongTex[i])
-		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, int32(Width), int32(Height), 0, gl.RGB, gl.UNSIGNED_BYTE, nil)
+		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, int32(types.Width), int32(types.Height), 0, gl.RGB, gl.UNSIGNED_BYTE, nil)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 		gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, g.pingpongTex[i], 0)
@@ -342,7 +358,6 @@ func (g *GPUEngine) FillRect(r image.Rectangle, col color.RGBA) {
 }
 
 func (g *GPUEngine) DrawLine(x1, y1, x2, y2 int, col color.RGBA) {
-	// For now, draw lines as thin rectangles
 	w := x2 - x1
 	h := y2 - y1
 	if w == 0 { w = 1 }
@@ -362,20 +377,6 @@ func (g *GPUEngine) DrawText(s string, x, y int, col color.RGBA) {
 		g.drawQuad(rect, 0, col, 1, [4]float32{char.U1, char.V1, char.U2, char.V2})
 		currX += char.Advance
 	}
-}
-
-type vertex struct {
-	Pos            [2]float32
-	UV             [2]float32
-	Color          [4]float32
-	Params         [4]float32 // x, y, w, h
-	Radius         float32
-	DrawType       float32 // 0: Shape, 1: Text
-	Glow           float32
-	IsGlass        float32
-	ShadowOffset   [2]float32
-	ShadowSoftness float32
-	Padding        float32
 }
 
 func (g *GPUEngine) SetGlow(strength float32) {
@@ -402,7 +403,7 @@ func (g *GPUEngine) Flush() {
 	projLoc := gl.GetUniformLocation(g.program, gl.Str("projection\x00"))
 	gl.UniformMatrix4fv(projLoc, 1, false, &g.projection[0])
 	
-	gl.Uniform2f(gl.GetUniformLocation(g.program, gl.Str("screenSize\x00")), float32(Width), float32(Height))
+	gl.Uniform2f(gl.GetUniformLocation(g.program, gl.Str("screenSize\x00")), float32(types.Width), float32(types.Height))
 
 	if g.batchDrawType > 0.5 {
 		gl.ActiveTexture(gl.TEXTURE0)
@@ -453,7 +454,7 @@ func (g *GPUEngine) drawQuad(r image.Rectangle, radius float32, col color.RGBA, 
 	g.batch = append(g.batch, quad...)
 }
 
-func (g *GPUEngine) Paint(hdc uintptr, state *ApplicationState) {
+func (g *GPUEngine) Paint(hdc uintptr, state *types.ApplicationState) {
 	// Pass 1: Draw particles to FBO
 	gl.BindFramebuffer(gl.FRAMEBUFFER, g.fbo)
 	gl.ClearColor(0.05, 0.05, 0.08, 1.0)
@@ -498,7 +499,7 @@ func (g *GPUEngine) Paint(hdc uintptr, state *ApplicationState) {
 	g.currentIsGlass = 0
 
 	// Use the shared render pipeline
-	RenderPipeline(g, state)
+	types.RenderPipeline(g, state)
 
 	// Final flush
 	g.Flush()

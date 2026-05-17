@@ -1,7 +1,9 @@
-package render
+package layout
 
 import (
 	"image"
+
+	"go_native_gpu_gui/pkg/render/types"
 )
 
 type LayoutDirection int
@@ -39,7 +41,7 @@ type FlexBox struct {
 	JustifyContent FlexJustify // Main-axis distribution
 	Padding        int
 	Gap            int
-	Children       []Component
+	Children       []types.Component
 }
 
 func (f *FlexBox) ID() string { return f.CompID }
@@ -52,7 +54,7 @@ func (f *FlexBox) SetBounds(r image.Rectangle) {
 	f.performLayout()
 }
 
-func (f *FlexBox) Draw(p Painter, state *ApplicationState) {
+func (f *FlexBox) Draw(p types.Painter, state *types.ApplicationState) {
 	// Re-layout just in case Rect changed outside of SetBounds
 	f.performLayout()
 
@@ -76,7 +78,7 @@ func (f *FlexBox) HitTest(pt image.Point) string {
 	return f.CompID
 }
 
-func (f *FlexBox) OnKey(key uint32, char rune, state *ApplicationState) bool {
+func (f *FlexBox) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
 	if state.FocusedID == "" {
 		return false
 	}
@@ -88,7 +90,7 @@ func (f *FlexBox) OnKey(key uint32, char rune, state *ApplicationState) bool {
 	return false
 }
 
-func (f *FlexBox) OnMouseDown(pt image.Point, state *ApplicationState) bool {
+func (f *FlexBox) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
 	for _, child := range f.Children {
 		if pt.In(child.Bounds()) {
 			if child.OnMouseDown(pt, state) {
@@ -99,7 +101,7 @@ func (f *FlexBox) OnMouseDown(pt image.Point, state *ApplicationState) bool {
 	return false
 }
 
-func (f *FlexBox) OnMouseUp(pt image.Point, state *ApplicationState) bool {
+func (f *FlexBox) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
 	for _, child := range f.Children {
 		if child.OnMouseUp(pt, state) {
 			return true
@@ -108,7 +110,7 @@ func (f *FlexBox) OnMouseUp(pt image.Point, state *ApplicationState) bool {
 	return false
 }
 
-func (f *FlexBox) OnMouseMove(pt image.Point, state *ApplicationState) bool {
+func (f *FlexBox) OnMouseMove(pt image.Point, state *types.ApplicationState) bool {
 	for _, child := range f.Children {
 		if pt.In(child.Bounds()) {
 			if child.OnMouseMove(pt, state) {
@@ -121,7 +123,7 @@ func (f *FlexBox) OnMouseMove(pt image.Point, state *ApplicationState) bool {
 
 func (f *FlexBox) Focusable() bool { return false }
 
-func (f *FlexBox) Walk(fn func(Component)) {
+func (f *FlexBox) Walk(fn func(types.Component)) {
 	fn(f)
 	for _, child := range f.Children {
 		child.Walk(fn)

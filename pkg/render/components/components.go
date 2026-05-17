@@ -1,9 +1,11 @@
-package render
+package components
 
 import (
 	"image"
 	"image/color"
 	"time"
+
+	"go_native_gpu_gui/pkg/render/types"
 )
 
 // Panel is a simple container with a background color
@@ -17,7 +19,7 @@ type Panel struct {
 func (p *Panel) ID() string { return p.CompID }
 func (p *Panel) GetID() string { return p.CompID }
 func (p *Panel) Bounds() image.Rectangle { return p.Rect }
-func (p *Panel) Draw(pnt Painter, state *ApplicationState) {
+func (p *Panel) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.SetGlow(2.0) // Subtle ambient glow for panels
 	pnt.DrawRoundedRect(p.Rect, p.Rounding, p.BGColor)
 	pnt.SetGlow(0)
@@ -29,13 +31,13 @@ func (p *Panel) HitTest(pt image.Point) string {
 	}
 	return ""
 }
-func (p *Panel) OnKey(key uint32, char rune, state *ApplicationState) bool { return false }
-func (p *Panel) OnMouseDown(pt image.Point, state *ApplicationState) bool { return false }
-func (p *Panel) OnMouseUp(pt image.Point, state *ApplicationState) bool { return false }
-func (p *Panel) OnMouseMove(pt image.Point, state *ApplicationState) bool { return false }
+func (p *Panel) OnKey(key uint32, char rune, state *types.ApplicationState) bool { return false }
+func (p *Panel) OnMouseDown(pt image.Point, state *types.ApplicationState) bool { return false }
+func (p *Panel) OnMouseUp(pt image.Point, state *types.ApplicationState) bool { return false }
+func (p *Panel) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
 
 func (p *Panel) Focusable() bool { return false }
-func (p *Panel) Walk(fn func(Component)) { fn(p) }
+func (p *Panel) Walk(fn func(types.Component)) { fn(p) }
 
 // GlassPanel is a premium panel with real-time blur background
 type GlassPanel struct {
@@ -43,7 +45,7 @@ type GlassPanel struct {
 	Opacity uint8
 }
 
-func (p *GlassPanel) Draw(pnt Painter, state *ApplicationState) {
+func (p *GlassPanel) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.SetGlass(state.GlassEnabled)
 	pnt.SetShadow(0, 4, 15) // Deep shadow for depth
 	col := p.BGColor
@@ -53,7 +55,7 @@ func (p *GlassPanel) Draw(pnt Painter, state *ApplicationState) {
 	pnt.SetGlass(false)
 }
 
-func (p *GlassPanel) Walk(fn func(Component)) { fn(p) }
+func (p *GlassPanel) Walk(fn func(types.Component)) { fn(p) }
 
 // Button is an interactive element with hover states
 type Button struct {
@@ -63,13 +65,13 @@ type Button struct {
 	BaseColor   color.RGBA
 	HoverColor  color.RGBA
 	Rounding    int
-	OnClick     func(state *ApplicationState)
+	OnClick     func(state *types.ApplicationState)
 }
 
 func (b *Button) ID() string { return b.CompID }
 func (b *Button) GetID() string { return b.CompID }
 func (b *Button) Bounds() image.Rectangle { return b.Rect }
-func (b *Button) Draw(pnt Painter, state *ApplicationState) {
+func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 	c := b.BaseColor
 	if state.HoveredID == b.CompID {
 		c = b.HoverColor
@@ -94,19 +96,19 @@ func (b *Button) HitTest(pt image.Point) string {
 	}
 	return ""
 }
-func (b *Button) OnKey(key uint32, char rune, state *ApplicationState) bool { return false }
-func (b *Button) OnMouseDown(pt image.Point, state *ApplicationState) bool {
+func (b *Button) OnKey(key uint32, char rune, state *types.ApplicationState) bool { return false }
+func (b *Button) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
 	if b.OnClick != nil {
 		b.OnClick(state)
 		return true
 	}
 	return false
 }
-func (b *Button) OnMouseUp(pt image.Point, state *ApplicationState) bool { return false }
-func (b *Button) OnMouseMove(pt image.Point, state *ApplicationState) bool { return false }
+func (b *Button) OnMouseUp(pt image.Point, state *types.ApplicationState) bool { return false }
+func (b *Button) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
 
 func (b *Button) Focusable() bool { return true }
-func (b *Button) Walk(fn func(Component)) { fn(b) }
+func (b *Button) Walk(fn func(types.Component)) { fn(b) }
 
 // Label is a simple text element
 type Label struct {
@@ -121,7 +123,7 @@ func (l *Label) GetID() string { return l.CompID }
 func (l *Label) Bounds() image.Rectangle {
 	return image.Rect(l.Pos.X, l.Pos.Y, l.Pos.X+len(l.Text)*10, l.Pos.Y+20)
 }
-func (l *Label) Draw(pnt Painter, state *ApplicationState) {
+func (l *Label) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.DrawText(l.Text, l.Pos.X, l.Pos.Y, l.Color)
 }
 func (l *Label) SetBounds(r image.Rectangle) { l.Pos = r.Min }
@@ -131,19 +133,19 @@ func (l *Label) HitTest(pt image.Point) string {
 	}
 	return ""
 }
-func (l *Label) OnKey(key uint32, char rune, state *ApplicationState) bool { return false }
-func (l *Label) OnMouseDown(pt image.Point, state *ApplicationState) bool { return false }
-func (l *Label) OnMouseUp(pt image.Point, state *ApplicationState) bool { return false }
-func (l *Label) OnMouseMove(pt image.Point, state *ApplicationState) bool { return false }
+func (l *Label) OnKey(key uint32, char rune, state *types.ApplicationState) bool { return false }
+func (l *Label) OnMouseDown(pt image.Point, state *types.ApplicationState) bool { return false }
+func (l *Label) OnMouseUp(pt image.Point, state *types.ApplicationState) bool { return false }
+func (l *Label) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
 
 func (l *Label) Focusable() bool { return false }
-func (l *Label) Walk(fn func(Component)) { fn(l) }
+func (l *Label) Walk(fn func(types.Component)) { fn(l) }
 
 // DynamicLabel is a label that fetches its text from a function
 type DynamicLabel struct {
 	CompID  string
 	Pos     image.Point
-	GetText func(state *ApplicationState) string
+	GetText func(state *types.ApplicationState) string
 	Color   color.RGBA
 }
 
@@ -152,7 +154,7 @@ func (dl *DynamicLabel) GetID() string { return dl.CompID }
 func (dl *DynamicLabel) Bounds() image.Rectangle {
 	return image.Rect(dl.Pos.X, dl.Pos.Y, dl.Pos.X+300, dl.Pos.Y+20)
 }
-func (dl *DynamicLabel) Draw(pnt Painter, state *ApplicationState) {
+func (dl *DynamicLabel) Draw(pnt types.Painter, state *types.ApplicationState) {
 	if dl.GetText != nil {
 		pnt.DrawText(dl.GetText(state), dl.Pos.X, dl.Pos.Y, dl.Color)
 	}
@@ -164,13 +166,13 @@ func (dl *DynamicLabel) HitTest(pt image.Point) string {
 	}
 	return ""
 }
-func (dl *DynamicLabel) OnKey(key uint32, char rune, state *ApplicationState) bool { return false }
-func (dl *DynamicLabel) OnMouseDown(pt image.Point, state *ApplicationState) bool { return false }
-func (dl *DynamicLabel) OnMouseUp(pt image.Point, state *ApplicationState) bool { return false }
-func (dl *DynamicLabel) OnMouseMove(pt image.Point, state *ApplicationState) bool { return false }
+func (dl *DynamicLabel) OnKey(key uint32, char rune, state *types.ApplicationState) bool { return false }
+func (dl *DynamicLabel) OnMouseDown(pt image.Point, state *types.ApplicationState) bool { return false }
+func (dl *DynamicLabel) OnMouseUp(pt image.Point, state *types.ApplicationState) bool { return false }
+func (dl *DynamicLabel) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
 
 func (dl *DynamicLabel) Focusable() bool { return false }
-func (dl *DynamicLabel) Walk(fn func(Component)) { fn(dl) }
+func (dl *DynamicLabel) Walk(fn func(types.Component)) { fn(dl) }
 
 // TextInput is an editable text field
 type TextInput struct {
@@ -194,7 +196,7 @@ func (t *TextInput) HitTest(pt image.Point) string {
 	return ""
 }
 
-func (t *TextInput) Draw(pnt Painter, state *ApplicationState) {
+func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 	// Draw background box
 	pnt.DrawRoundedRect(t.Rect, t.Rounding, t.BGColor)
 	
@@ -218,7 +220,7 @@ func (t *TextInput) Draw(pnt Painter, state *ApplicationState) {
 	}
 }
 
-func (t *TextInput) OnKey(key uint32, char rune, state *ApplicationState) bool {
+func (t *TextInput) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
 	if state.FocusedID != t.CompID {
 		return false
 	}
@@ -240,12 +242,12 @@ func (t *TextInput) OnKey(key uint32, char rune, state *ApplicationState) bool {
 	return false
 }
 
-func (t *TextInput) OnMouseDown(pt image.Point, state *ApplicationState) bool { return false }
-func (t *TextInput) OnMouseUp(pt image.Point, state *ApplicationState) bool { return false }
-func (t *TextInput) OnMouseMove(pt image.Point, state *ApplicationState) bool { return false }
+func (t *TextInput) OnMouseDown(pt image.Point, state *types.ApplicationState) bool { return false }
+func (t *TextInput) OnMouseUp(pt image.Point, state *types.ApplicationState) bool { return false }
+func (t *TextInput) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
 
 func (t *TextInput) Focusable() bool { return true }
-func (t *TextInput) Walk(fn func(Component)) { fn(t) }
+func (t *TextInput) Walk(fn func(types.Component)) { fn(t) }
 
 // Slider is a range input element
 type Slider struct {
@@ -267,7 +269,7 @@ func (s *Slider) HitTest(pt image.Point) string {
 	}
 	return ""
 }
-func (s *Slider) Draw(pnt Painter, state *ApplicationState) {
+func (s *Slider) Draw(pnt types.Painter, state *types.ApplicationState) {
 	// Draw track
 	trackH := 4
 	trackRect := image.Rect(s.Rect.Min.X, s.Rect.Min.Y + s.Rect.Dy()/2 - trackH/2, s.Rect.Max.X, s.Rect.Min.Y + s.Rect.Dy()/2 + trackH/2)
@@ -286,20 +288,20 @@ func (s *Slider) Draw(pnt Painter, state *ApplicationState) {
 	pnt.DrawRoundedRect(thumbRect, 4, col)
 }
 
-func (s *Slider) OnKey(key uint32, char rune, state *ApplicationState) bool { return false }
+func (s *Slider) OnKey(key uint32, char rune, state *types.ApplicationState) bool { return false }
 
-func (s *Slider) OnMouseDown(pt image.Point, state *ApplicationState) bool {
+func (s *Slider) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
 	state.ActiveID = s.CompID
 	s.updateValue(pt.X)
 	return true
 }
 
-func (s *Slider) OnMouseUp(pt image.Point, state *ApplicationState) bool {
+func (s *Slider) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
 	state.ActiveID = ""
 	return true
 }
 
-func (s *Slider) OnMouseMove(pt image.Point, state *ApplicationState) bool {
+func (s *Slider) OnMouseMove(pt image.Point, state *types.ApplicationState) bool {
 	if state.ActiveID == s.CompID {
 		s.updateValue(pt.X)
 		return true
@@ -315,4 +317,29 @@ func (s *Slider) updateValue(mouseX int) {
 }
 
 func (s *Slider) Focusable() bool { return true }
-func (s *Slider) Walk(fn func(Component)) { fn(s) }
+func (s *Slider) Walk(fn func(types.Component)) { fn(s) }
+
+// ParticleComponent is a UI element wrapping the ParticleSystem
+type ParticleComponent struct {
+	CompID string
+	System *types.ParticleSystem
+}
+
+func (c *ParticleComponent) GetID() string { return c.CompID }
+func (c *ParticleComponent) ID() string    { return c.CompID }
+func (c *ParticleComponent) Bounds() image.Rectangle { return c.System.Bounds }
+func (c *ParticleComponent) SetBounds(r image.Rectangle) { c.System.Bounds = r }
+func (c *ParticleComponent) HitTest(pt image.Point) string { return "" }
+func (c *ParticleComponent) Focusable() bool { return false }
+func (c *ParticleComponent) Walk(fn func(types.Component)) { fn(c) }
+
+func (c *ParticleComponent) OnKey(key uint32, char rune, state *types.ApplicationState) bool { return false }
+func (c *ParticleComponent) OnMouseDown(pt image.Point, state *types.ApplicationState) bool { return false }
+func (c *ParticleComponent) OnMouseUp(pt image.Point, state *types.ApplicationState) bool { return false }
+func (c *ParticleComponent) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
+
+func (c *ParticleComponent) Draw(p types.Painter, state *types.ApplicationState) {
+	if c.System != nil {
+		c.System.Draw(p, state)
+	}
+}

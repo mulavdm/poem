@@ -1,6 +1,6 @@
 //go:build !gpu
 
-package render
+package backend
 
 import (
 	"fmt"
@@ -10,6 +10,7 @@ import (
 	"unsafe"
 
 	"go_native_gpu_gui/internal/win32"
+	"go_native_gpu_gui/pkg/render/types"
 )
 
 type CPUEngine struct {
@@ -19,13 +20,13 @@ type CPUEngine struct {
 	offsetY    float32
 }
 
-func New(hdc uintptr) (UIRenderer, error) {
+func New(hdc uintptr) (types.UIRenderer, error) {
 	fmt.Println("⚡ Factory: Spawning Zero-Dependency CPU Engine")
 	return &CPUEngine{}, nil
 }
 
 func (c *CPUEngine) Setup(hdc uintptr) error {
-	c.SetSize(Width, Height)
+	c.SetSize(types.Width, types.Height)
 	return nil
 }
 
@@ -77,15 +78,15 @@ func (c *CPUEngine) FillRect(r image.Rectangle, col color.RGBA) {
 	draw.Draw(c.canvas, r, &image.Uniform{col}, image.Point{}, draw.Src)
 }
 
-func (c *CPUEngine) Paint(hdc uintptr, state *ApplicationState) {
+func (c *CPUEngine) Paint(hdc uintptr, state *types.ApplicationState) {
 	// 1. BACKGROUND GRADIENT (Deep Industrial Blue)
-	for y := 0; y < Height; y++ {
-		ratio := float64(y) / float64(Height)
+	for y := 0; y < types.Height; y++ {
+		ratio := float64(y) / float64(types.Height)
 		r := uint8(10 + ratio*10)
 		g := uint8(12 + ratio*12)
 		b := uint8(20 + ratio*15)
 		line := c.canvas.Pix[y*c.canvas.Stride : (y+1)*c.canvas.Stride]
-		for x := 0; x < Width; x++ {
+		for x := 0; x < types.Width; x++ {
 			line[x*4] = b
 			line[x*4+1] = g
 			line[x*4+2] = r
@@ -94,11 +95,11 @@ func (c *CPUEngine) Paint(hdc uintptr, state *ApplicationState) {
 	}
 
 	// 2. ORCHESTRATE UI (Shared Logic)
-	RenderPipeline(c, state)
+	types.RenderPipeline(c, state)
 
 	// 3. BLIT TO MONITOR
 	win32.StretchDIBits(
-		hdc, 0, 0, int32(Width), int32(Height), 0, 0, int32(Width), int32(Height),
+		hdc, 0, 0, int32(types.Width), int32(types.Height), 0, 0, int32(types.Width), int32(types.Height),
 		uintptr(unsafe.Pointer(&c.canvas.Pix[0])),
 		&c.bitmapInfo,
 	)

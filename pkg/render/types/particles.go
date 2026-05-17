@@ -1,4 +1,4 @@
-package render
+package types
 
 import (
 	"image"
@@ -47,7 +47,6 @@ func (ps *ParticleSystem) Update(dt float64) {
 		p := &ps.Particles[i]
 		
 		// Update position based on velocity and delta time
-		// Using fixed-point or scaled math since image.Point is int
 		p.Pos.X += int(float64(p.Vel.X) * dt)
 		p.Pos.Y += int(float64(p.Vel.Y) * dt)
 
@@ -58,24 +57,6 @@ func (ps *ParticleSystem) Update(dt float64) {
 		if p.Pos.Y > ps.Bounds.Dy() { p.Pos.Y = 0 }
 	}
 }
-
-type ParticleComponent struct {
-	CompID string
-	System *ParticleSystem
-}
-
-func (c *ParticleComponent) GetID() string { return c.CompID }
-func (c *ParticleComponent) ID() string    { return c.CompID }
-func (c *ParticleComponent) Bounds() image.Rectangle { return c.System.Bounds }
-func (c *ParticleComponent) SetBounds(r image.Rectangle) { c.System.Bounds = r }
-func (c *ParticleComponent) HitTest(pt image.Point) string { return "" }
-func (c *ParticleComponent) Focusable() bool { return false }
-func (c *ParticleComponent) Walk(fn func(Component)) { fn(c) }
-
-func (c *ParticleComponent) OnKey(key uint32, char rune, state *ApplicationState) bool { return false }
-func (c *ParticleComponent) OnMouseDown(pt image.Point, state *ApplicationState) bool { return false }
-func (c *ParticleComponent) OnMouseUp(pt image.Point, state *ApplicationState) bool { return false }
-func (c *ParticleComponent) OnMouseMove(pt image.Point, state *ApplicationState) bool { return false }
 
 func (ps *ParticleSystem) Draw(p Painter, state *ApplicationState) {
 	dotColor := color.RGBA{0, 150, 255, 40} // Subtle blue
@@ -100,11 +81,5 @@ func (ps *ParticleSystem) Draw(p Painter, state *ApplicationState) {
 	// Draw particles
 	for _, part := range ps.Particles {
 		p.FillRect(image.Rect(part.Pos.X, part.Pos.Y, part.Pos.X+part.Size, part.Pos.Y+part.Size), dotColor)
-	}
-}
-
-func (c *ParticleComponent) Draw(p Painter, state *ApplicationState) {
-	if c.System != nil {
-		c.System.Draw(p, state)
 	}
 }

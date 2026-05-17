@@ -1,6 +1,6 @@
 //go:build !gpu
 
-package render
+package backend
 
 import (
 	"image"
@@ -10,6 +10,8 @@ import (
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
+
+	"go_native_gpu_gui/pkg/render/types"
 )
 
 // drawText renders basic bitmap text onto the CPU canvas
@@ -29,11 +31,11 @@ func (c *CPUEngine) drawRoundedRect(r image.Rectangle, radius int, col color.RGB
 	ox, oy := int(c.offsetX), int(c.offsetY)
 	r = r.Add(image.Point{ox, oy})
 	for y := r.Min.Y; y < r.Max.Y; y++ {
-		if y < 0 || y >= Height {
+		if y < 0 || y >= types.Height {
 			continue
 		}
 		for x := r.Min.X; x < r.Max.X; x++ {
-			if x < 0 || x >= Width {
+			if x < 0 || x >= types.Width {
 				continue
 			}
 
@@ -75,6 +77,7 @@ func (c *CPUEngine) drawRoundedRect(r image.Rectangle, radius int, col color.RGB
 		}
 	}
 }
+
 func (c *CPUEngine) DrawLine(x1, y1, x2, y2 int, col color.RGBA) {
 	ox, oy := int(c.offsetX), int(c.offsetY)
 	x1 += ox
@@ -93,7 +96,7 @@ func (c *CPUEngine) DrawLine(x1, y1, x2, y2 int, col color.RGBA) {
 	err := dx - dy
 
 	for {
-		if x1 >= 0 && x1 < Width && y1 >= 0 && y1 < Height {
+		if x1 >= 0 && x1 < types.Width && y1 >= 0 && y1 < types.Height {
 			alpha := float64(col.A) / 255.0
 			idx := y1*c.canvas.Stride + x1*4
 

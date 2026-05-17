@@ -1,6 +1,6 @@
 //go:build gpu
 
-package render
+package backend
 
 import (
 	"image"
