@@ -6,21 +6,25 @@ Welcome to the **P.O.E.M. Operational Engine Matrix (POEM)** UI framework! This 
 
 ## 🏗️ 1. Core Architecture & Reactive Loop
 
-POEM uses a **re-evaluation model** to drive interactions. Instead of manually updating widgets, you write a **Page Builder function**. Whenever the user clicks, types, drags a slider, or resizes the window, POEM:
-1. Mutates variables inside the global `ApplicationState`.
-2. Triggers your Page Builder function to rebuild the component hierarchy from scratch.
-3. Paints the new layout to the screen at a lockstep 60FPS.
+POEM uses an elegant, process-isolated **re-evaluation loop** driven over Windows Named Pipes. Instead of manually updating widgets, you write a **Page Builder function**. 
+
+The lifecycle works as follows:
+1. The **Rust Sidecar (`rust_engine`)** captures low-level window interactions via `winit` (clicks, typing, drags, or resizes) and transmits them back to Go over the `poem_ipc_rust_to_go` Named Pipe.
+2. The **Go Orchestrator** processes these events, mutates the global `ApplicationState`, and invokes your **Page Builder function** to rebuild the component hierarchy from scratch.
+3. Go serializes the new drawing commands using FlatBuffers and streams them back to Rust over the `poem_ipc_go_to_rust` Named Pipe.
+4. The Rust sidecar processes the frame asynchronously, flushing draw calls to the GPU via **WebGPU (`wgpu`)** at a locked 60FPS.
 
 ```
-+-------------+      User Clicks       +------------------+
-| Win32 Loop  | ---------------------> | ApplicationState |
-+-------------+                        +------------------+
-       ^                                        |
-       | Repaints at 60FPS                      v Triggers
-+-------------+                        +------------------+
-| CPUEngine / | <--------------------- |  BuildPagesFn()  | (Reconstructs component tree)
-| GPUEngine   |                        +------------------+
-+-------------+
++--------------------+   FlatBuffer Input Event    +-------------------+
+| Rust Sidecar Core  | --------------------------> |  Go Orchestrator  |
+|  (winit / wgpu)    | <-------------------------- |    (Game Loop)    |
++--------------------+   Serialized Draw Commands  +-------------------+
+                                                             |
+                                                             v Triggers
+                                                   +-------------------+
+                                                   |  BuildPagesFn()   |
+                                                   | (Rebuilds UI tree)|
+                                                   +-------------------+
 ```
 
 ---
@@ -331,9 +335,8 @@ POEM features a high-performance, fully composable vertical scrolling container 
 ### A. Viewport Bounded Clipping
 When rendering massive, high-volume lists or logs, downstream elements must be clipped to prevent them from bleeding onto stationary sections (like headers, sidebars, and background panels). 
 
-POEM implements this by adding a native viewport clipping bounding box to the `Painter` engine. Elements outside the ScrollView `Rect` are automatically clipped:
-- **Software Path (GDI)**: Pixels outside the active clipping rectangle are skipped during pixel-rasterization loops.
-- **Hardware Path (OpenGL)**: Employs GPU-level Scissor tests (`gl.Enable(gl.SCISSOR_TEST)`, `gl.Scissor`) to clip the viewport with sub-millisecond drawing performance.
+POEM implements this by adding a native viewport clipping bounding box to the flat drawing tree. Elements outside the ScrollView `Rect` are automatically clipped at the GPU level inside the Rust wgpu sidecar:
+- **wgpu Scissor Test**: Employs hardware-level scissor tests (`set_scissor_rect`) in WebGPU render passes, dynamically translating the logical boundaries into physical screen pixels based on your display's High-DPI scale factor. This achieves ultra-crisp, sub-millisecond clipping performance.
 
 ### B. Nested Layout Composition Example
 To build a scrollable view, simply wrap a vertical `render.FlexBox` container inside a `render.ScrollView` and place as many interactive components (labels, buttons, text fields) as you want inside:
@@ -415,5 +418,19 @@ func BuildAllPages(state *render.ApplicationState) {
 }
 ```
 Whenever the user hits `Ctrl+S`, the registered handler fires, updates state, and repaints the screen immediately!
+
+---
+
+## 🖥️ 8. High-DPI & Multi-Resolution Display Scaling
+
+POEM automatically scales your layout on high-density displays (such as 4K screens or displays with custom Windows scaling levels). 
+
+As a downstream developer, **you do not need to perform any scaling math, factor multiplication, or resolution adjustments!**
+
+### Transparent Scaling Mechanics
+* **Pure Logical Layouts**: When declaring widgets in `BuildPagesFn` (e.g. `image.Rect(100, 100, 300, 400)`), you define them strictly in **logical units**. POEM's layout flexboxes and margins run in this logical space.
+* **Auto-Adjusted Views**: Behind the scenes, the presentation engine uses hardware-accelerated WebGPU projection mappings to scale elements to match the screen's system density perfectly, preventing them from appearing tiny on high-resolution screens.
+* **Integrated Clipping & Interaction**: Scissor clips inside `ScrollView` and mouse coordinates (`MouseMove`, `MouseDown`, `MouseWheel`) are automatically converted between physical screen pixels and your logical layout space. Custom hover cues, clicks, and scrolling operate cleanly out-of-the-box on any screen size.
+
 
 

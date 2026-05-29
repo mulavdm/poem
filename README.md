@@ -1,10 +1,10 @@
-# PolyEngine: Hybrid Frameworkless GUI Engine in Go
+# POEM: Hybrid Process-Isolated GUI Engine in Go & Rust
 
-A lightweight, highly modular, zero-framework desktop window engine implemented in Go. This project features a polymorphic architecture that switches between a **Pure Go CPU Software Renderer** (zero external dependencies) and a **Hardware-Accelerated GPU Pipeline** (OpenGL Core Profile) using Go build tags.
+A lightweight, highly modular, zero-framework desktop window engine. This project features a state-of-the-art **process-isolated dual-runtime architecture**: an orchestrating Go backend driving a hardware-accelerated **wgpu/winit Rust sidecar** over high-performance FlatBuffers and Windows Named Pipes.
 
-Originally a prototype engine, PolyEngine is now fully packaged as an **importable standalone library (`pkg/render`)** so that any external Go application (like the Book Manager) can easily construct stunning, premium user interfaces.
+Originally a prototype engine, POEM is now fully packaged as an **importable standalone library (`pkg/render`)** so that any external Go application (like the Book Manager) can easily construct stunning, premium user interfaces.
 
-POEM also includes a complete, low-latency **Keyboard Controller & Focus Navigation Engine** supporting active-page focus cycling (`Tab` / `Shift+Tab`), glowing neon outline focus indicators, automatic scroll view centering, modular input bindings (such as left/right arrows for sliders, and Enter clicks for buttons), and declarative global hotkeys (like `Ctrl+S`).
+POEM also includes automated **High-DPI / 4K Multi-Resolution Display Scaling**, and a low-latency **Keyboard Focus Engine** supporting active-page cycling (`Tab`/`Shift+Tab`), glowing neon outline focus indicators, automatic scroll view centering, modular input bindings, and declarative global hotkeys (like `Ctrl+S`).
 
 ---
 
@@ -16,15 +16,17 @@ The engine is decoupled into modular packages to isolate concerns and enforce a 
 .
 ├── cmd/engine/         # Main demo entry point dogfooding the library
 ├── pkg/
-│   └── render/         # Public Standalone Library
+│   └── render/         # Public Standalone Library (Go Orchestrator)
 │       ├── render.go   # Type Aliases & Constants (Single Import Interface)
-│       ├── run.go      # Native Win32 Event Pump & Application Runner
-│       ├── types/      # Painter, UIRenderer, Component Contracts & ApplicationState
+│       ├── run.go      # Named Pipe Server & Loop Orchestration
+│       ├── types/      # Component Contracts, ApplicationState & Telemetry
 │       ├── components/ # Declarative Primitives (Panel, Button, TextInput, Slider, etc.)
-│       ├── layout/     # Axis-Aligned FlexBox calculations
-│       └── backend/    # CPU and GPU Painting Implementations (conditional tags)
+│       └── layout/     # Axis-Aligned FlexBox calculations
 ├── internal/
-│   └── win32/          # Private Syscalls & Native Windows Structs
+│   └── win32/          # Private Syscalls & Named Pipe DLL Bindings
+├── rust_engine/        # Hardware-Accelerated wgpu/winit Rust Sidecar
+│   ├── src/main.rs     # Event loop & Named Pipe connection logic
+│   └── src/renderer.rs # Batch-renderer & Gaussian frosted-glass shaders
 ├── ARCHITECTURE.md     # Technical Deep-Dive & Engineering Log
 └── GEMINI.md           # Developer Guide for AI Assistants
 ```
@@ -102,42 +104,38 @@ If you are actively developing both the library and consumer application concurr
 
 ## 🛠️ Build & Run Instructions
 
-### 1. Pure CPU Mode (Default)
-The CPU mode is **zero-dependency** and requires only the Go standard library (plus `golang.org/x/image` for fonts). It uses GDI `StretchDIBits` to blit a software-calculated pixel buffer directly to the window.
+To compile and run the process-isolated dual-runtime POEM GUI framework, you need to compile both the Rust presentation sidecar and the Go orchestrator.
 
-**Build Command:**
+### 1. Compile the Rust Sidecar Core (Release Mode)
+This generates the hardware-accelerated wgpu binary which is dynamically spawned by Go.
+
 ```bash
-go build -o poem_cpu.exe ./cmd/engine
+cargo build --release --manifest-path rust_engine/Cargo.toml
 ```
 
-**Run:**
+### 2. Compile the Go Orchestrator
+This compiles the orchestrator containing all layout formulas, hotkeys, state telemetry, and named pipe logic.
+
 ```bash
-./poem_cpu.exe
+go build ./cmd/engine
 ```
 
-### 2. Hardware GPU Mode (OpenGL)
-The GPU mode pipelines rendering directly to the graphics card. It requires a C compiler (GCC) and the `gpu` build tag.
+### 3. Run the Dual-Runtime Application
+Simply launch the Go orchestrator. It will automatically detect, launch, and establish named pipe communication loops with the Rust wgpu sidecar:
 
-**Build Command:**
 ```bash
-go build -tags gpu -o poem_gpu.exe ./cmd/engine
-```
-
-**Run:**
-```bash
-./poem_gpu.exe
+go run ./cmd/engine
 ```
 
 ---
 
 ## 📦 Production Release Optimization
-To create a compact, professional binary without a terminal window:
-
-```bash
-go build -ldflags="-s -w -H=windowsgui" -o PolyEngine.exe ./cmd/engine
-```
-- `-s -w`: Strips debug symbols (reduces size).
-- `-H=windowsgui`: Hides the console window on launch.
+To package a clean distribution without intermediate debug binaries or visible command prompt consoles on launch:
+1. Compile the Rust sidecar in release mode (creates `poem_rust_engine.exe` inside `rust_engine/target/release/`).
+2. Compile the Go engine with headless GUI flags:
+   ```bash
+   go build -ldflags="-s -w -H=windowsgui" -o POEM.exe ./cmd/engine
+   ```
 
 ---
 
@@ -160,9 +158,10 @@ type ApplicationState struct {
    type MyNewComponent = components.MyNewComponent
    ```
 
-### Modifying Painting Logic
-- **For CPU Rasterization**: Adjust the `CPUEngine` methods in **[cpu.go](file:///d:/Programming/GUIProject/POEM/pkg/render/backend/cpu.go)**.
-- **For GPU Graphics**: Adjust the `GPUEngine` shader pipeline in **[gpu.go](file:///d:/Programming/GUIProject/POEM/pkg/render/backend/gpu.go)**.
+### Modifying Painting & Rendering Logic
+* **Updating Painters**: Adjust the drawing command serialization in `pkg/render/painter.go` and schema definitions.
+* **Updating GPU Shaders**: Adjust the signed distance fields or blending calculations in **[main.wgsl](file:///d:/Programming/GUIProject/POEM/rust_engine/src/shaders/main.wgsl)** and **[blur.wgsl](file:///d:/Programming/GUIProject/POEM/rust_engine/src/shaders/blur.wgsl)**.
+* **Updating GPU Batcher**: Adjust the vertex buffer allocation, batch ranges, or clipping rules inside the wgpu pipeline in **[renderer.rs](file:///d:/Programming/GUIProject/POEM/rust_engine/src/renderer.rs)**.
 
 ---
 

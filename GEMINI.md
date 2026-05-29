@@ -33,6 +33,7 @@ Every major rendering or layout change **MUST** be validated through the interna
 - **Go Slice Copies**: Avoid caching slice headers inside static component fields. Page rebuilding (e.g., inside `WM_PAINT`) refreshes the slice references, capturing dynamically updated lengths.
 - **Dynamic Cursors**: Components should reactively mutate `state.CursorID` inside their `Draw()` calls to claim a cursor shape. System cursors are pre-loaded at application boot.
 - **Layout Sync & Hit-Testing**: Hit-testing occurs before drawing. To prevent coordinate mismatch of nested components, always run a recursive layout synchronization pass (`comp.SetBounds(comp.Bounds())`) immediately before evaluating hovers or mouse interactions.
+- **High-DPI Coordinate Translation**: All layouts in Go operate on logical coordinates. The Rust sidecar maps these to WebGPU orthographic clip spaces by dividing physical boundaries by `scale_factor`. All winit mouse inputs (`CursorMoved`, `MouseWheel`) must be divided by `scale_factor` before propagation to Go, while scissor bounds must be scaled up to physical pixels in wgpu rendering passes to clip accurately.
 - **Documentation Integrity**: ALWAYS update all relevant documentation (`README.md`, `ARCHITECTURE.md`, `GEMINI.md`, and `GUIDE.md`) immediately after making API, layout, or structural changes to ensure downstream developers have an accurate, real-world SSoT (Single Source of Truth).
 
 ---
@@ -41,4 +42,5 @@ Every major rendering or layout change **MUST** be validated through the interna
 - `cmd/engine/`: Main event loop and message handling, dogfooding the library.
 - `internal/win32/`: Low-level OS interaction (No logic here).
 - `pkg/render/`: Public standalone library containing `run.go`, `types/`, `components/`, `layout/`, and `backend/`.
+- `rust_engine/`: Process-isolated hardware-accelerated wgpu/winit presentation core sidecar.
 - `ARCHITECTURE.md`: Technical deep-dive on the engine's design.
