@@ -14,12 +14,28 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
-# IDEs
+# IDEs and Editors
 .idea/
 .vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*.swo
+*~
 
-# Build artifacts
+# Rust build artifacts
+target/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Project-specific Build artifacts and logs
 /engine
 /engine.exe
-
+/poem_go.exe
 crash.log
