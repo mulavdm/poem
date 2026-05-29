@@ -1,0 +1,122 @@
+namespace poem;
+
+// Go -> Rust: Draw Primitives, Sound, & Initialization Commands
+
+enum DrawCommandType : byte {
+  DrawRoundedRect = 0,
+  DrawText = 1,
+  FillRect = 2,
+  DrawLine = 3,
+  SetGlow = 4,
+  SetGlass = 5,
+  SetShadow = 6,
+  SetOffset = 7,
+  SetClip = 8
+}
+
+table DrawCommand {
+  type: DrawCommandType;
+  x1: int;
+  y1: int;
+  x2: int;
+  y2: int;
+  w: int;
+  h: int;
+  radius: int;
+  r: ubyte;
+  g: ubyte;
+  b: ubyte;
+  a: ubyte;
+  text: string;
+  val1: float; // Glow strength, shadow ox, offset x, or clip width
+  val2: float; // Shadow oy, offset y, or clip height
+  val3: float; // Shadow blur
+  flag: bool;  // SetGlass, SetClip enable
+}
+
+table RenderFrame {
+  width: int;
+  height: int;
+  commands: [DrawCommand];
+  cursor: byte; // 0=Arrow, 1=Hand, 2=IBeam
+}
+
+enum SoundType : byte {
+  Hover = 0,
+  Click = 1,
+  Success = 2
+}
+
+table PlaySound {
+  type: SoundType;
+}
+
+table CharInfo {
+  r: int;      // Rune Unicode codepoint
+  u1: float;
+  v1: float;
+  u2: float;
+  v2: float;
+  width: int;
+  height: int;
+  advance: int;
+}
+
+table InitEngine {
+  width: int;
+  height: int;
+  atlas_width: int;
+  atlas_height: int;
+  atlas_pixels: [ubyte];
+  chars: [CharInfo];
+}
+
+union GoToRustUnion {
+  InitEngine,
+  RenderFrame,
+  PlaySound
+}
+
+table GoToRustMessage {
+  message: GoToRustUnion;
+}
+
+// Rust -> Go: Event Stream Messages
+
+enum EventType : byte {
+  WindowClose = 0,
+  WindowSize = 1,
+  MouseDown = 2,
+  MouseUp = 3,
+  MouseMove = 4,
+  MouseWheel = 5,
+  KeyDown = 6,
+  KeyUp = 7,
+  KeyChar = 8
+}
+
+table Event {
+  type: EventType;
+  x: int;
+  y: int;
+  button: int; // 0=None, 1=Left, 2=Right, 3=Middle
+  delta: int;  // Mouse wheel scroll delta
+  keycode: uint;
+  char: uint;  // Unicode character codepoint
+  width: int;  // New window width
+  height: int; // New window height
+}
+
+table EventBatch {
+  events: [Event];
+}
+
+union RustToGoUnion {
+  EventBatch
+}
+
+table RustToGoMessage {
+  message: RustToGoUnion;
+}
+
+root_type GoToRustMessage;
