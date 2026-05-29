@@ -1,17 +1,26 @@
 package render
 
 import (
+	"encoding/binary"
 	"fmt"
 	"image"
-	"net/http"
-	_ "net/http/pprof" // Profiling
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/math/fixed"
+
 	"go_native_gpu_gui/internal/win32"
-	"go_native_gpu_gui/pkg/render/backend"
 	"go_native_gpu_gui/pkg/render/components"
+	"go_native_gpu_gui/pkg/render/poem"
 	"go_native_gpu_gui/pkg/render/types"
 )
 
@@ -22,17 +31,16 @@ type AppConfig struct {
 	BuildPagesFn func(state *types.ApplicationState)
 }
 
-// Package-level runner variables
+// Package-level orchestrator variables
 var (
-	globalHdc        uintptr
 	globalState      *types.ApplicationState
-	globalEngine     types.UIRenderer
 	globalBuildPages func(state *types.ApplicationState)
+	pipeHandle       uintptr
+	pipeWriteMutex   sync.Mutex
+	stateMutex       sync.Mutex // Protects globalState, component layouts, and painter from concurrent races
 )
 
 func Run(config AppConfig) {
-	runtime.LockOSThread()
-
 	// 1. Initialize dimensions
 	if config.Width > 0 {
 		Width = config.Width
@@ -43,22 +51,14 @@ func Run(config AppConfig) {
 		types.Height = config.Height
 	}
 
-	// 2. Start Profiling Server
-	go func() {
-		fmt.Println("📊 Performance Profiler active at http://127.0.0.1:6060/debug/pprof/")
-		if err := http.ListenAndServe("127.0.0.1:6060", nil); err != nil {
-			fmt.Printf("Profiler server failed: %v\n", err)
-		}
-	}()
-
-	// 3. Initialize application state
+	// 2. Initialize application state (headless settings, GDI sound stubs removed)
 	globalState = &types.ApplicationState{
-		StatusText:      "Engine Running Synchronized Component Tree",
+		StatusText:      "Orchestrator Matrix Running headlessly",
 		Volume:          75.0,
 		GlassEnabled:    true,
-		ArrowCursor:     win32.LoadCursor(0, 32512), // IDC_ARROW (32512)
-		HandCursor:      win32.LoadCursor(0, 32649), // IDC_HAND (32649)
-		IBeamCursor:     win32.LoadCursor(0, 32513), // IDC_IBEAM (32513)
+		ArrowCursor:     1, // Abstract ID for Arrow
+		HandCursor:      2, // Abstract ID for Hand
+		IBeamCursor:     3, // Abstract ID for IBeam
 		ScrollPositions: make(map[string]int),
 		ScrollDragStart: make(map[string]int),
 		ScrollStartY:    make(map[string]int),
@@ -67,89 +67,144 @@ func Run(config AppConfig) {
 		SliderValues:    make(map[string]float32),
 		AudioEnabled:    true,
 	}
-	globalState.AudioHoverBuffer = win32.SynthesizeHover()
-	globalState.AudioClickBuffer = win32.SynthesizeClick()
-	globalState.AudioSavedBuffer = win32.SynthesizeSuccess()
-
 	globalState.CursorID = globalState.ArrowCursor
 	globalBuildPages = config.BuildPagesFn
-
-	// 4. Create Win32 window
-	className, _ := syscall.UTF16PtrFromString("SwitchableEngineWrapper")
-	windowTitle := "POEM Application Framework"
-	if config.Title != "" {
-		windowTitle = config.Title
-	}
-	windowName, _ := syscall.UTF16PtrFromString(windowTitle)
-
-	wc := win32.WNDCLASS{
-		Style:      3,
-		PfnWndProc: syscall.NewCallback(libWndProc),
-		ClassName:  className,
-	}
-	win32.RegisterClass(&wc)
-
-	hwnd, err := win32.CreateWindow(
-		className, windowName,
-		0x00CF0000, // WS_OVERLAPPEDWINDOW
-		100, 100, int32(Width+16), int32(Height+39),
-	)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to create window: %v", err))
-	}
-
-	globalHdc, err = win32.GetDC(hwnd)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get DC: %v", err))
-	}
-
-	// Factory handles build-tag selection automatically (CPU vs GPU backend)
-	globalEngine, err = backend.New(globalHdc)
-	if err != nil {
-		panic(fmt.Sprintf("Renderer Configuration Pipeline Refused Interface Matrix: %v", err))
-	}
-
-	if err := globalEngine.Setup(globalHdc); err != nil {
-		panic(fmt.Sprintf("Renderer Setup Failed: %v", err))
-	}
 
 	globalState.StartTime = time.Now()
 	globalState.CoreMask = (1 << uint(runtime.NumCPU())) - 1
 	globalState.Particles = types.NewParticleSystem(100, image.Rect(0, 0, Width, Height))
 
-	// Build the pages initially
 	if globalBuildPages != nil {
 		globalBuildPages(globalState)
 	}
 
-	win32.ShowWindow(hwnd, 5) // SW_SHOW
+	// 3. Create Windows Named Pipes (Separate GoToRust and RustToGo to avoid duplex blocking deadlocks)
+	pipeNameGoToRust, _ := syscall.UTF16PtrFromString(`\\.\pipe\poem_ipc_go_to_rust`)
+	pipeHandleGoToRust, err := win32.CreateNamedPipe(
+		pipeNameGoToRust,
+		win32.PIPE_ACCESS_DUPLEX,
+		win32.PIPE_TYPE_BYTE|win32.PIPE_READMODE_BYTE|win32.PIPE_WAIT,
+		win32.PIPE_UNLIMITED_INSTANCES,
+		1024*1024, // 1MB Output buffer
+		1024*1024, // 1MB Input buffer
+		0,
+		0,
+	)
+	if err != nil || pipeHandleGoToRust == 0 {
+		panic(fmt.Sprintf("Orchestrator failed to create GoToRust IPC Pipe: %v", err))
+	}
+	defer win32.CloseHandle(pipeHandleGoToRust)
 
-	// Drive animation loop
+	pipeNameRustToGo, _ := syscall.UTF16PtrFromString(`\\.\pipe\poem_ipc_rust_to_go`)
+	pipeHandleRustToGo, err := win32.CreateNamedPipe(
+		pipeNameRustToGo,
+		win32.PIPE_ACCESS_DUPLEX,
+		win32.PIPE_TYPE_BYTE|win32.PIPE_READMODE_BYTE|win32.PIPE_WAIT,
+		win32.PIPE_UNLIMITED_INSTANCES,
+		1024*1024,
+		1024*1024,
+		0,
+		0,
+	)
+	if err != nil || pipeHandleRustToGo == 0 {
+		panic(fmt.Sprintf("Orchestrator failed to create RustToGo IPC Pipe: %v", err))
+	}
+	defer win32.CloseHandle(pipeHandleRustToGo)
+
+	fmt.Println("🔒 IPC Named Pipes Created. Awaiting Rust presentation core connection...")
+
+	// 4. Spawn the Rust presentation engine child process
+	var rustCmd *exec.Cmd
+	wd, _ := os.Getwd()
+	releasePath := filepath.Join(wd, "rust_engine", "target", "release", "poem_rust_engine.exe")
+	debugPath := filepath.Join(wd, "rust_engine", "target", "debug", "poem_rust_engine.exe")
+
+	if _, err := os.Stat(releasePath); err == nil {
+		fmt.Printf("🚀 Spawning Rust presentation engine (Release Mode): %s\n", releasePath)
+		rustCmd = exec.Command(releasePath)
+	} else if _, err := os.Stat(debugPath); err == nil {
+		fmt.Printf("🚀 Spawning Rust presentation engine (Debug Mode): %s\n", debugPath)
+		rustCmd = exec.Command(debugPath)
+	} else {
+		// Attempt local dev command if running inside POEM root
+		fmt.Println("⚠️ Target Rust binary not found in cached paths. Attempting default 'cargo run' target check...")
+		rustCmd = exec.Command("cargo", "run", "--manifest-path", filepath.Join("rust_engine", "Cargo.toml"))
+	}
+
+	rustCmd.Stdout = os.Stdout
+	rustCmd.Stderr = os.Stderr
+	if err := rustCmd.Start(); err != nil {
+		panic(fmt.Sprintf("Failed to spawn Rust engine: %v", err))
+	}
+
+	// Clean shutdown zombie mitigation
+	defer func() {
+		if rustCmd.Process != nil {
+			fmt.Println("🛑 Terminating Rust presentation engine sidecar...")
+			rustCmd.Process.Kill()
+		}
+	}()
+
+	// 5. Establish Named Pipe client links
+	connected1, err := win32.ConnectNamedPipe(pipeHandleGoToRust, 0)
+	if err != nil || !connected1 {
+		panic(fmt.Sprintf("Failed to lock client connection on GoToRust Named Pipe: %v", err))
+	}
+	connected2, err := win32.ConnectNamedPipe(pipeHandleRustToGo, 0)
+	if err != nil || !connected2 {
+		panic(fmt.Sprintf("Failed to lock client connection on RustToGo Named Pipe: %v", err))
+	}
+	fmt.Println("🤝 IPC Handshake Synchronized! Rust presentation core bound successfully.")
+
+	// Wrap our raw pipe handles in io.ReadWriter
+	pipeConnGoToRust := &pipeReadWriteCloser{handle: pipeHandleGoToRust}
+	pipeConnRustToGo := &pipeReadWriteCloser{handle: pipeHandleRustToGo}
+
+	// 6. Generate and transmit dynamically-rasterized Font Atlas
+	atlasPixels, chars := buildFontAtlasPixels()
+	builder := flatbuffers.NewBuilder(1024 * 128)
+	initOffset := serializeInitEngine(builder, Width, Height, atlasPixels, chars)
+	builder.Finish(initOffset)
+	initBytes := builder.FinishedBytes()
+
+	if err := writeMessage(pipeConnGoToRust, initBytes); err != nil {
+		panic(fmt.Sprintf("Failed to transmit InitEngine bootstrap package: %v", err))
+	}
+	fmt.Println("🔤 Font Atlas & Metrics bootstrap context loaded successfully to sidecar.")
+
+	// 7. Initialize FlatBuffer painter
+	painter := NewFlatBufferPainter()
+
+	// 8. Start Background Physics & Repaint loop (headful updates mapped back to sidecar)
 	lastFrame := time.Now()
 	go func() {
 		var telemetryTimer float64
 		for {
 			start := time.Now()
-			time.Sleep(16 * time.Millisecond)
+			time.Sleep(16 * time.Millisecond) // ~60 FPS
+			
+			stateMutex.Lock()
 			now := time.Now()
 			dt := now.Sub(lastFrame).Seconds()
 			if dt > 0 {
 				globalState.CurrentFPS = 1.0 / dt
 				globalState.LastDt = dt
-				globalState.Particles.Update(dt)
+				if globalState.Particles != nil {
+					globalState.Particles.Update(dt)
+				}
 				globalState.UpdateAnimations(float32(dt))
 
 				telemetryTimer += dt
-				if telemetryTimer >= 0.1 { // Track heap and FPS every 100ms
+				if telemetryTimer >= 0.1 {
 					telemetryTimer = 0
 
-					// Update FPS history (cap at 100)
+					// Update FPS history (cap 100)
 					globalState.FPSHistory = append(globalState.FPSHistory, float32(globalState.CurrentFPS))
 					if len(globalState.FPSHistory) > 100 {
 						globalState.FPSHistory = globalState.FPSHistory[1:]
 					}
 
-					// Update Heap allocation history in MB (cap at 100)
+					// Update Heap history (cap 100)
 					var m runtime.MemStats
 					runtime.ReadMemStats(&m)
 					heapMB := float32(m.Alloc) / 1024 / 1024
@@ -161,279 +216,410 @@ func Run(config AppConfig) {
 			}
 			lastFrame = now
 			globalState.FrameTime = time.Since(start)
-			triggerRepaint(hwnd)
+
+			// Trigger automatic repaint batch to synchronize rendering loop updates
+			triggerRepaintFrame(pipeConnGoToRust, painter)
+			stateMutex.Unlock()
 		}
 	}()
 
-	var msg [7]uintptr
+	// 9. Main Event Receiver Loop (Blocks on incoming event FlatBuffers from Rust)
 	for {
-		ret, _ := win32.GetMessage(&msg[0])
-		if ret == 0 {
+		payload, err := readMessage(pipeConnRustToGo)
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("🔌 Rust presentation engine disconnected gracefully.")
+				break
+			}
+			fmt.Printf("⚠️ IPC Read Loop Error: %v\n", err)
 			break
 		}
-		win32.TranslateMessage(&msg[0])
-		win32.DispatchMessage(&msg[0])
+
+		// Decode Event Batch
+		msgEnvelope := poem.GetRootAsRustToGoMessage(payload, 0)
+		unionTable := new(flatbuffers.Table)
+		if msgEnvelope.Message(unionTable) {
+			if msgEnvelope.MessageType() == poem.RustToGoUnionEventBatch {
+				// Extract our event batch
+				batch := new(poem.EventBatch)
+				batch.Init(unionTable.Bytes, unionTable.Pos)
+
+				stateMutex.Lock()
+				// Process events
+				processEventBatch(batch, pipeConnGoToRust, painter)
+				stateMutex.Unlock()
+			}
+		}
 	}
 }
 
-func libWndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
-	switch msg {
-	case 0x0020: // WM_SETCURSOR
-		// HTCLIENT (client area) is 1. If cursor is inside client area, force pointer refresh
-		if (lparam&0xFFFF) == 1 && globalState != nil && globalState.CursorID != 0 {
-			win32.SetCursor(globalState.CursorID)
-			return 1 // Return TRUE to indicate handled
-		}
-		break
-	case 0x000F: // WM_PAINT
-		if globalEngine != nil && globalState != nil {
-			now := time.Now()
-			var paintDt float64 = 0.0166 // default fallback
-			if !globalState.LastPaintTime.IsZero() {
-				paintDt = now.Sub(globalState.LastPaintTime).Seconds()
-			}
-			globalState.LastPaintTime = now
-			if paintDt > 0.1 {
-				paintDt = 0.1
-			}
-			globalState.RenderDt = paintDt
+// Write helper
+func writeMessage(conn io.Writer, payload []byte) error {
+	pipeWriteMutex.Lock()
+	defer pipeWriteMutex.Unlock()
 
-			if globalBuildPages != nil {
-				globalBuildPages(globalState)
-			}
-			globalEngine.Paint(globalHdc, globalState)
-			win32.ValidateRect(hwnd, nil)
+	length := uint32(len(payload))
+	lenBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(lenBuf, length)
+	if _, err := conn.Write(lenBuf); err != nil {
+		return err
+	}
+	_, err := conn.Write(payload)
+	return err
+}
+
+// Read helper
+func readMessage(conn io.Reader) ([]byte, error) {
+	lenBuf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, lenBuf); err != nil {
+		return nil, err
+	}
+	length := binary.LittleEndian.Uint32(lenBuf)
+	payload := make([]byte, length)
+	if _, err := io.ReadFull(conn, payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+// Named Pipe wrapper implementing io.ReadWriteCloser
+type pipeReadWriteCloser struct {
+	handle uintptr
+}
+
+func (p *pipeReadWriteCloser) Read(b []byte) (int, error) {
+	var read uint32
+	// Use Win32 ReadFile API under the hood
+	err := syscall.ReadFile(syscall.Handle(p.handle), b, &read, nil)
+	if err != nil {
+		if err == syscall.ERROR_BROKEN_PIPE {
+			return 0, io.EOF
 		}
-		return 0
-	case 0x0005: // WM_SIZE
-		w := int(lparam & 0xFFFF)
-		h := int(lparam >> 16)
-		if w > 0 && h > 0 {
-			Width = w
-			Height = h
-			types.Width = w
-			types.Height = h
-			if globalEngine != nil {
-				globalEngine.SetSize(w, h)
-				if globalBuildPages != nil && globalState != nil {
-					globalBuildPages(globalState)
+		return 0, err
+	}
+	return int(read), nil
+}
+
+func (p *pipeReadWriteCloser) Write(b []byte) (int, error) {
+	var written uint32
+	err := syscall.WriteFile(syscall.Handle(p.handle), b, &written, nil)
+	if err != nil {
+		return 0, err
+	}
+	return int(written), nil
+}
+
+func (p *pipeReadWriteCloser) Close() error {
+	win32.DisconnectNamedPipe(p.handle)
+	win32.CloseHandle(p.handle)
+	return nil
+}
+
+type fontCharInfo struct {
+	R       int32
+	U1      float32
+	V1      float32
+	U2      float32
+	V2      float32
+	Width   int32
+	Height  int32
+	Advance int32
+}
+
+// Generate the pixel matrix and mapping values for basicfont
+func buildFontAtlasPixels() ([]byte, []fontCharInfo) {
+	face := basicfont.Face7x13
+	atlasW := 128
+	atlasH := 128
+	rgba := image.NewRGBA(image.Rect(0, 0, atlasW, atlasH))
+	d := &font.Drawer{
+		Dst:  rgba,
+		Src:  image.White,
+		Face: face,
+	}
+
+	x, y := 0, 13
+	var chars []fontCharInfo
+
+	for r := rune(32); r < 127; r++ {
+		advance, ok := face.GlyphAdvance(r)
+		if !ok {
+			continue
+		}
+
+		if x+int(advance>>6) > atlasW {
+			x = 0
+			y += 15
+		}
+
+		d.Dot = fixed.P(x, y)
+		d.DrawString(string(r))
+
+		chars = append(chars, fontCharInfo{
+			R:       int32(r),
+			U1:      float32(x) / float32(atlasW),
+			V1:      float32(y-11) / float32(atlasH),
+			U2:      float32(x+int(advance>>6)) / float32(atlasW),
+			V2:      float32(y+2) / float32(atlasH),
+			Width:   int32(advance >> 6),
+			Height:  13,
+			Advance: int32(advance >> 6),
+		})
+
+		x += int(advance >> 6)
+	}
+
+	return rgba.Pix, chars
+}
+
+// FlatBuffers InitEngine compiler
+func serializeInitEngine(builder *flatbuffers.Builder, width, height int, pixels []byte, chars []fontCharInfo) flatbuffers.UOffsetT {
+	pixelsOffset := builder.CreateByteVector(pixels)
+
+	charOffsets := make([]flatbuffers.UOffsetT, len(chars))
+	for i, char := range chars {
+		poem.CharInfoStart(builder)
+		poem.CharInfoAddR(builder, char.R)
+		poem.CharInfoAddU1(builder, char.U1)
+		poem.CharInfoAddV1(builder, char.V1)
+		poem.CharInfoAddU2(builder, char.U2)
+		poem.CharInfoAddV2(builder, char.V2)
+		poem.CharInfoAddWidth(builder, char.Width)
+		poem.CharInfoAddHeight(builder, char.Height)
+		poem.CharInfoAddAdvance(builder, char.Advance)
+		charOffsets[i] = poem.CharInfoEnd(builder)
+	}
+
+	poem.InitEngineStartCharsVector(builder, len(charOffsets))
+	for i := len(charOffsets) - 1; i >= 0; i-- {
+		builder.PrependUOffsetT(charOffsets[i])
+	}
+	charsVector := builder.EndVector(len(charOffsets))
+
+	poem.InitEngineStart(builder)
+	poem.InitEngineAddWidth(builder, int32(width))
+	poem.InitEngineAddHeight(builder, int32(height))
+	poem.InitEngineAddAtlasWidth(builder, 128)
+	poem.InitEngineAddAtlasHeight(builder, 128)
+	poem.InitEngineAddAtlasPixels(builder, pixelsOffset)
+	poem.InitEngineAddChars(builder, charsVector)
+	initOffset := poem.InitEngineEnd(builder)
+
+	poem.GoToRustMessageStart(builder)
+	poem.GoToRustMessageAddMessageType(builder, poem.GoToRustUnionInitEngine)
+	poem.GoToRustMessageAddMessage(builder, initOffset)
+	return poem.GoToRustMessageEnd(builder)
+}
+
+// Sound triggering helper over Named Pipe FlatBuffers
+func sendSoundEvent(conn io.Writer, soundType poem.SoundType) {
+	builder := flatbuffers.NewBuilder(128)
+	poem.PlaySoundStart(builder)
+	poem.PlaySoundAddType(builder, soundType)
+	soundOffset := poem.PlaySoundEnd(builder)
+
+	poem.GoToRustMessageStart(builder)
+	poem.GoToRustMessageAddMessageType(builder, poem.GoToRustUnionPlaySound)
+	poem.GoToRustMessageAddMessage(builder, soundOffset)
+	msgOffset := poem.GoToRustMessageEnd(builder)
+
+	builder.Finish(msgOffset)
+	writeMessage(conn, builder.FinishedBytes())
+}
+
+// Main paint event dispatcher
+func triggerRepaintFrame(conn io.Writer, painter *FlatBufferPainter) {
+	if globalState == nil {
+		return
+	}
+
+	painter.Reset()
+
+	// Rebuild dynamic page descriptors
+	if globalBuildPages != nil {
+		globalBuildPages(globalState)
+	}
+
+	// Trigger layout logic & flat drawing tree population
+	types.RenderPipeline(painter, globalState)
+
+	// Map GDI cursor handles to abstract FlatBuffer cursor types
+	var cursorVal byte = 0 // Arrow
+	if globalState.CursorID == globalState.HandCursor {
+		cursorVal = 1 // Hand
+	} else if globalState.CursorID == globalState.IBeamCursor {
+		cursorVal = 2 // IBeam
+	}
+
+	// Serialize
+	builder := flatbuffers.NewBuilder(1024 * 128)
+	frameOffset := painter.Serialize(builder, Width, Height, cursorVal)
+	builder.Finish(frameOffset)
+	writeMessage(conn, builder.FinishedBytes())
+}
+
+// Input event processor & state mapping
+func processEventBatch(batch *poem.EventBatch, conn io.Writer, painter *FlatBufferPainter) {
+	if globalState == nil {
+		return
+	}
+
+	stateChanged := false
+
+	for i := 0; i < batch.EventsLength(); i++ {
+		ev := new(poem.Event)
+		if batch.Events(ev, i) {
+			stateChanged = true
+
+			switch ev.Type() {
+			case poem.EventTypeWindowClose:
+				fmt.Println("🚪 Rust requested window termination. Shutting down Go...")
+				os.Exit(0)
+
+			case poem.EventTypeWindowSize:
+				w := int(ev.Width())
+				h := int(ev.Height())
+				if w > 0 && h > 0 {
+					Width = w
+					Height = h
+					types.Width = w
+					types.Height = h
 				}
-			}
-		}
-		return 0
-	case 0x0201: // WM_LBUTTONDOWN
-		if globalState == nil {
-			return 0
-		}
-		globalState.ClickCount++
-		pt := image.Point{globalState.MouseX, globalState.MouseY}
-		newFocus := libFindHoveredComponent(pt)
-		globalState.FocusedID = newFocus
 
-		// Hook real-time click sound for interactive elements
-		if newFocus != "" {
-			globalState.PlayClick()
-		}
+			case poem.EventTypeMouseDown:
+				globalState.ClickCount++
+				globalState.MouseX = int(ev.X())
+				globalState.MouseY = int(ev.Y())
 
-		pt = image.Point{X: int(win32.GET_X_LPARAM(lparam)), Y: int(win32.GET_Y_LPARAM(lparam))}
-		globalState.ActiveID = libFindHoveredComponent(pt)
-		if globalState.ActiveID != "" {
-			if comp := libFindComponent(globalState.ActiveID); comp != nil {
-				if comp.OnMouseDown(pt, globalState) {
-					if s, ok := comp.(*components.Slider); ok {
-						globalState.Volume = s.Value
-					}
-					if globalBuildPages != nil {
-						globalBuildPages(globalState)
-					}
+				pt := image.Point{globalState.MouseX, globalState.MouseY}
+				newFocus := libFindHoveredComponent(pt)
+				globalState.FocusedID = newFocus
+
+				// Acoustic feedback click hook
+				if newFocus != "" {
+					sendSoundEvent(conn, poem.SoundTypeClick)
 				}
-				win32.SetCapture(hwnd)
-			}
-		}
 
-		globalState.StatusText = fmt.Sprintf("Interaction Captured: %d Clicks Recorded | Focus: %s", globalState.ClickCount, newFocus)
-		triggerRepaint(hwnd)
-		return 0
-	case 0x0202: // WM_LBUTTONUP
-		if globalState == nil {
-			return 0
-		}
-		pt := image.Point{X: int(win32.GET_X_LPARAM(lparam)), Y: int(win32.GET_Y_LPARAM(lparam))}
-		if globalState.ActiveID != "" {
-			if comp := libFindComponent(globalState.ActiveID); comp != nil {
-				comp.OnMouseUp(pt, globalState)
-				if globalBuildPages != nil {
-					globalBuildPages(globalState)
-				}
-			}
-			globalState.ActiveID = ""
-		}
-		win32.ReleaseCapture()
-		triggerRepaint(hwnd)
-		return 0
-	case 0x0200: // WM_MOUSEMOVE
-		if globalState == nil {
-			return 0
-		}
-		globalState.MouseX = int(int16(lparam & 0xFFFF))
-		globalState.MouseY = int(int16(lparam >> 16))
-		pt := image.Point{globalState.MouseX, globalState.MouseY}
-
-		newHover := ""
-		if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
-			// Layout sync pass
-			for _, comp := range comps {
-				comp.SetBounds(comp.Bounds())
-			}
-			for i := len(comps) - 1; i >= 0; i-- {
-				if id := comps[i].HitTest(pt); id != "" {
-					newHover = id
-					break
-				}
-			}
-		}
-
-		// Trigger high-fidelity hover tick on active interactive component changes
-		if newHover != "" && newHover != globalState.HoveredID {
-			if comp := libFindComponent(newHover); comp != nil && comp.Focusable() {
-				globalState.PlayHover()
-			}
-		}
-
-		globalState.HoveredID = newHover
-
-		if globalState.ActiveID != "" {
-			if comp := libFindComponent(globalState.ActiveID); comp != nil {
-				if comp.OnMouseMove(pt, globalState) {
-					if s, ok := comp.(*components.Slider); ok {
-						globalState.Volume = s.Value
-					}
-					if globalBuildPages != nil {
-						globalBuildPages(globalState)
-					}
-					triggerRepaint(hwnd)
-				}
-			}
-		} else if newHover != "" {
-			if comp := libFindComponent(newHover); comp != nil {
-				comp.OnMouseMove(pt, globalState)
-			}
-		}
-		return 0
-	case 0x020A: // WM_MOUSEWHEEL
-		if globalState == nil {
-			return 0
-		}
-		delta := int(int16(wparam >> 16))
-		pt := image.Point{globalState.MouseX, globalState.MouseY}
-
-		if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
-			for _, comp := range comps {
-				comp.Walk(func(c types.Component) {
-					if sc, ok := c.(types.ScrollableComponent); ok {
-						if pt.In(c.Bounds()) {
-							if sc.OnMouseWheel(pt, delta, globalState) {
-								if globalBuildPages != nil {
-									globalBuildPages(globalState)
-								}
-								triggerRepaint(hwnd)
-							}
-						}
-					}
-				})
-			}
-		}
-		return 0
-	case 0x0100: // WM_KEYDOWN
-		if globalState == nil {
-			return 0
-		}
-		const VK_TAB = 0x09
-		const VK_SHIFT = 0x10
-		const VK_ESCAPE = 0x1B
-		const VK_CONTROL = 0x11
-
-		ctrlPressed := (win32.GetKeyState(VK_CONTROL) < 0) || (win32.GetKeyState(0xA2) < 0) || (win32.GetKeyState(0xA3) < 0)
-		fmt.Printf("[ENGINE KEYLOG] WM_KEYDOWN: wparam=%d (0x%02X) | CtrlPressed=%t | FocusedID=%q\n",
-			wparam, wparam, ctrlPressed, globalState.FocusedID)
-
-		// 1. Escape clears active focus
-		if wparam == VK_ESCAPE {
-			globalState.FocusedID = ""
-			triggerRepaint(hwnd)
-			return 0
-		}
-
-		// 2. Tab cycling focus
-		if wparam == VK_TAB {
-			reverse := win32.GetKeyState(VK_SHIFT) < 0
-			globalState.CycleFocus(reverse)
-			triggerRepaint(hwnd)
-			return 0
-		}
-
-		// 3. Global hotkeys (e.g. Ctrl+S)
-		if ctrlPressed {
-			shortcut := ""
-			if wparam == 'S' || wparam == 's' {
-				shortcut = "Ctrl+S"
-			}
-			if shortcut != "" && globalState.Hotkeys != nil {
-				if handler, ok := globalState.Hotkeys[shortcut]; ok {
-					handler(globalState)
-					if globalBuildPages != nil {
-						globalBuildPages(globalState)
-					}
-					triggerRepaint(hwnd)
-					return 0
-				}
-			}
-		}
-
-		// 4. Keyboard propagation to active component
-		if globalState.FocusedID != "" {
-			if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
-				for _, c := range comps {
-					if c.OnKey(uint32(wparam), 0, globalState) {
-						if comp := libFindComponent(globalState.FocusedID); comp != nil {
-							if s, ok := comp.(*components.Slider); ok && s.CompID == "sld_vol" {
+				globalState.ActiveID = newFocus
+				if globalState.ActiveID != "" {
+					if comp := libFindComponent(globalState.ActiveID); comp != nil {
+						if comp.OnMouseDown(pt, globalState) {
+							if s, ok := comp.(*components.Slider); ok {
 								globalState.Volume = s.Value
 							}
 						}
-						if globalBuildPages != nil {
-							globalBuildPages(globalState)
+					}
+				}
+				globalState.StatusText = fmt.Sprintf("Interaction Captured: %d Clicks | Active target: %q", globalState.ClickCount, newFocus)
+
+			case poem.EventTypeMouseUp:
+				globalState.MouseX = int(ev.X())
+				globalState.MouseY = int(ev.Y())
+				pt := image.Point{globalState.MouseX, globalState.MouseY}
+
+				if globalState.ActiveID != "" {
+					if comp := libFindComponent(globalState.ActiveID); comp != nil {
+						comp.OnMouseUp(pt, globalState)
+					}
+					globalState.ActiveID = ""
+				}
+
+			case poem.EventTypeMouseMove:
+				globalState.MouseX = int(ev.X())
+				globalState.MouseY = int(ev.Y())
+				pt := image.Point{globalState.MouseX, globalState.MouseY}
+
+				newHover := libFindHoveredComponent(pt)
+				if newHover != "" && newHover != globalState.HoveredID {
+					if comp := libFindComponent(newHover); comp != nil && comp.Focusable() {
+						sendSoundEvent(conn, poem.SoundTypeHover)
+					}
+				}
+				globalState.HoveredID = newHover
+
+				if globalState.ActiveID != "" {
+					if comp := libFindComponent(globalState.ActiveID); comp != nil {
+						if comp.OnMouseMove(pt, globalState) {
+							if s, ok := comp.(*components.Slider); ok {
+								globalState.Volume = s.Value
+							}
 						}
-						triggerRepaint(hwnd)
-						break
+					}
+				} else if newHover != "" {
+					if comp := libFindComponent(newHover); comp != nil {
+						comp.OnMouseMove(pt, globalState)
+					}
+				}
+
+			case poem.EventTypeMouseWheel:
+				delta := int(ev.Delta())
+				pt := image.Point{globalState.MouseX, globalState.MouseY}
+
+				if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+					for _, comp := range comps {
+						comp.Walk(func(c types.Component) {
+							if sc, ok := c.(types.ScrollableComponent); ok {
+								if pt.In(c.Bounds()) {
+									sc.OnMouseWheel(pt, delta, globalState)
+								}
+							}
+						})
+					}
+				}
+
+			case poem.EventTypeKeyDown:
+				wparam := ev.Keycode()
+				const VK_ESCAPE = 0x1B
+				const VK_TAB = 0x09
+				const VK_CONTROL = 0x11
+
+				ctrlPressed := (ev.Button() & 1) != 0 // Control state passed through button field
+
+				if wparam == VK_ESCAPE {
+					globalState.FocusedID = ""
+				} else if wparam == VK_TAB {
+					reverse := (ev.Button() & 2) != 0 // Shift state passed through button field
+					globalState.CycleFocus(reverse)
+				} else if ctrlPressed && (wparam == 'S' || wparam == 's') {
+					if globalState.Hotkeys != nil {
+						if handler, ok := globalState.Hotkeys["Ctrl+S"]; ok {
+							handler(globalState)
+							sendSoundEvent(conn, poem.SoundTypeSuccess)
+						}
+					}
+				} else if globalState.FocusedID != "" {
+					if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+						for _, c := range comps {
+							if c.OnKey(uint32(wparam), 0, globalState) {
+								if comp := libFindComponent(globalState.FocusedID); comp != nil {
+									if s, ok := comp.(*components.Slider); ok && s.CompID == "sld_vol" {
+										globalState.Volume = s.Value
+									}
+								}
+								break
+							}
+						}
+					}
+				}
+
+			case poem.EventTypeKeyChar:
+				charRune := rune(ev.Char())
+				if globalState.FocusedID != "" {
+					if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+						for _, c := range comps {
+							if c.OnKey(0, charRune, globalState) {
+								break
+							}
+						}
 					}
 				}
 			}
 		}
-		return 0
-	case 0x0102: // WM_CHAR
-		if globalState == nil {
-			return 0
-		}
-		if globalState.FocusedID != "" {
-			if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
-				for _, c := range comps {
-					if c.OnKey(0, rune(wparam), globalState) {
-						if globalBuildPages != nil {
-							globalBuildPages(globalState)
-						}
-						triggerRepaint(hwnd)
-						break
-					}
-				}
-			}
-		}
-		return 0
-	case 0x0002: // WM_DESTROY
-		win32.PostQuitMessage(0)
-		syscall.Exit(0)
-		return 0
 	}
-	return win32.DefWindowProc(hwnd, msg, wparam, lparam)
+
+	if stateChanged {
+		triggerRepaintFrame(conn, painter)
+	}
 }
 
 func libFindComponent(id string) types.Component {
@@ -469,9 +655,4 @@ func libFindHoveredComponent(pt image.Point) string {
 		}
 	}
 	return ""
-}
-
-func triggerRepaint(hwnd uintptr) {
-	win32.InvalidateRect(hwnd, nil, false)
-	win32.PostMessage(hwnd, 0, 0, 0) // WM_NULL dummy message to wake up GetMessage loop asynchronously
 }
