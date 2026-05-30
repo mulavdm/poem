@@ -46,6 +46,7 @@ type ApplicationState struct {
 	HoveredID   string
 	FocusedID   string
 	ActiveID    string  // ID of the component currently capturing the mouse (e.g., for dragging)
+	KeysPressed map[uint32]bool
 	CursorID    uintptr // Active dynamic cursor handle
 	ArrowCursor uintptr // System IDC_ARROW cursor
 	HandCursor  uintptr // System IDC_HAND cursor
@@ -73,10 +74,16 @@ type ApplicationState struct {
 	CoreMask   uint64
 
 	// VFX
-	Particles     *ParticleSystem
-	GlassEnabled  bool
-	FrameTime     time.Duration
+	Particles        *ParticleSystem
+	ParticlesEnabled bool
+	BGColor          *color.RGBA // If set, overrides the default background/clear color
+	GlassEnabled     bool
+	FrameTime        time.Duration
 	LastDt        float64
+
+	// Window Dimensions
+	WindowWidth  int
+	WindowHeight int
 	LastPaintTime time.Time
 	RenderDt      float64
 
@@ -197,14 +204,29 @@ func (s *ApplicationState) UpdateAnimations(dt float32) {
 	}
 }
 
+// GetWindowSize returns the dynamic logical width and height of the window
+func (s *ApplicationState) GetWindowSize() (int, int) {
+	if s.WindowWidth <= 0 {
+		return 1024, 768
+	}
+	return s.WindowWidth, s.WindowHeight
+}
+
 // RenderPipeline is the universal orchestration logic for the POEM engine.
 // It ensures that both CPU and GPU backends follow the exact same drawing sequence.
 func RenderPipeline(p Painter, s *ApplicationState) {
 	// Reset active cursor to default arrow at the beginning of each drawing tick
 	s.CursorID = s.ArrowCursor
 
+	w, h := s.GetWindowSize()
+
+	// 0. CUSTOM BACKGROUND OVERRIDE
+	if s.BGColor != nil {
+		p.FillRect(image.Rect(0, 0, w, h), *s.BGColor)
+	}
+
 	// 1. BACKGROUND PARTICLES
-	if s.Particles != nil {
+	if s.Particles != nil && s.ParticlesEnabled {
 		s.Particles.Draw(p, s)
 	}
 	p.Flush()
@@ -233,7 +255,7 @@ func RenderPipeline(p Painter, s *ApplicationState) {
 
 		// Draw previous page (sliding out)
 		if comps, ok := s.Pages[s.PrevPage]; ok {
-			p.SetOffset(-progress*float32(Width), 0)
+			p.SetOffset(-progress*float32(w), 0)
 			for _, comp := range comps {
 				comp.Draw(p, s)
 			}
@@ -242,7 +264,7 @@ func RenderPipeline(p Painter, s *ApplicationState) {
 
 		// Draw current page (sliding in)
 		if comps, ok := s.Pages[s.CurrentPage]; ok {
-			p.SetOffset((1.0-progress)*float32(Width), 0)
+			p.SetOffset((1.0-progress)*float32(w), 0)
 			for _, comp := range comps {
 				comp.Draw(p, s)
 			}
@@ -267,10 +289,10 @@ func RenderPipeline(p Painter, s *ApplicationState) {
 	pulse := uint8(150 + math.Sin(elapsed*5)*100)
 	statusCol.A = pulse
 
-	p.DrawText("SYSTEM OPERATIONAL // ENCRYPTED", Width-280, Height-25, statusCol)
+	p.DrawText("SYSTEM OPERATIONAL // ENCRYPTED", w-280, h-25, statusCol)
 
 	// Small diagnostic line
-	p.DrawLine(Width-285, Height-15, Width-20, Height-15, color.RGBA{0, 255, 150, 50})
+	p.DrawLine(w-285, h-15, w-20, h-15, color.RGBA{0, 255, 150, 50})
 }
 
 // Component represents a UI element that can be drawn and interacted with

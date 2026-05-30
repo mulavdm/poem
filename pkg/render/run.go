@@ -63,9 +63,13 @@ func Run(config AppConfig) {
 		ScrollDragStart: make(map[string]int),
 		ScrollStartY:    make(map[string]int),
 		ScrollCurrent:   make(map[string]float64),
-		TextInputValues: make(map[string]string),
-		SliderValues:    make(map[string]float32),
-		AudioEnabled:    true,
+		TextInputValues:  make(map[string]string),
+		SliderValues:     make(map[string]float32),
+		AudioEnabled:     true,
+		KeysPressed:      make(map[uint32]bool),
+		ParticlesEnabled: true,
+		WindowWidth:      Width,
+		WindowHeight:     Height,
 	}
 	globalState.CursorID = globalState.ArrowCursor
 	globalBuildPages = config.BuildPagesFn
@@ -115,20 +119,46 @@ func Run(config AppConfig) {
 
 	// 4. Spawn the Rust presentation engine child process
 	var rustCmd *exec.Cmd
-	wd, _ := os.Getwd()
-	releasePath := filepath.Join(wd, "rust_engine", "target", "release", "poem_rust_engine.exe")
-	debugPath := filepath.Join(wd, "rust_engine", "target", "debug", "poem_rust_engine.exe")
+	var sidecarPath string
 
-	if _, err := os.Stat(releasePath); err == nil {
-		fmt.Printf("🚀 Spawning Rust presentation engine (Release Mode): %s\n", releasePath)
-		rustCmd = exec.Command(releasePath)
-	} else if _, err := os.Stat(debugPath); err == nil {
-		fmt.Printf("🚀 Spawning Rust presentation engine (Debug Mode): %s\n", debugPath)
-		rustCmd = exec.Command(debugPath)
+	// Step A: Check Environment Variable Override
+	if envPath := os.Getenv("POEM_SIDECAR_PATH"); envPath != "" {
+		if _, err := os.Stat(envPath); err == nil {
+			sidecarPath = envPath
+		}
+	}
+
+	// Step B: Check same folder as current executable (standard downstream distribution)
+	if sidecarPath == "" {
+		if exePath, err := os.Executable(); err == nil {
+			localPath := filepath.Join(filepath.Dir(exePath), "poem_rust_engine.exe")
+			if _, err := os.Stat(localPath); err == nil {
+				sidecarPath = localPath
+			}
+		}
+	}
+
+	// Step C: Development workspace fallback (relative to Working Directory)
+	if sidecarPath == "" {
+		wd, _ := os.Getwd()
+		releasePath := filepath.Join(wd, "rust_engine", "target", "release", "poem_rust_engine.exe")
+		debugPath := filepath.Join(wd, "rust_engine", "target", "debug", "poem_rust_engine.exe")
+
+		if _, err := os.Stat(releasePath); err == nil {
+			sidecarPath = releasePath
+		} else if _, err := os.Stat(debugPath); err == nil {
+			sidecarPath = debugPath
+		}
+	}
+
+	if sidecarPath != "" {
+		fmt.Printf("🚀 Spawning Rust presentation engine: %s\n", sidecarPath)
+		rustCmd = exec.Command(sidecarPath, config.Title)
 	} else {
-		// Attempt local dev command if running inside POEM root
+		// Step D: Fallback to local dev cargo run
 		fmt.Println("⚠️ Target Rust binary not found in cached paths. Attempting default 'cargo run' target check...")
-		rustCmd = exec.Command("cargo", "run", "--manifest-path", filepath.Join("rust_engine", "Cargo.toml"))
+		wd, _ := os.Getwd()
+		rustCmd = exec.Command("cargo", "run", "--manifest-path", filepath.Join(wd, "rust_engine", "Cargo.toml"), "--", config.Title)
 	}
 
 	rustCmd.Stdout = os.Stdout
@@ -428,6 +458,7 @@ func sendSoundEvent(conn io.Writer, soundType poem.SoundType) {
 }
 
 // Main paint event dispatcher
+var lastPrintTime time.Time
 func triggerRepaintFrame(conn io.Writer, painter *FlatBufferPainter) {
 	if globalState == nil {
 		return
@@ -449,6 +480,28 @@ func triggerRepaintFrame(conn io.Writer, painter *FlatBufferPainter) {
 		cursorVal = 1 // Hand
 	} else if globalState.CursorID == globalState.IBeamCursor {
 		cursorVal = 2 // IBeam
+	}
+
+	// Diagnostic print every 1 second
+	if time.Since(lastPrintTime) > 1*time.Second {
+		lastPrintTime = time.Now()
+		fmt.Printf("🎨 [GO DIAGNOSTIC] triggerRepaintFrame: commands count = %d\n", len(painter.commands))
+		if len(painter.commands) > 0 {
+			fmt.Printf("   -> First 5 commands:\n")
+			for idx := 0; idx < len(painter.commands) && idx < 5; idx++ {
+				cmd := painter.commands[idx]
+				fmt.Printf("      [%d] Type=%v, Rect=(%d,%d,%d,%d), Color=(%d,%d,%d,%d)\n", 
+					idx, cmd.Type, cmd.X1, cmd.Y1, cmd.X2, cmd.Y2, cmd.R, cmd.G, cmd.B, cmd.A)
+			}
+			fmt.Printf("   -> Last 15 commands:\n")
+			startIdx := len(painter.commands) - 15
+			if startIdx < 0 { startIdx = 0 }
+			for idx := startIdx; idx < len(painter.commands); idx++ {
+				cmd := painter.commands[idx]
+				fmt.Printf("      [%d] Type=%v, Rect=(%d,%d,%d,%d), Color=(%d,%d,%d,%d), Text=%q\n", 
+					idx, cmd.Type, cmd.X1, cmd.Y1, cmd.X2, cmd.Y2, cmd.R, cmd.G, cmd.B, cmd.A, cmd.Text)
+			}
+		}
 	}
 
 	// Serialize
@@ -484,6 +537,8 @@ func processEventBatch(batch *poem.EventBatch, conn io.Writer, painter *FlatBuff
 					Height = h
 					types.Width = w
 					types.Height = h
+					globalState.WindowWidth = w
+					globalState.WindowHeight = h
 				}
 
 			case poem.EventTypeMouseDown:
@@ -569,6 +624,11 @@ func processEventBatch(batch *poem.EventBatch, conn io.Writer, painter *FlatBuff
 
 			case poem.EventTypeKeyDown:
 				wparam := ev.Keycode()
+				if globalState.KeysPressed == nil {
+					globalState.KeysPressed = make(map[uint32]bool)
+				}
+				globalState.KeysPressed[wparam] = true
+
 				const VK_ESCAPE = 0x1B
 				const VK_TAB = 0x09
 				const VK_CONTROL = 0x11
@@ -601,6 +661,13 @@ func processEventBatch(batch *poem.EventBatch, conn io.Writer, painter *FlatBuff
 						}
 					}
 				}
+
+			case poem.EventTypeKeyUp:
+				wparam := ev.Keycode()
+				if globalState.KeysPressed == nil {
+					globalState.KeysPressed = make(map[uint32]bool)
+				}
+				globalState.KeysPressed[wparam] = false
 
 			case poem.EventTypeKeyChar:
 				charRune := rune(ev.Char())
