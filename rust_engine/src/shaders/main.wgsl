@@ -53,23 +53,31 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 }
 
 fn sd_rounded_rect(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
-    let q = abs(p) - b + r;
+    let q = abs(p) - b + vec2<f32>(r, r);
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (in.draw_type < 0.5) { // SHAPE
+        // Direct Bypass for flat filled rectangles to optimize performance and prevent GPU compiler quirks
+        if (in.radius <= 0.0 && in.glow <= 0.0 && in.shadow_softness <= 0.0 && in.is_glass <= 0.0) {
+            return in.color;
+        }
+
         let b = in.rect_params.zw * 0.5;
         let center = in.rect_params.xy + b;
         let p = in.frag_pos - center;
         let d = sd_rounded_rect(p, b, in.radius);
         
         // Shadow Calculation
-        let shadow_p = in.frag_pos - (center + in.shadow_offset);
-        let shadow_d = sd_rounded_rect(shadow_p, b, in.radius);
-        var shadow_alpha = 1.0 - smoothstep(-in.shadow_softness, in.shadow_softness, shadow_d);
-        shadow_alpha = shadow_alpha * 0.6; // Shadow intensity
+        var shadow_alpha = 0.0;
+        let softness = max(in.shadow_softness, 0.001);
+        if (in.shadow_softness > 0.0) {
+            let shadow_p = in.frag_pos - (center + in.shadow_offset);
+            let shadow_d = sd_rounded_rect(shadow_p, b, in.radius);
+            shadow_alpha = (1.0 - smoothstep(-softness, softness, shadow_d)) * 0.6;
+        }
         
         let shape_alpha = 1.0 - smoothstep(-1.0, 1.0, d);
         let glow_alpha = exp(-max(0.0, d) * (10.0 - in.glow)) * (in.glow / 10.0);
