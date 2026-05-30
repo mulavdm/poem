@@ -190,6 +190,10 @@ func Run(config AppConfig) {
 	pipeConnGoToRust := &pipeReadWriteCloser{handle: pipeHandleGoToRust}
 	pipeConnRustToGo := &pipeReadWriteCloser{handle: pipeHandleRustToGo}
 
+	globalState.PlaySoundFn = func(soundType int8) {
+		sendSoundEvent(pipeConnGoToRust, poem.SoundType(soundType))
+	}
+
 	// 6. Generate and transmit dynamically-rasterized Font Atlas
 	atlasPixels, chars := buildFontAtlasPixels()
 	builder := flatbuffers.NewBuilder(1024 * 128)
@@ -476,9 +480,10 @@ func triggerRepaintFrame(conn io.Writer, painter *FlatBufferPainter) {
 
 	// Map GDI cursor handles to abstract FlatBuffer cursor types
 	var cursorVal byte = 0 // Arrow
-	if globalState.CursorID == globalState.HandCursor {
+	switch globalState.CursorID {
+	case globalState.HandCursor:
 		cursorVal = 1 // Hand
-	} else if globalState.CursorID == globalState.IBeamCursor {
+	case globalState.IBeamCursor:
 		cursorVal = 2 // IBeam
 	}
 
@@ -551,7 +556,7 @@ func processEventBatch(batch *poem.EventBatch, conn io.Writer, painter *FlatBuff
 				globalState.FocusedID = newFocus
 
 				// Acoustic feedback click hook
-				if newFocus != "" {
+				if newFocus != "" && globalState.AudioEnabled {
 					sendSoundEvent(conn, poem.SoundTypeClick)
 				}
 
@@ -585,7 +590,7 @@ func processEventBatch(batch *poem.EventBatch, conn io.Writer, painter *FlatBuff
 				pt := image.Point{globalState.MouseX, globalState.MouseY}
 
 				newHover := libFindHoveredComponent(pt)
-				if newHover != "" && newHover != globalState.HoveredID {
+				if newHover != "" && newHover != globalState.HoveredID && globalState.AudioEnabled {
 					if comp := libFindComponent(newHover); comp != nil && comp.Focusable() {
 						sendSoundEvent(conn, poem.SoundTypeHover)
 					}
@@ -640,7 +645,7 @@ func processEventBatch(batch *poem.EventBatch, conn io.Writer, painter *FlatBuff
 				} else if wparam == VK_TAB {
 					reverse := (ev.Button() & 2) != 0 // Shift state passed through button field
 					globalState.CycleFocus(reverse)
-				} else if ctrlPressed && (wparam == 'S' || wparam == 's') {
+				} else if ctrlPressed && (wparam == 'S' || wparam == 's') && globalState.AudioEnabled {
 					if globalState.Hotkeys != nil {
 						if handler, ok := globalState.Hotkeys["Ctrl+S"]; ok {
 							handler(globalState)

@@ -83,6 +83,56 @@ func (f *FlatBufferPainter) DrawRoundedRect(r image.Rectangle, radius int, col c
 	})
 }
 
+func (f *FlatBufferPainter) DrawRaycaster(r image.Rectangle, playerX, playerY, playerAngle float32) {
+	f.commands = append(f.commands, DrawCmdData{
+		Type:   poem.DrawCommandTypeDrawRoundedRect,
+		X1:     r.Min.X,
+		Y1:     r.Min.Y,
+		X2:     r.Max.X,
+		Y2:     r.Max.Y,
+		W:      r.Dx(),
+		H:      r.Dy(),
+		Radius: -999,
+		Val1:   playerX,
+		Val2:   playerY,
+		Val3:   playerAngle,
+	})
+}
+
+func (f *FlatBufferPainter) DrawSeed3D(viewportRect image.Rectangle, seedX, seedY, playerX, playerY, playerAngle float32) {
+	f.commands = append(f.commands, DrawCmdData{
+		Type:   poem.DrawCommandTypeDrawRoundedRect,
+		X1:     viewportRect.Min.X,
+		Y1:     viewportRect.Min.Y,
+		X2:     viewportRect.Max.X,
+		Y2:     viewportRect.Max.Y,
+		W:      viewportRect.Dx(),
+		H:      viewportRect.Dy(),
+		Radius: -998,
+		Val1:   seedX,
+		Val2:   seedY,
+	})
+}
+
+func (f *FlatBufferPainter) DrawSentry3D(viewportRect image.Rectangle, sentryX, sentryY, playerX, playerY, playerAngle float32, col color.RGBA) {
+	f.commands = append(f.commands, DrawCmdData{
+		Type:   poem.DrawCommandTypeDrawRoundedRect,
+		X1:     viewportRect.Min.X,
+		Y1:     viewportRect.Min.Y,
+		X2:     viewportRect.Max.X,
+		Y2:     viewportRect.Max.Y,
+		W:      viewportRect.Dx(),
+		H:      viewportRect.Dy(),
+		Radius: -997,
+		Val1:   sentryX,
+		Val2:   sentryY,
+		R:      col.R,
+		G:      col.G,
+		B:      col.B,
+		A:      col.A,
+	})
+}
+
 func (f *FlatBufferPainter) DrawText(text string, x, y int, col color.RGBA) {
 	f.commands = append(f.commands, DrawCmdData{
 		Type: poem.DrawCommandTypeDrawText,

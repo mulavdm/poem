@@ -20,6 +20,9 @@ type Painter interface {
 	DrawText(text string, x, y int, col color.RGBA)
 	FillRect(r image.Rectangle, col color.RGBA)
 	DrawLine(x1, y1, x2, y2 int, col color.RGBA)
+	DrawRaycaster(r image.Rectangle, playerX, playerY, playerAngle float32)
+	DrawSeed3D(viewportRect image.Rectangle, seedX, seedY, playerX, playerY, playerAngle float32)
+	DrawSentry3D(viewportRect image.Rectangle, sentryX, sentryY, playerX, playerY, playerAngle float32, col color.RGBA)
 	SetGlow(strength float32)
 	SetGlass(enabled bool)
 	SetShadow(ox, oy, blur float32)
@@ -106,12 +109,25 @@ type ApplicationState struct {
 
 	// Acoustic Native Sound Engine
 	AudioEnabled     bool
-	AudioHoverBuffer []byte
-	AudioClickBuffer []byte
-	AudioSavedBuffer []byte
-	LastHoverTime    time.Time
-	LastClickTime    time.Time
-	LastSuccessTime  time.Time
+	PlaySoundFn      func(soundType int8)
+}
+
+func (s *ApplicationState) PlayHover() {
+	if s.PlaySoundFn != nil && s.AudioEnabled {
+		s.PlaySoundFn(0) // SoundTypeHover
+	}
+}
+
+func (s *ApplicationState) PlayClick() {
+	if s.PlaySoundFn != nil && s.AudioEnabled {
+		s.PlaySoundFn(1) // SoundTypeClick
+	}
+}
+
+func (s *ApplicationState) PlaySuccess() {
+	if s.PlaySoundFn != nil && s.AudioEnabled {
+		s.PlaySoundFn(2) // SoundTypeSuccess
+	}
 }
 
 type HotkeyHandler func(state *ApplicationState)
