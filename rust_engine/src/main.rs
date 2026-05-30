@@ -185,10 +185,17 @@ fn main() {
     }
     println!("🔤 Font Atlas glyph mapping synchronized: {} characters loaded.", char_map.len());
 
+    let args: Vec<String> = std::env::args().collect();
+    let window_title = if args.len() > 1 && !args[1].is_empty() {
+        args[1].clone()
+    } else {
+        "P.O.E.M. Operational Engine Matrix (Dual-Process wgpu)".to_string()
+    };
+
     // 3. Spawns winit Event Loop
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new()
-        .with_title("P.O.E.M. Operational Engine Matrix (Dual-Process wgpu)")
+        .with_title(window_title)
         .with_inner_size(winit::dpi::LogicalSize::new(win_w, win_h))
         .build(&event_loop)
         .unwrap();
@@ -321,6 +328,8 @@ fn main() {
                 if let Some(payload) = latest_frame_payload {
                     let env = poem::root_as_go_to_rust_message(&payload).unwrap();
                     let frame = env.message_as_render_frame().unwrap();
+                    let cmd_len = frame.commands().unwrap().len();
+                    println!("🎨 [DIAGNOSTIC] Rust received RenderFrame with {} commands!", cmd_len);
 
                     // Update active cursor icon
                     let cursor_type = frame.cursor();
@@ -336,6 +345,10 @@ fn main() {
                     let commands = frame.commands().unwrap();
                     for i in 0..commands.len() {
                         let cmd = commands.get(i);
+                        if i < 10 {
+                            println!("🦀 [RUST DIAGNOSTIC] Command {}: Type={:?}, Rect=({},{},{},{}), Color=({},{},{},{})", 
+                                i, cmd.type_(), cmd.x1(), cmd.y1(), cmd.x2(), cmd.y2(), cmd.r(), cmd.g(), cmd.b(), cmd.a());
+                        }
                         let col = [
                             cmd.r() as f32 / 255.0,
                             cmd.g() as f32 / 255.0,
@@ -565,57 +578,57 @@ fn main() {
                         is_shift_pressed = kb_event.state == ElementState::Pressed;
                     }
 
-                    if kb_event.state == ElementState::Pressed {
-                        // Extract key code (match GDI vkCode mappings)
-                        let vk_code = match kb_event.physical_key {
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape) => 0x1B,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Tab) => 0x09,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Backspace) => 0x08,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Enter) => 0x0D,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Space) => 0x20,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowLeft) => 0x25,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowUp) => 0x26,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowRight) => 0x27,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowDown) => 0x28,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyA) => 'A' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyB) => 'B' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyC) => 'C' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyD) => 'D' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyE) => 'E' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyF) => 'F' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyG) => 'G' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyH) => 'H' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyI) => 'I' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyJ) => 'J' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyK) => 'K' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyL) => 'L' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyM) => 'M' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyN) => 'N' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyO) => 'O' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyP) => 'P' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyQ) => 'Q' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyR) => 'R' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyS) => 'S' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyT) => 'T' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyU) => 'U' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyV) => 'V' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyW) => 'W' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyX) => 'X' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyY) => 'Y' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyZ) => 'Z' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit0) => '0' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit1) => '1' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit2) => '2' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit3) => '3' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit4) => '4' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit5) => '5' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit6) => '6' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit7) => '7' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit8) => '8' as u32,
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit9) => '9' as u32,
-                            _ => 0,
-                        };
+                    // Extract key code (match GDI vkCode mappings)
+                    let vk_code = match kb_event.physical_key {
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape) => 0x1B,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Tab) => 0x09,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Backspace) => 0x08,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Enter) => 0x0D,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Space) => 0x20,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowLeft) => 0x25,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowUp) => 0x26,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowRight) => 0x27,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowDown) => 0x28,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyA) => 'A' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyB) => 'B' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyC) => 'C' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyD) => 'D' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyE) => 'E' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyF) => 'F' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyG) => 'G' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyH) => 'H' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyI) => 'I' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyJ) => 'J' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyK) => 'K' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyL) => 'L' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyM) => 'M' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyN) => 'N' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyO) => 'O' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyP) => 'P' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyQ) => 'Q' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyR) => 'R' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyS) => 'S' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyT) => 'T' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyU) => 'U' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyV) => 'V' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyW) => 'W' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyX) => 'X' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyY) => 'Y' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyZ) => 'Z' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit0) => '0' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit1) => '1' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit2) => '2' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit3) => '3' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit4) => '4' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit5) => '5' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit6) => '6' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit7) => '7' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit8) => '8' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit9) => '9' as u32,
+                        _ => 0,
+                    };
 
+                    if kb_event.state == ElementState::Pressed {
                         if vk_code != 0 {
                             let mut modifier_mask = 0;
                             if is_ctrl_pressed { modifier_mask |= 1; }
@@ -652,6 +665,26 @@ fn main() {
                                     send_event_batch(&pipe_writer, vec![ev]);
                                 }
                             }
+                        }
+                    } else {
+                        // Released
+                        if vk_code != 0 {
+                            let mut modifier_mask = 0;
+                            if is_ctrl_pressed { modifier_mask |= 1; }
+                            if is_shift_pressed { modifier_mask |= 2; }
+
+                            let ev = PendingEvent {
+                                type_: poem::EventType::KeyUp,
+                                x: 0,
+                                y: 0,
+                                button: modifier_mask,
+                                delta: 0,
+                                keycode: vk_code,
+                                char: 0,
+                                width: 0,
+                                height: 0,
+                            };
+                            send_event_batch(&pipe_writer, vec![ev]);
                         }
                     }
                 }
