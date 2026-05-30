@@ -357,14 +357,39 @@ fn main() {
                         ];
                         match cmd.type_() {
                             poem::DrawCommandType::DrawRoundedRect => {
-                                ren.draw_rounded_rect(
-                                    cmd.x1() as f32,
-                                    cmd.y1() as f32,
-                                    cmd.x2() as f32,
-                                    cmd.y2() as f32,
-                                    cmd.radius() as f32,
-                                    col,
-                                );
+                                let r_val = cmd.radius();
+                                if r_val == -999 {
+                                    ren.draw_raycaster(
+                                        cmd.x1() as f32,
+                                        cmd.y1() as f32,
+                                        cmd.x2() as f32,
+                                        cmd.y2() as f32,
+                                        cmd.val1(),
+                                        cmd.val2(),
+                                        cmd.val3(),
+                                        col,
+                                    );
+                                } else if r_val == -998 || r_val == -997 {
+                                    ren.draw_billboard(
+                                        cmd.x1() as f32,
+                                        cmd.y1() as f32,
+                                        cmd.x2() as f32,
+                                        cmd.y2() as f32,
+                                        r_val as f32,
+                                        cmd.val1(),
+                                        cmd.val2(),
+                                        col,
+                                    );
+                                } else {
+                                    ren.draw_rounded_rect(
+                                        cmd.x1() as f32,
+                                        cmd.y1() as f32,
+                                        cmd.x2() as f32,
+                                        cmd.y2() as f32,
+                                        r_val as f32,
+                                        col,
+                                    );
+                                }
                             }
                             poem::DrawCommandType::FillRect => {
                                 ren.fill_rect(

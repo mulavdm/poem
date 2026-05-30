@@ -72,6 +72,9 @@ pub struct Renderer {
     shadow_blur: f32,
     clip_rect: Option<[u32; 4]>, // [x, y, w, h]
     scale_factor: f32,
+    pub player_x: f32,
+    pub player_y: f32,
+    pub player_angle: f32,
 }
 
 impl Renderer {
@@ -446,6 +449,9 @@ impl Renderer {
             shadow_blur: 0.0,
             clip_rect: None,
             scale_factor: 1.0,
+            player_x: 0.0,
+            player_y: 0.0,
+            player_angle: 0.0,
         }
     }
 
@@ -593,6 +599,147 @@ impl Renderer {
 
     pub fn draw_rounded_rect(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, r: f32, col: [f32; 4]) {
         self.push_quad(x1, y1, x2, y2, r, col, 0.0, [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    pub fn draw_raycaster(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, px: f32, py: f32, angle: f32, col: [f32; 4]) {
+        self.player_x = px;
+        self.player_y = py;
+        self.player_angle = angle;
+        self.push_quad_special(x1, y1, x2, y2, -999.0, col, 0.0, [0.0, 0.0, 0.0, 0.0], [px, py], angle, 0.0);
+    }
+
+    pub fn draw_billboard(&mut self, viewport_x1: f32, viewport_y1: f32, viewport_x2: f32, viewport_y2: f32, radius: f32, sx: f32, sy: f32, col: [f32; 4]) {
+        let viewport_w = viewport_x2 - viewport_x1;
+        let viewport_h = viewport_y2 - viewport_y1;
+        let y_center = viewport_y1 + viewport_h / 2.0 + 30.0;
+
+        let angle = self.player_angle;
+        let dir_x = angle.cos();
+        let dir_y = angle.sin();
+        let plane_x = -dir_y * 0.66;
+        let plane_y = dir_x * 0.66;
+
+        let sprite_x = sx - self.player_x;
+        let sprite_y = sy - self.player_y;
+
+        let inv_det = 1.0 / (plane_x * dir_y - dir_x * plane_y);
+        let transform_x = inv_det * (dir_y * sprite_x - dir_x * sprite_y);
+        let transform_y = inv_det * (-plane_y * sprite_x + plane_x * sprite_y); // depth
+
+        if transform_y > 0.1 {
+            let sprite_screen_x = ((viewport_w / 2.0) * (1.0 + transform_x / transform_y)) + viewport_x1;
+            
+            let factor: f32 = if radius == -998.0 { 0.53 } else { 0.72 };
+            let sprite_h = (viewport_h * factor / transform_y).abs();
+            let sprite_w = sprite_h;
+
+            let x1 = sprite_screen_x - sprite_w / 2.0;
+            let y1 = y_center - sprite_h / 2.0;
+            let x2 = sprite_screen_x + sprite_w / 2.0;
+            let y2 = y_center + sprite_h / 2.0;
+
+            self.push_quad_special(
+                x1, y1, x2, y2,
+                radius, col, 0.0, [0.0, 0.0, 0.0, 0.0],
+                [sx, sy], self.player_angle, transform_y
+            );
+        }
+    }
+
+    fn push_quad_special(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        radius: f32,
+        col: [f32; 4],
+        draw_type: f32,
+        _uv: [f32; 4],
+        shadow_offset: [f32; 2],
+        shadow_softness: f32,
+        padding: f32,
+    ) {
+        if self.batches.is_empty() {
+            self.batches.push(DrawBatch {
+                start_vertex: 0,
+                vertex_count: 0,
+                clip_rect: self.clip_rect,
+            });
+        }
+        let ox = self.offset_x;
+        let oy = self.offset_y;
+        let p_x1 = x1 + ox;
+        let p_y1 = y1 + oy;
+        let p_x2 = x2 + ox;
+        let p_y2 = y2 + oy;
+
+        let rect_params = [p_x1, p_y1, x2 - x1, y2 - y1];
+
+        let v1 = Vertex {
+            pos: [p_x1, p_y1],
+            uv: [self.player_x, self.player_y],
+            color: col,
+            params: rect_params,
+            radius,
+            draw_type,
+            glow: 0.0,
+            is_glass: 0.0,
+            shadow_offset,
+            shadow_softness,
+            padding,
+        };
+        let v2 = Vertex {
+            pos: [p_x2, p_y1],
+            uv: [self.player_x, self.player_y],
+            color: col,
+            params: rect_params,
+            radius,
+            draw_type,
+            glow: 0.0,
+            is_glass: 0.0,
+            shadow_offset,
+            shadow_softness,
+            padding,
+        };
+        let v3 = Vertex {
+            pos: [p_x2, p_y2],
+            uv: [self.player_x, self.player_y],
+            color: col,
+            params: rect_params,
+            radius,
+            draw_type,
+            glow: 0.0,
+            is_glass: 0.0,
+            shadow_offset,
+            shadow_softness,
+            padding,
+        };
+        let v4 = Vertex {
+            pos: [p_x1, p_y2],
+            uv: [self.player_x, self.player_y],
+            color: col,
+            params: rect_params,
+            radius,
+            draw_type,
+            glow: 0.0,
+            is_glass: 0.0,
+            shadow_offset,
+            shadow_softness,
+            padding,
+        };
+
+        self.batch_vertices.push(v1);
+        self.batch_vertices.push(v2);
+        self.batch_vertices.push(v3);
+
+        self.batch_vertices.push(v1);
+        self.batch_vertices.push(v3);
+        self.batch_vertices.push(v4);
+
+        if let Some(last) = self.batches.last_mut() {
+            last.vertex_count += 6;
+        }
     }
 
     pub fn fill_rect(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, col: [f32; 4]) {
