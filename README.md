@@ -100,6 +100,23 @@ If you are actively developing both the library and consumer application concurr
    ```
 2. This completely eliminates the need for `replace` lines in individual `go.mod` files, resolving modules locally across package boundaries automatically!
 
+### 📦 2. Rust Sidecar Binary Distribution & Spawning
+
+For a downstream project to run successfully, the compiled **`poem_rust_engine.exe`** binary must be available for the Go orchestrator to spawn at runtime. 
+
+POEM implements a robust, multi-stage path resolution strategy that locates the sidecar dynamically in the following order:
+
+1. **Environment Variable Override (`POEM_SIDECAR_PATH`)**:
+   During active downstream development, you can point the library directly to the compiled engine binary in the POEM workspace. Set the environment variable:
+   ```powershell
+   # Windows PowerShell
+   $env:POEM_SIDECAR_PATH="D:\Programming\GUIProject\POEM\rust_engine\target\release\poem_rust_engine.exe"
+   ```
+2. **Same Executable Directory (Production Distribution)**:
+   For compiled applications distributed to end-users, simply copy the compiled `poem_rust_engine.exe` into the **same folder** as your built Go application executable. When your Go program starts, POEM automatically finds it next to the running executable and spawns it with zero configuration.
+3. **Local Dev Fallbacks**:
+   If neither path is set, POEM falls back to searching for folders relative to the current working directory, including the development workspace path `rust_engine/target/release/poem_rust_engine.exe` and compiling via local `cargo run`.
+
 ---
 
 ## 🛠️ Build & Run Instructions
