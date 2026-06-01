@@ -24,6 +24,8 @@ type Slider = components.Slider
 type ParticleComponent = components.ParticleComponent
 type LineChart = components.LineChart
 type ScrollView = components.ScrollView
+type Paragraph = components.Paragraph
+type TextArea = components.TextArea
 
 // Re-export Layouts
 type FlexBox = layout.FlexBox

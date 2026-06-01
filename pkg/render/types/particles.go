@@ -16,16 +16,20 @@ type Particle struct {
 }
 
 type ParticleSystem struct {
-	Particles []Particle
-	Bounds    image.Rectangle
-	rng       *rand.Rand
+	Particles     []Particle
+	Bounds        image.Rectangle
+	rng           *rand.Rand
+	GlowIntensity float32
+	WindSpeed     float32
 }
 
 func NewParticleSystem(count int, bounds image.Rectangle) *ParticleSystem {
 	ps := &ParticleSystem{
-		Particles: make([]Particle, count),
-		Bounds:    bounds,
-		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
+		Particles:     make([]Particle, count),
+		Bounds:        bounds,
+		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
+		GlowIntensity: 4.0,
+		WindSpeed:     40.0,
 	}
 
 	for i := 0; i < count; i++ {
@@ -44,12 +48,17 @@ func (ps *ParticleSystem) Update(dt float64) {
 	boundsW := float64(ps.Bounds.Dx())
 	boundsH := float64(ps.Bounds.Dy())
 
+	speedMultiplier := 1.0
+	if ps.WindSpeed > 0 {
+		speedMultiplier = float64(ps.WindSpeed) / 40.0 // Normalize around 40.0 wind speed
+	}
+
 	for i := range ps.Particles {
 		p := &ps.Particles[i]
 
-		// Update position based on velocity and delta time in float64 space
-		p.X += p.VX * dt
-		p.Y += p.VY * dt
+		// Update position based on velocity, delta time, and speedMultiplier
+		p.X += p.VX * dt * speedMultiplier
+		p.Y += p.VY * dt * speedMultiplier
 
 		// Wrap around boundaries
 		if p.X < 0 {
@@ -70,6 +79,13 @@ func (ps *ParticleSystem) Update(dt float64) {
 func (ps *ParticleSystem) Draw(p Painter, state *ApplicationState) {
 	dotColor := color.RGBA{0, 150, 255, 40}  // Subtle blue
 	lineColor := color.RGBA{0, 100, 200, 20} // Even subtler lines
+
+	// Scale dotColor opacity based on GlowIntensity
+	if ps.GlowIntensity > 4.0 {
+		dotColor = color.RGBA{0, 255, 150, 80}  // Emerald glowing dots when active
+		lineColor = color.RGBA{0, 200, 150, 40} // Emerald lines
+		p.SetGlow(ps.GlowIntensity)
+	}
 
 	// Draw connections (Plexus effect)
 	for i := 0; i < len(ps.Particles); i++ {
@@ -93,4 +109,6 @@ func (ps *ParticleSystem) Draw(p Painter, state *ApplicationState) {
 		py := int(part.Y)
 		p.FillRect(image.Rect(px, py, px+part.Size, py+part.Size), dotColor)
 	}
+
+	p.SetGlow(0)
 }

@@ -60,26 +60,32 @@ fn sd_rounded_rect(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
+fn in_rect(x: i32, y: i32, x1: i32, y1: i32, x2: i32, y2: i32) -> bool {
+    return x >= x1 && x <= x2 && y >= y1 && y <= y2;
+}
+
 fn get_grid_val(x: i32, y: i32) -> u32 {
     if (x < 0 || x >= 64 || y < 0 || y >= 64) {
         return 1u;
     }
-    if (x == 0 || y == 0 || x == 63 || y == 63) {
-        return 1u;
-    }
-    if (x == 35 && y == 15) {
+    if (x == 34 && y == 18) {
         return 2u; // Vault!
     }
-    if (x % 4 == 0 && y % 4 == 0) {
-        if (x < 8 && y < 8) {
-            return 0u;
-        }
-        return 1u;
+
+    // Sector Alpha authored layout. Keep this synced with HamsterGame/game/engine.go.
+    if (in_rect(x, y, 2, 2, 8, 8) ||
+        in_rect(x, y, 8, 4, 28, 6) ||
+        in_rect(x, y, 26, 4, 30, 18) ||
+        in_rect(x, y, 10, 10, 20, 14) ||
+        in_rect(x, y, 16, 14, 20, 24) ||
+        in_rect(x, y, 20, 22, 32, 24) ||
+        in_rect(x, y, 32, 16, 36, 24) ||
+        in_rect(x, y, 6, 16, 12, 24) ||
+        in_rect(x, y, 8, 14, 18, 18)) {
+        return 0u;
     }
-    if ((x > 10 && x < 54 && y == 32) || (y > 10 && y < 54 && x == 32)) {
-        return 1u;
-    }
-    return 0u;
+
+    return 1u;
 }
 
 @fragment

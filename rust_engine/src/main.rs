@@ -328,8 +328,7 @@ fn main() {
                 if let Some(payload) = latest_frame_payload {
                     let env = poem::root_as_go_to_rust_message(&payload).unwrap();
                     let frame = env.message_as_render_frame().unwrap();
-                    let cmd_len = frame.commands().unwrap().len();
-                    println!("🎨 [DIAGNOSTIC] Rust received RenderFrame with {} commands!", cmd_len);
+                    let _cmd_len = frame.commands().unwrap().len();
 
                     // Update active cursor icon
                     let cursor_type = frame.cursor();
@@ -345,10 +344,6 @@ fn main() {
                     let commands = frame.commands().unwrap();
                     for i in 0..commands.len() {
                         let cmd = commands.get(i);
-                        if i < 10 {
-                            println!("🦀 [RUST DIAGNOSTIC] Command {}: Type={:?}, Rect=({},{},{},{}), Color=({},{},{},{})", 
-                                i, cmd.type_(), cmd.x1(), cmd.y1(), cmd.x2(), cmd.y2(), cmd.r(), cmd.g(), cmd.b(), cmd.a());
-                        }
                         let col = [
                             cmd.r() as f32 / 255.0,
                             cmd.g() as f32 / 255.0,
@@ -413,12 +408,14 @@ fn main() {
                                 if let Some(text) = cmd.text() {
                                     let mut x = cmd.x1() as f32;
                                     let y = cmd.y1() as f32;
+                                    let baseline_offset = if atlas_w == 256 { 13.0 } else { 11.0 };
+                                    let descender_offset = if atlas_w == 256 { 3.0 } else { 2.0 };
                                     for c in text.chars() {
                                         if let Some(info) = char_map.get(&(c as u32)) {
                                             let x1 = x;
-                                            let y1 = y;
+                                            let y1 = y - baseline_offset;
                                             let x2 = x + info.width() as f32;
-                                            let y2 = y + info.height() as f32;
+                                            let y2 = y + descender_offset;
                                             let uv = [info.u1(), info.v1(), info.u2(), info.v2()];
                                             ren.draw_text_char(x1, y1, x2, y2, uv, col);
                                             x += info.advance() as f32;

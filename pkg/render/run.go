@@ -16,6 +16,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/font/opentype"
+	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 
 	"go_native_gpu_gui/internal/win32"
@@ -29,6 +31,7 @@ type AppConfig struct {
 	Width        int
 	Height       int
 	BuildPagesFn func(state *types.ApplicationState)
+	FontPath     string
 }
 
 // Package-level orchestrator variables
@@ -38,6 +41,7 @@ var (
 	pipeHandle       uintptr
 	pipeWriteMutex   sync.Mutex
 	stateMutex       sync.Mutex // Protects globalState, component layouts, and painter from concurrent races
+	globalFontPath   string
 )
 
 func Run(config AppConfig) {
@@ -50,6 +54,7 @@ func Run(config AppConfig) {
 		Height = config.Height
 		types.Height = config.Height
 	}
+	globalFontPath = config.FontPath
 
 	// 2. Initialize application state (headless settings, GDI sound stubs removed)
 	globalState = &types.ApplicationState{
@@ -195,9 +200,22 @@ func Run(config AppConfig) {
 	}
 
 	// 6. Generate and transmit dynamically-rasterized Font Atlas
-	atlasPixels, chars := buildFontAtlasPixels()
+	atlasPixels, chars, atlasW, atlasH, measuredLSB := buildFontAtlasPixels(globalFontPath)
+
+	// Dynamically resolve monospaced character width and LSB from loaded font metrics
+	detectedWidth := 7
+	for _, char := range chars {
+		if char.R == 'A' {
+			detectedWidth = int(char.Advance) // Advance = full cell width used for layout
+			break
+		}
+	}
+	globalState.FontCharWidth = detectedWidth
+	globalState.FontCharBearingX = measuredLSB
+	fmt.Printf("❖ Font Engine: CharWidth=%dpx, BearingX=%dpx\n", detectedWidth, measuredLSB)
+
 	builder := flatbuffers.NewBuilder(1024 * 128)
-	initOffset := serializeInitEngine(builder, Width, Height, atlasPixels, chars)
+	initOffset := serializeInitEngine(builder, Width, Height, atlasPixels, chars, atlasW, atlasH)
 	builder.Finish(initOffset)
 	initBytes := builder.FinishedBytes()
 
@@ -360,11 +378,44 @@ type fontCharInfo struct {
 	Advance int32
 }
 
-// Generate the pixel matrix and mapping values for basicfont
-func buildFontAtlasPixels() ([]byte, []fontCharInfo) {
-	face := basicfont.Face7x13
-	atlasW := 128
-	atlasH := 128
+func loadTTFFace(path string, size float64) (font.Face, error) {
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	f, err := sfnt.Parse(bytes)
+	if err != nil {
+		return nil, err
+	}
+	face, err := opentype.NewFace(f, &opentype.FaceOptions{
+		Size:    size,
+		DPI:     72,
+		Hinting: font.HintingFull,
+	})
+	return face, err
+}
+
+// Generate the pixel matrix and mapping values for custom fonts or fallback
+func buildFontAtlasPixels(fontPath string) ([]byte, []fontCharInfo, int, int, int) {
+	atlasW := 256
+	atlasH := 256
+
+	var face font.Face
+	if fontPath != "" {
+		if loadedFace, err := loadTTFFace(fontPath, 13); err == nil {
+			face = loadedFace
+			fmt.Printf("❖ Font Engine: Successfully loaded custom font from %s\n", fontPath)
+		} else {
+			fmt.Printf("❖ Font Engine WARNING: Failed to load custom font %s: %v. Falling back to basicfont.\n", fontPath, err)
+		}
+	}
+
+	if face == nil {
+		face = basicfont.Face7x13
+		atlasW = 128
+		atlasH = 128
+	}
+
 	rgba := image.NewRGBA(image.Rect(0, 0, atlasW, atlasH))
 	d := &font.Drawer{
 		Dst:  rgba,
@@ -372,8 +423,22 @@ func buildFontAtlasPixels() ([]byte, []fontCharInfo) {
 		Face: face,
 	}
 
-	x, y := 0, 13
+	// Starting Y offsets
+	yStart := 13
+	lineInc := 15
+	yOffsetV1 := 11
+	yOffsetV2 := 2
+	if fontPath != "" && face != basicfont.Face7x13 {
+		yStart = 16
+		lineInc = 18
+		yOffsetV1 = 13
+		yOffsetV2 = 3
+	}
+
+	x, y := 0, yStart
 	var chars []fontCharInfo
+	measuredLSB := 0
+	lsbMeasured := false
 
 	for r := rune(32); r < 127; r++ {
 		advance, ok := face.GlyphAdvance(r)
@@ -381,9 +446,26 @@ func buildFontAtlasPixels() ([]byte, []fontCharInfo) {
 			continue
 		}
 
-		if x+int(advance>>6) > atlasW {
+		advancePixels := int(advance >> 6)
+		if advancePixels <= 0 {
+			advancePixels = 8
+		}
+
+		if x+advancePixels > atlasW {
 			x = 0
-			y += 15
+			y += lineInc
+		}
+
+		// Measure LSB once from a representative character ('A')
+		if !lsbMeasured && r == 'A' {
+			bounds, _, ok2 := face.GlyphBounds(r)
+			if ok2 {
+				lsb := int(bounds.Min.X >> 6)
+				if lsb > 0 && lsb < advancePixels {
+					measuredLSB = lsb
+				}
+			}
+			lsbMeasured = true
 		}
 
 		d.Dot = fixed.P(x, y)
@@ -392,22 +474,23 @@ func buildFontAtlasPixels() ([]byte, []fontCharInfo) {
 		chars = append(chars, fontCharInfo{
 			R:       int32(r),
 			U1:      float32(x) / float32(atlasW),
-			V1:      float32(y-11) / float32(atlasH),
-			U2:      float32(x+int(advance>>6)) / float32(atlasW),
-			V2:      float32(y+2) / float32(atlasH),
-			Width:   int32(advance >> 6),
-			Height:  13,
-			Advance: int32(advance >> 6),
+			V1:      float32(y-yOffsetV1) / float32(atlasH),
+			U2:      float32(x+advancePixels) / float32(atlasW),
+			V2:      float32(y+yOffsetV2) / float32(atlasH),
+			Width:   int32(advancePixels),
+			Height:  int32(yOffsetV1 + yOffsetV2),
+			Advance: int32(advancePixels),
 		})
 
-		x += int(advance >> 6)
+		x += advancePixels
 	}
 
-	return rgba.Pix, chars
+	fmt.Printf("❖ Font Engine: Measured LSB = %d px for active font.\n", measuredLSB)
+	return rgba.Pix, chars, atlasW, atlasH, measuredLSB
 }
 
 // FlatBuffers InitEngine compiler
-func serializeInitEngine(builder *flatbuffers.Builder, width, height int, pixels []byte, chars []fontCharInfo) flatbuffers.UOffsetT {
+func serializeInitEngine(builder *flatbuffers.Builder, width, height int, pixels []byte, chars []fontCharInfo, atlasW, atlasH int) flatbuffers.UOffsetT {
 	pixelsOffset := builder.CreateByteVector(pixels)
 
 	charOffsets := make([]flatbuffers.UOffsetT, len(chars))
@@ -433,8 +516,8 @@ func serializeInitEngine(builder *flatbuffers.Builder, width, height int, pixels
 	poem.InitEngineStart(builder)
 	poem.InitEngineAddWidth(builder, int32(width))
 	poem.InitEngineAddHeight(builder, int32(height))
-	poem.InitEngineAddAtlasWidth(builder, 128)
-	poem.InitEngineAddAtlasHeight(builder, 128)
+	poem.InitEngineAddAtlasWidth(builder, int32(atlasW))
+	poem.InitEngineAddAtlasHeight(builder, int32(atlasH))
 	poem.InitEngineAddAtlasPixels(builder, pixelsOffset)
 	poem.InitEngineAddChars(builder, charsVector)
 	initOffset := poem.InitEngineEnd(builder)
@@ -477,6 +560,21 @@ func triggerRepaintFrame(conn io.Writer, painter *FlatBufferPainter) {
 
 	// Trigger layout logic & flat drawing tree population
 	types.RenderPipeline(painter, globalState)
+
+	// Update dynamic hover-based cursor type automatically on every frame
+	globalState.CursorID = globalState.ArrowCursor
+	pt := image.Point{globalState.MouseX, globalState.MouseY}
+	if hoveredID := libFindHoveredComponent(pt); hoveredID != "" {
+		if comp := libFindComponent(hoveredID); comp != nil {
+			if _, ok := comp.(*components.TextArea); ok {
+				globalState.CursorID = globalState.IBeamCursor
+			} else if _, ok := comp.(*components.TextInput); ok {
+				globalState.CursorID = globalState.IBeamCursor
+			} else if comp.Focusable() {
+				globalState.CursorID = globalState.HandCursor
+			}
+		}
+	}
 
 	// Map GDI cursor handles to abstract FlatBuffer cursor types
 	var cursorVal byte = 0 // Arrow
@@ -562,10 +660,23 @@ func processEventBatch(batch *poem.EventBatch, conn io.Writer, painter *FlatBuff
 
 				globalState.ActiveID = newFocus
 				if globalState.ActiveID != "" {
-					if comp := libFindComponent(globalState.ActiveID); comp != nil {
-						if comp.OnMouseDown(pt, globalState) {
-							if s, ok := comp.(*components.Slider); ok {
-								globalState.Volume = s.Value
+					handled := false
+					if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+						for _, c := range comps {
+							if c.HitTest(pt) != "" {
+								if c.OnMouseDown(pt, globalState) {
+									handled = true
+									break
+								}
+							}
+						}
+					}
+					if !handled {
+						if comp := libFindComponent(globalState.ActiveID); comp != nil {
+							if comp.OnMouseDown(pt, globalState) {
+								if s, ok := comp.(*components.Slider); ok {
+									globalState.Volume = s.Value
+								}
 							}
 						}
 					}
@@ -578,8 +689,21 @@ func processEventBatch(batch *poem.EventBatch, conn io.Writer, painter *FlatBuff
 				pt := image.Point{globalState.MouseX, globalState.MouseY}
 
 				if globalState.ActiveID != "" {
-					if comp := libFindComponent(globalState.ActiveID); comp != nil {
-						comp.OnMouseUp(pt, globalState)
+					handled := false
+					if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+						for _, c := range comps {
+							if c.HitTest(pt) != "" {
+								if c.OnMouseUp(pt, globalState) {
+									handled = true
+									break
+								}
+							}
+						}
+					}
+					if !handled {
+						if comp := libFindComponent(globalState.ActiveID); comp != nil {
+							comp.OnMouseUp(pt, globalState)
+						}
 					}
 					globalState.ActiveID = ""
 				}
@@ -598,16 +722,42 @@ func processEventBatch(batch *poem.EventBatch, conn io.Writer, painter *FlatBuff
 				globalState.HoveredID = newHover
 
 				if globalState.ActiveID != "" {
-					if comp := libFindComponent(globalState.ActiveID); comp != nil {
-						if comp.OnMouseMove(pt, globalState) {
-							if s, ok := comp.(*components.Slider); ok {
-								globalState.Volume = s.Value
+					handled := false
+					if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+						for _, c := range comps {
+							if c.HitTest(pt) != "" {
+								if c.OnMouseMove(pt, globalState) {
+									handled = true
+									break
+								}
+							}
+						}
+					}
+					if !handled {
+						if comp := libFindComponent(globalState.ActiveID); comp != nil {
+							if comp.OnMouseMove(pt, globalState) {
+								if s, ok := comp.(*components.Slider); ok {
+									globalState.Volume = s.Value
+								}
 							}
 						}
 					}
 				} else if newHover != "" {
-					if comp := libFindComponent(newHover); comp != nil {
-						comp.OnMouseMove(pt, globalState)
+					handled := false
+					if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+						for _, c := range comps {
+							if c.HitTest(pt) != "" {
+								if c.OnMouseMove(pt, globalState) {
+									handled = true
+									break
+								}
+							}
+						}
+					}
+					if !handled {
+						if comp := libFindComponent(newHover); comp != nil {
+							comp.OnMouseMove(pt, globalState)
+						}
 					}
 				}
 

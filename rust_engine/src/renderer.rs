@@ -892,7 +892,6 @@ impl Renderer {
         if self.batch_vertices.is_empty() {
             return;
         }
-        println!("🦀 [DIAGNOSTIC] Rust renderer rendering batch_vertices.len() = {}, batches = {:?}", self.batch_vertices.len(), self.batches);
 
         // Upload batch vertex buffer
         let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

@@ -110,6 +110,10 @@ type ApplicationState struct {
 	// Acoustic Native Sound Engine
 	AudioEnabled     bool
 	PlaySoundFn      func(soundType int8)
+
+	// Dynamic font metrics detected at boot time
+	FontCharWidth    int // Full cell advance width in pixels
+	FontCharBearingX int // Left Side Bearing (LSB) in pixels
 }
 
 func (s *ApplicationState) PlayHover() {
