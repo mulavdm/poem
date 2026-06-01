@@ -44,6 +44,13 @@ type DrawCmdData struct {
 	Flag   bool
 }
 
+const (
+	BillboardSeed = iota + 1
+	BillboardSentry
+	BillboardStash
+	BillboardCue
+)
+
 func NewFlatBufferPainter() *FlatBufferPainter {
 	return &FlatBufferPainter{
 		commands: make([]DrawCmdData, 0, 256),
@@ -84,6 +91,10 @@ func (f *FlatBufferPainter) DrawRoundedRect(r image.Rectangle, radius int, col c
 }
 
 func (f *FlatBufferPainter) DrawRaycaster(r image.Rectangle, playerX, playerY, playerAngle float32) {
+	f.DrawRaycasterStyled(r, playerX, playerY, playerAngle, color.RGBA{255, 155, 70, 255})
+}
+
+func (f *FlatBufferPainter) DrawRaycasterStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA) {
 	f.commands = append(f.commands, DrawCmdData{
 		Type:   poem.DrawCommandTypeDrawRoundedRect,
 		X1:     r.Min.X,
@@ -96,25 +107,32 @@ func (f *FlatBufferPainter) DrawRaycaster(r image.Rectangle, playerX, playerY, p
 		Val1:   playerX,
 		Val2:   playerY,
 		Val3:   playerAngle,
+		R:      accent.R,
+		G:      accent.G,
+		B:      accent.B,
+		A:      accent.A,
 	})
 }
 
 func (f *FlatBufferPainter) DrawSeed3D(viewportRect image.Rectangle, seedX, seedY, playerX, playerY, playerAngle float32) {
-	f.commands = append(f.commands, DrawCmdData{
-		Type:   poem.DrawCommandTypeDrawRoundedRect,
-		X1:     viewportRect.Min.X,
-		Y1:     viewportRect.Min.Y,
-		X2:     viewportRect.Max.X,
-		Y2:     viewportRect.Max.Y,
-		W:      viewportRect.Dx(),
-		H:      viewportRect.Dy(),
-		Radius: -998,
-		Val1:   seedX,
-		Val2:   seedY,
-	})
+	f.DrawBillboard3D(viewportRect, seedX, seedY, BillboardSeed, color.RGBA{255, 215, 30, 255})
 }
 
 func (f *FlatBufferPainter) DrawSentry3D(viewportRect image.Rectangle, sentryX, sentryY, playerX, playerY, playerAngle float32, col color.RGBA) {
+	f.DrawBillboard3D(viewportRect, sentryX, sentryY, BillboardSentry, col)
+}
+
+func (f *FlatBufferPainter) DrawBillboard3D(viewportRect image.Rectangle, worldX, worldY float32, kind int, col color.RGBA) {
+	radius := -998
+	switch kind {
+	case BillboardSentry:
+		radius = -997
+	case BillboardStash:
+		radius = -996
+	case BillboardCue:
+		radius = -995
+	}
+
 	f.commands = append(f.commands, DrawCmdData{
 		Type:   poem.DrawCommandTypeDrawRoundedRect,
 		X1:     viewportRect.Min.X,
@@ -123,9 +141,9 @@ func (f *FlatBufferPainter) DrawSentry3D(viewportRect image.Rectangle, sentryX, 
 		Y2:     viewportRect.Max.Y,
 		W:      viewportRect.Dx(),
 		H:      viewportRect.Dy(),
-		Radius: -997,
-		Val1:   sentryX,
-		Val2:   sentryY,
+		Radius: radius,
+		Val1:   worldX,
+		Val2:   worldY,
 		R:      col.R,
 		G:      col.G,
 		B:      col.B,

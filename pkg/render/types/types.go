@@ -21,6 +21,8 @@ type Painter interface {
 	FillRect(r image.Rectangle, col color.RGBA)
 	DrawLine(x1, y1, x2, y2 int, col color.RGBA)
 	DrawRaycaster(r image.Rectangle, playerX, playerY, playerAngle float32)
+	DrawRaycasterStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA)
+	DrawBillboard3D(viewportRect image.Rectangle, worldX, worldY float32, kind int, col color.RGBA)
 	DrawSeed3D(viewportRect image.Rectangle, seedX, seedY, playerX, playerY, playerAngle float32)
 	DrawSentry3D(viewportRect image.Rectangle, sentryX, sentryY, playerX, playerY, playerAngle float32, col color.RGBA)
 	SetGlow(strength float32)
@@ -48,7 +50,7 @@ type ApplicationState struct {
 	MouseY      int
 	HoveredID   string
 	FocusedID   string
-	ActiveID    string  // ID of the component currently capturing the mouse (e.g., for dragging)
+	ActiveID    string // ID of the component currently capturing the mouse (e.g., for dragging)
 	KeysPressed map[uint32]bool
 	CursorID    uintptr // Active dynamic cursor handle
 	ArrowCursor uintptr // System IDC_ARROW cursor
@@ -82,11 +84,11 @@ type ApplicationState struct {
 	BGColor          *color.RGBA // If set, overrides the default background/clear color
 	GlassEnabled     bool
 	FrameTime        time.Duration
-	LastDt        float64
+	LastDt           float64
 
 	// Window Dimensions
-	WindowWidth  int
-	WindowHeight int
+	WindowWidth   int
+	WindowHeight  int
 	LastPaintTime time.Time
 	RenderDt      float64
 
@@ -108,8 +110,8 @@ type ApplicationState struct {
 	Hotkeys map[string]HotkeyHandler
 
 	// Acoustic Native Sound Engine
-	AudioEnabled     bool
-	PlaySoundFn      func(soundType int8)
+	AudioEnabled bool
+	PlaySoundFn  func(soundType int8)
 
 	// Dynamic font metrics detected at boot time
 	FontCharWidth    int // Full cell advance width in pixels

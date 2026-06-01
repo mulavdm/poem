@@ -69,10 +69,10 @@ fn get_grid_val(x: i32, y: i32) -> u32 {
         return 1u;
     }
     if (x == 34 && y == 18) {
-        return 2u; // Vault!
+        return 2u; // Snack stash.
     }
 
-    // Sector Alpha authored layout. Keep this synced with HamsterGame/game/engine.go.
+    // Authored starter habitat layout. Keep this synced with HamsterGame/game/engine.go.
     if (in_rect(x, y, 2, 2, 8, 8) ||
         in_rect(x, y, 8, 4, 28, 6) ||
         in_rect(x, y, 26, 4, 30, 18) ||
@@ -183,20 +183,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let draw_end = y_center + wall_h / 2.0;
         
         if (in.frag_pos.y >= draw_start && in.frag_pos.y <= draw_end) {
-            // Wall
-            var wall_color = vec3<f32>(0.0, 0.78, 1.0); // Neon cyan
+            // Warm toy-plastic habitat walls, tinted by the game-provided room accent.
+            let accent = max(in.color.rgb, vec3<f32>(0.35, 0.18, 0.08));
+            var wall_color = mix(vec3<f32>(0.95, 0.42, 0.18), accent, 0.35);
             if (hit == 2u) {
-                wall_color = vec3<f32>(0.2, 1.0, 0.0); // Neon green
+                wall_color = vec3<f32>(1.0, 0.82, 0.12);
             }
             if (side == 1) {
-                wall_color = wall_color * 0.7; // Side shading
+                wall_color = wall_color * 0.72;
             }
             let depth_shading = 1.5 / (1.0 + perpWallDist * 0.08);
             wall_color = wall_color * clamp(depth_shading, 0.0, 1.0);
 
-            // Edge highlights
+            let stripe = step(0.92, fract((f32(mapX) + f32(mapY) + in.frag_pos.y * 0.015) * 0.5));
+            wall_color = mix(wall_color, wall_color + vec3<f32>(0.16, 0.10, 0.03), stripe * 0.35);
+
             if (in.frag_pos.y < draw_start + 2.0 || in.frag_pos.y > draw_end - 2.0) {
-                let edge_color = vec3<f32>(1.0, 0.0, 0.7); // Neon pink
+                let edge_color = vec3<f32>(1.0, 0.58, 0.18);
                 return vec4<f32>(edge_color * clamp(depth_shading, 0.0, 1.0), 1.0);
             }
             return vec4<f32>(wall_color, 1.0);
@@ -207,11 +210,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let y_3d = posY + dirY * dist + planeY * cameraX * dist;
             let grid_x = fract(x_3d);
             let grid_y = fract(y_3d);
-            if (grid_x < 0.04 || grid_y < 0.04) {
-                let ceil_glow = vec3<f32>(0.0, 0.4, 0.3) * (1.0 / (1.0 + dist * 0.1));
-                return vec4<f32>(ceil_glow, 1.0);
+            if (grid_x < 0.035 || grid_y < 0.035) {
+                let tube_glow = vec3<f32>(0.35, 0.12, 0.34) * (1.0 / (1.0 + dist * 0.1));
+                return vec4<f32>(tube_glow, 1.0);
             }
-            return vec4<f32>(15.0/255.0, 10.0/255.0, 30.0/255.0, 1.0);
+            return vec4<f32>(34.0/255.0, 22.0/255.0, 40.0/255.0, 1.0);
         } else {
             // Floor
             let dist = (in.rect_params.w * 0.39) / (in.frag_pos.y - y_center);
@@ -219,15 +222,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let y_3d = posY + dirY * dist + planeY * cameraX * dist;
             let grid_x = fract(x_3d);
             let grid_y = fract(y_3d);
-            if (grid_x < 0.04 || grid_y < 0.04) {
-                let floor_glow = vec3<f32>(0.6, 0.0, 0.4) * (1.0 / (1.0 + dist * 0.1));
+            let tile = step(0.5, fract((floor(x_3d) + floor(y_3d)) * 0.5));
+            var floor_col = mix(vec3<f32>(0.22, 0.12, 0.20), vec3<f32>(0.30, 0.18, 0.16), tile * 0.35);
+            if (grid_x < 0.035 || grid_y < 0.035) {
+                let floor_glow = vec3<f32>(0.75, 0.32, 0.12) * (1.0 / (1.0 + dist * 0.1));
                 return vec4<f32>(floor_glow, 1.0);
             }
-            return vec4<f32>(30.0/255.0, 20.0/255.0, 45.0/255.0, 1.0);
+            return vec4<f32>(floor_col, 1.0);
         }
     }
 
-    if (in.radius == -998.0 || in.radius == -997.0) {
+    if (in.radius == -998.0 || in.radius == -997.0 || in.radius == -996.0 || in.radius == -995.0) {
         // Z-BUFFER RAYCAST DEPTH CHECK FOR SPRITES!
         let posX = in.uv.x;
         let posY = in.uv.y;
@@ -324,7 +329,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Procedural Sprite Drawing
         let p = (in.frag_pos - (in.rect_params.xy + in.rect_params.zw * 0.5)) / (in.rect_params.zw * 0.5);
         if (in.radius == -998.0) {
-            // SUNFLOWER SEEDS! Beautiful normal-mapped golden spheres
+            // Sunflower seed.
             let d = length(p);
             if (d > 0.8) {
                 discard;
@@ -335,8 +340,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let ambient = 0.3;
             let final_col = vec3<f32>(1.0, 0.8, 0.0) * (diffuse + ambient);
             return vec4<f32>(final_col, 1.0);
-        } else {
-            // ROBOTIC VACUUM ENEMIES! Sleek metallic disk with siren
+        } else if (in.radius == -997.0) {
+            // Robotic vacuum hazard.
             let d = length(p);
             if (d > 0.9) {
                 discard;
@@ -359,6 +364,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 final_col = vec3<f32>(1.0, 0.0, 0.0);
             }
             return vec4<f32>(final_col, 1.0);
+        } else if (in.radius == -996.0) {
+            // Snack stash jar with a bright lid and seed glow.
+            if (abs(p.x) > 0.62 || p.y < -0.78 || p.y > 0.82) {
+                discard;
+            }
+            var jar_col = vec3<f32>(1.0, 0.72, 0.12);
+            if (p.y < -0.48) {
+                jar_col = vec3<f32>(0.95, 0.20, 0.32);
+            }
+            let glass_edge = smoothstep(0.46, 0.62, abs(p.x));
+            let shine = smoothstep(0.18, 0.0, abs(p.x + 0.25)) * smoothstep(0.62, -0.2, p.y);
+            jar_col = mix(jar_col, vec3<f32>(1.0, 0.95, 0.55), shine * 0.55);
+            jar_col = mix(jar_col, vec3<f32>(1.0, 0.45, 0.08), glass_edge * 0.35);
+            return vec4<f32>(jar_col, 0.96);
+        } else {
+            // Floating route cue chevron.
+            let chevron = abs(abs(p.x) - (0.22 + p.y * 0.42));
+            if (p.y < -0.55 || p.y > 0.55 || chevron > 0.16) {
+                discard;
+            }
+            let pulse_col = mix(in.color.rgb, vec3<f32>(1.0, 0.95, 0.2), 0.35);
+            return vec4<f32>(pulse_col, 0.85);
         }
     }
 

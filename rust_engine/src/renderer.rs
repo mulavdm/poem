@@ -629,7 +629,15 @@ impl Renderer {
         if transform_y > 0.1 {
             let sprite_screen_x = ((viewport_w / 2.0) * (1.0 + transform_x / transform_y)) + viewport_x1;
             
-            let factor: f32 = if radius == -998.0 { 0.53 } else { 0.72 };
+            let factor: f32 = if radius == -998.0 {
+                0.38
+            } else if radius == -997.0 {
+                0.72
+            } else if radius == -996.0 {
+                0.92
+            } else {
+                0.32
+            };
             let sprite_h = (viewport_h * factor / transform_y).abs();
             let sprite_w = sprite_h;
 

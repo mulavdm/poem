@@ -364,7 +364,7 @@ fn main() {
                                         cmd.val3(),
                                         col,
                                     );
-                                } else if r_val == -998 || r_val == -997 {
+                                } else if r_val >= -998 && r_val <= -995 {
                                     ren.draw_billboard(
                                         cmd.x1() as f32,
                                         cmd.y1() as f32,
