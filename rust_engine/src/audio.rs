@@ -1,4 +1,4 @@
-use rodio::{OutputStreamHandle, buffer::SamplesBuffer};
+use rodio::{buffer::SamplesBuffer, OutputStreamHandle};
 use std::f32::consts::PI;
 
 pub struct AudioEngine {
