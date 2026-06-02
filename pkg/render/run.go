@@ -32,6 +32,7 @@ type AppConfig struct {
 	Height       int
 	BuildPagesFn func(state *types.ApplicationState)
 	FontPath     string
+	FontSize     float64
 }
 
 // Package-level orchestrator variables
@@ -42,6 +43,7 @@ var (
 	pipeWriteMutex   sync.Mutex
 	stateMutex       sync.Mutex // Protects globalState, component layouts, and painter from concurrent races
 	globalFontPath   string
+	globalFontSize   float64
 )
 
 func Run(config AppConfig) {
@@ -55,19 +57,23 @@ func Run(config AppConfig) {
 		types.Height = config.Height
 	}
 	globalFontPath = config.FontPath
+	globalFontSize = config.FontSize
+	if globalFontSize <= 0 {
+		globalFontSize = 17
+	}
 
 	// 2. Initialize application state (headless settings, GDI sound stubs removed)
 	globalState = &types.ApplicationState{
-		StatusText:      "Orchestrator Matrix Running headlessly",
-		Volume:          75.0,
-		GlassEnabled:    true,
-		ArrowCursor:     1, // Abstract ID for Arrow
-		HandCursor:      2, // Abstract ID for Hand
-		IBeamCursor:     3, // Abstract ID for IBeam
-		ScrollPositions: make(map[string]int),
-		ScrollDragStart: make(map[string]int),
-		ScrollStartY:    make(map[string]int),
-		ScrollCurrent:   make(map[string]float64),
+		StatusText:       "Orchestrator Matrix Running headlessly",
+		Volume:           75.0,
+		GlassEnabled:     true,
+		ArrowCursor:      1, // Abstract ID for Arrow
+		HandCursor:       2, // Abstract ID for Hand
+		IBeamCursor:      3, // Abstract ID for IBeam
+		ScrollPositions:  make(map[string]int),
+		ScrollDragStart:  make(map[string]int),
+		ScrollStartY:     make(map[string]int),
+		ScrollCurrent:    make(map[string]float64),
 		TextInputValues:  make(map[string]string),
 		SliderValues:     make(map[string]float32),
 		AudioEnabled:     true,
@@ -200,7 +206,7 @@ func Run(config AppConfig) {
 	}
 
 	// 6. Generate and transmit dynamically-rasterized Font Atlas
-	atlasPixels, chars, atlasW, atlasH, measuredLSB := buildFontAtlasPixels(globalFontPath)
+	atlasPixels, chars, atlasW, atlasH, measuredLSB := buildFontAtlasPixels(globalFontPath, globalFontSize)
 
 	// Dynamically resolve monospaced character width and LSB from loaded font metrics
 	detectedWidth := 7
@@ -234,7 +240,7 @@ func Run(config AppConfig) {
 		for {
 			start := time.Now()
 			time.Sleep(16 * time.Millisecond) // ~60 FPS
-			
+
 			stateMutex.Lock()
 			now := time.Now()
 			dt := now.Sub(lastFrame).Seconds()
@@ -396,13 +402,16 @@ func loadTTFFace(path string, size float64) (font.Face, error) {
 }
 
 // Generate the pixel matrix and mapping values for custom fonts or fallback
-func buildFontAtlasPixels(fontPath string) ([]byte, []fontCharInfo, int, int, int) {
-	atlasW := 256
-	atlasH := 256
+func buildFontAtlasPixels(fontPath string, fontSize float64) ([]byte, []fontCharInfo, int, int, int) {
+	if fontSize <= 0 {
+		fontSize = 17
+	}
+	atlasW := 512
+	atlasH := 512
 
 	var face font.Face
 	if fontPath != "" {
-		if loadedFace, err := loadTTFFace(fontPath, 13); err == nil {
+		if loadedFace, err := loadTTFFace(fontPath, fontSize); err == nil {
 			face = loadedFace
 			fmt.Printf("❖ Font Engine: Successfully loaded custom font from %s\n", fontPath)
 		} else {
@@ -423,16 +432,30 @@ func buildFontAtlasPixels(fontPath string) ([]byte, []fontCharInfo, int, int, in
 		Face: face,
 	}
 
+	metrics := face.Metrics()
+	ascent := int((metrics.Ascent + 63) >> 6)
+	descent := int((metrics.Descent + 63) >> 6)
+	height := int((metrics.Height + 63) >> 6)
+	if ascent <= 0 {
+		ascent = 11
+	}
+	if descent <= 0 {
+		descent = 3
+	}
+	if height <= 0 {
+		height = ascent + descent + 2
+	}
+
 	// Starting Y offsets
-	yStart := 13
-	lineInc := 15
-	yOffsetV1 := 11
-	yOffsetV2 := 2
+	yStart := ascent + 2
+	lineInc := height + 4
+	yOffsetV1 := ascent + 1
+	yOffsetV2 := descent + 2
 	if fontPath != "" && face != basicfont.Face7x13 {
-		yStart = 16
-		lineInc = 18
-		yOffsetV1 = 13
-		yOffsetV2 = 3
+		yStart = ascent + 3
+		lineInc = height + 6
+		yOffsetV1 = ascent + 2
+		yOffsetV2 = descent + 3
 	}
 
 	x, y := 0, yStart
@@ -546,6 +569,7 @@ func sendSoundEvent(conn io.Writer, soundType poem.SoundType) {
 
 // Main paint event dispatcher
 var lastPrintTime time.Time
+
 func triggerRepaintFrame(conn io.Writer, painter *FlatBufferPainter) {
 	if globalState == nil {
 		return
@@ -593,15 +617,17 @@ func triggerRepaintFrame(conn io.Writer, painter *FlatBufferPainter) {
 			fmt.Printf("   -> First 5 commands:\n")
 			for idx := 0; idx < len(painter.commands) && idx < 5; idx++ {
 				cmd := painter.commands[idx]
-				fmt.Printf("      [%d] Type=%v, Rect=(%d,%d,%d,%d), Color=(%d,%d,%d,%d)\n", 
+				fmt.Printf("      [%d] Type=%v, Rect=(%d,%d,%d,%d), Color=(%d,%d,%d,%d)\n",
 					idx, cmd.Type, cmd.X1, cmd.Y1, cmd.X2, cmd.Y2, cmd.R, cmd.G, cmd.B, cmd.A)
 			}
 			fmt.Printf("   -> Last 15 commands:\n")
 			startIdx := len(painter.commands) - 15
-			if startIdx < 0 { startIdx = 0 }
+			if startIdx < 0 {
+				startIdx = 0
+			}
 			for idx := startIdx; idx < len(painter.commands); idx++ {
 				cmd := painter.commands[idx]
-				fmt.Printf("      [%d] Type=%v, Rect=(%d,%d,%d,%d), Color=(%d,%d,%d,%d), Text=%q\n", 
+				fmt.Printf("      [%d] Type=%v, Rect=(%d,%d,%d,%d), Color=(%d,%d,%d,%d), Text=%q\n",
 					idx, cmd.Type, cmd.X1, cmd.Y1, cmd.X2, cmd.Y2, cmd.R, cmd.G, cmd.B, cmd.A, cmd.Text)
 			}
 		}

@@ -94,8 +94,12 @@ func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.SetGlow(0)
 	pnt.SetShadow(0, 0, 0)
 
-	// Center text manually for now
-	tx := b.Rect.Min.X + (b.Rect.Dx() / 2) - (len(b.Label) * 4)
+	charW := state.FontCharWidth
+	if charW <= 0 {
+		charW = 8
+	}
+	// Center text manually using the active font atlas metrics.
+	tx := b.Rect.Min.X + (b.Rect.Dx() / 2) - ((len(b.Label) * charW) / 2)
 	ty := b.Rect.Min.Y + (b.Rect.Dy() / 2) + 5
 	pnt.DrawText(b.Label, tx, ty, color.RGBA{255, 255, 255, 255})
 }
@@ -255,8 +259,12 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 	if state.FocusedID == t.CompID {
 		// Simple blinking logic based on time
 		if (time.Since(state.StartTime).Milliseconds()/500)%2 == 0 {
-			cursorX := t.Rect.Min.X + 10 + (len(t.Text) * 7)
-			pnt.FillRect(image.Rect(cursorX, t.Rect.Min.Y+8, cursorX+2, t.Rect.Min.Y+25), t.TextColor)
+			charW := state.FontCharWidth
+			if charW <= 0 {
+				charW = 8
+			}
+			cursorX := t.Rect.Min.X + 10 + (len(t.Text) * charW)
+			pnt.FillRect(image.Rect(cursorX, t.Rect.Min.Y+8, cursorX+2, t.Rect.Min.Y+28), t.TextColor)
 		}
 	}
 }
