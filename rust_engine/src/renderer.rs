@@ -56,6 +56,7 @@ pub struct Renderer {
 
     // Bind Groups
     globals_buffer: wgpu::Buffer,
+    map_buffer: wgpu::Buffer,
     main_bind_group: wgpu::BindGroup,
     blur_horizontal_bind_group: wgpu::BindGroup,
     blur_horizontal_pingpong_bind_group: wgpu::BindGroup,
@@ -75,6 +76,8 @@ pub struct Renderer {
     pub player_x: f32,
     pub player_y: f32,
     pub player_angle: f32,
+    map_cells: [u32; 64 * 64],
+    map_signature: String,
 }
 
 impl Renderer {
@@ -104,6 +107,12 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let default_map = [1u32; 64 * 64];
+        let map_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Raycaster Map Buffer"),
+            contents: bytemuck::cast_slice(&default_map),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
 
         // Font Atlas Texture (LayerMajor is the correct wgpu 0.19 variant)
         let text_atlas_texture = device.create_texture_with_data(
@@ -125,7 +134,8 @@ impl Renderer {
             wgpu::util::TextureDataOrder::LayerMajor,
             atlas_pixels,
         );
-        let text_atlas_view = text_atlas_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let text_atlas_view =
+            text_atlas_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Sampler"),
@@ -168,7 +178,8 @@ impl Renderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: surface_config.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
             let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -180,47 +191,58 @@ impl Renderer {
         let pingpong_views = [pingpong_views.remove(0), pingpong_views.remove(0)];
 
         // Bind Group Layouts
-        let main_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Main Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let main_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Main Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
 
         let main_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Main Bind Group"),
@@ -242,31 +264,36 @@ impl Renderer {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&pingpong_views[1]), // blurred output
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: map_buffer.as_entire_binding(),
+                },
             ],
         });
 
         // Blur Bind Groups
-        let blur_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Blur Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+        let blur_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Blur Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
 
         let blur_horizontal_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Blur Horizontal Bind Group"),
@@ -283,20 +310,21 @@ impl Renderer {
             ],
         });
 
-        let blur_horizontal_pingpong_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Blur Horizontal Ping-Pong Bind Group"),
-            layout: &blur_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&pingpong_views[1]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let blur_horizontal_pingpong_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Blur Horizontal Ping-Pong Bind Group"),
+                layout: &blur_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&pingpong_views[1]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                ],
+            });
 
         let blur_vertical_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Blur Vertical Bind Group"),
@@ -314,11 +342,12 @@ impl Renderer {
         });
 
         // Pipelines Layout
-        let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&main_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[&main_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Main Render Pipeline"),
@@ -368,57 +397,59 @@ impl Renderer {
             push_constant_ranges: &[],
         });
 
-        let blur_horizontal_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Blur Horizontal Pipeline"),
-            layout: Some(&blur_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &blur_shader,
-                entry_point: "vs_main",
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &blur_shader,
-                entry_point: "fs_horizontal",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_config.format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        let blur_horizontal_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Blur Horizontal Pipeline"),
+                layout: Some(&blur_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &blur_shader,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &blur_shader,
+                    entry_point: "fs_horizontal",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_config.format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
 
-        let blur_vertical_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Blur Vertical Pipeline"),
-            layout: Some(&blur_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &blur_shader,
-                entry_point: "vs_main",
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &blur_shader,
-                entry_point: "fs_vertical",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_config.format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        let blur_vertical_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Blur Vertical Pipeline"),
+                layout: Some(&blur_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &blur_shader,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &blur_shader,
+                    entry_point: "fs_vertical",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_config.format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
 
         Self {
             device,
@@ -435,6 +466,7 @@ impl Renderer {
             pingpong_textures,
             pingpong_views,
             globals_buffer,
+            map_buffer,
             main_bind_group,
             blur_horizontal_bind_group,
             blur_horizontal_pingpong_bind_group,
@@ -452,6 +484,8 @@ impl Renderer {
             player_x: 0.0,
             player_y: 0.0,
             player_angle: 0.0,
+            map_cells: default_map,
+            map_signature: String::new(),
         }
     }
 
@@ -478,7 +512,9 @@ impl Renderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        self.fbo_view = self.fbo_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.fbo_view = self
+            .fbo_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         for i in 0..2 {
             self.pingpong_textures[i] = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -492,10 +528,12 @@ impl Renderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: self.surface_config.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            self.pingpong_views[i] = self.pingpong_textures[i].create_view(&wgpu::TextureViewDescriptor::default());
+            self.pingpong_views[i] =
+                self.pingpong_textures[i].create_view(&wgpu::TextureViewDescriptor::default());
         }
 
         // Re-compile orthographic projection matrix using logical bounds to support high-DPI scaling automatically
@@ -507,10 +545,22 @@ impl Renderer {
         let far = 1.0;
 
         let projection = [
-            2.0 / (right - left), 0.0, 0.0, 0.0,
-            0.0, 2.0 / (top - bottom), 0.0, 0.0,
-            0.0, 0.0, -2.0 / (far - near), 0.0,
-            -(right + left) / (right - left), -(top + bottom) / (top - bottom), -(far + near) / (far - near), 1.0,
+            2.0 / (right - left),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            2.0 / (top - bottom),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            -2.0 / (far - near),
+            0.0,
+            -(right + left) / (right - left),
+            -(top + bottom) / (top - bottom),
+            -(far + near) / (far - near),
+            1.0,
         ];
 
         let globals = Globals {
@@ -519,11 +569,8 @@ impl Renderer {
             padding: [0.0, 0.0],
         };
 
-        self.queue.write_buffer(
-            &self.globals_buffer,
-            0,
-            bytemuck::cast_slice(&[globals]),
-        );
+        self.queue
+            .write_buffer(&self.globals_buffer, 0, bytemuck::cast_slice(&[globals]));
 
         // Rebuild bind groups to bind new views
         let main_bind_group_layout = self.render_pipeline.get_bind_group_layout(0);
@@ -547,39 +594,45 @@ impl Renderer {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&self.pingpong_views[1]), // blurred output
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.map_buffer.as_entire_binding(),
+                },
             ],
         });
 
         let blur_bind_group_layout = self.blur_horizontal_pipeline.get_bind_group_layout(0);
-        self.blur_horizontal_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Blur Horizontal Bind Group"),
-            layout: &blur_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.fbo_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
+        self.blur_horizontal_bind_group =
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Blur Horizontal Bind Group"),
+                layout: &blur_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.fbo_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            });
 
-        self.blur_horizontal_pingpong_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Blur Horizontal Ping-Pong Bind Group"),
-            layout: &blur_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.pingpong_views[1]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
+        self.blur_horizontal_pingpong_bind_group =
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Blur Horizontal Ping-Pong Bind Group"),
+                layout: &blur_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.pingpong_views[1]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            });
 
         self.blur_vertical_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Blur Vertical Bind Group"),
@@ -601,14 +654,65 @@ impl Renderer {
         self.push_quad(x1, y1, x2, y2, r, col, 0.0, [0.0, 0.0, 0.0, 0.0]);
     }
 
-    pub fn draw_raycaster(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, px: f32, py: f32, angle: f32, col: [f32; 4]) {
+    pub fn draw_raycaster(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        px: f32,
+        py: f32,
+        angle: f32,
+        col: [f32; 4],
+    ) {
         self.player_x = px;
         self.player_y = py;
         self.player_angle = angle;
-        self.push_quad_special(x1, y1, x2, y2, -999.0, col, 0.0, [0.0, 0.0, 0.0, 0.0], [px, py], angle, 0.0);
+        self.push_quad_special(
+            x1,
+            y1,
+            x2,
+            y2,
+            -999.0,
+            col,
+            0.0,
+            [0.0, 0.0, 0.0, 0.0],
+            [px, py],
+            angle,
+            0.0,
+        );
     }
 
-    pub fn draw_billboard(&mut self, viewport_x1: f32, viewport_y1: f32, viewport_x2: f32, viewport_y2: f32, radius: f32, sx: f32, sy: f32, col: [f32; 4]) {
+    pub fn set_raycaster_map_from_ascii(&mut self, map_ascii: &str) {
+        if map_ascii.len() != 64 * 64 || self.map_signature == map_ascii {
+            return;
+        }
+
+        for (i, b) in map_ascii.bytes().enumerate() {
+            self.map_cells[i] = match b {
+                b'0' => 0,
+                b'1' => 1,
+                b'2' => 2,
+                _ => 1,
+            };
+        }
+        self.queue
+            .write_buffer(&self.map_buffer, 0, bytemuck::cast_slice(&self.map_cells));
+        self.map_signature.clear();
+        self.map_signature.push_str(map_ascii);
+    }
+
+    pub fn draw_billboard(
+        &mut self,
+        viewport_x1: f32,
+        viewport_y1: f32,
+        viewport_x2: f32,
+        viewport_y2: f32,
+        radius: f32,
+        sx: f32,
+        sy: f32,
+        col: [f32; 4],
+    ) {
         let viewport_w = viewport_x2 - viewport_x1;
         let viewport_h = viewport_y2 - viewport_y1;
         let y_center = viewport_y1 + viewport_h / 2.0 + 30.0;
@@ -627,16 +731,25 @@ impl Renderer {
         let transform_y = inv_det * (-plane_y * sprite_x + plane_x * sprite_y); // depth
 
         if transform_y > 0.1 {
-            let sprite_screen_x = ((viewport_w / 2.0) * (1.0 + transform_x / transform_y)) + viewport_x1;
-            
+            let sprite_screen_x =
+                ((viewport_w / 2.0) * (1.0 + transform_x / transform_y)) + viewport_x1;
+
             let factor: f32 = if radius == -998.0 {
                 0.38
             } else if radius == -997.0 {
                 0.72
             } else if radius == -996.0 {
                 0.92
-            } else {
+            } else if radius == -995.0 {
                 0.32
+            } else if radius == -994.0 {
+                0.88
+            } else if radius == -993.0 {
+                0.58
+            } else if radius == -992.0 {
+                0.64
+            } else {
+                1.05
             };
             let sprite_h = (viewport_h * factor / transform_y).abs();
             let sprite_w = sprite_h;
@@ -647,9 +760,17 @@ impl Renderer {
             let y2 = y_center + sprite_h / 2.0;
 
             self.push_quad_special(
-                x1, y1, x2, y2,
-                radius, col, 0.0, [0.0, 0.0, 0.0, 0.0],
-                [sx, sy], self.player_angle, transform_y
+                x1,
+                y1,
+                x2,
+                y2,
+                radius,
+                col,
+                0.0,
+                [0.0, 0.0, 0.0, 0.0],
+                [sx, sy],
+                self.player_angle,
+                transform_y,
             );
         }
     }
@@ -807,11 +928,29 @@ impl Renderer {
         }
     }
 
-    pub fn draw_text_char(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, uv: [f32; 4], col: [f32; 4]) {
+    pub fn draw_text_char(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        uv: [f32; 4],
+        col: [f32; 4],
+    ) {
         self.push_quad(x1, y1, x2, y2, 0.0, col, 1.0, uv);
     }
 
-    fn push_quad(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, radius: f32, col: [f32; 4], draw_type: f32, uv: [f32; 4]) {
+    fn push_quad(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        radius: f32,
+        col: [f32; 4],
+        draw_type: f32,
+        uv: [f32; 4],
+    ) {
         if self.batches.is_empty() {
             self.batches.push(DrawBatch {
                 start_vertex: 0,
@@ -902,16 +1041,20 @@ impl Renderer {
         }
 
         // Upload batch vertex buffer
-        let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Batch Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.batch_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let vertex_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Batch Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.batch_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
 
         // wgpu command encoder
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         // Pass 1: Render background particles to FBO
         {
@@ -938,22 +1081,39 @@ impl Renderer {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.main_bind_group, &[]);
             render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            
+
             for batch in &self.batches {
                 if let Some(clip) = batch.clip_rect {
-                    let clip_x = ((clip[0] as f32 * self.scale_factor) as u32).min(self.surface_config.width);
-                    let clip_y = ((clip[1] as f32 * self.scale_factor) as u32).min(self.surface_config.height);
-                    let clip_w = ((clip[2] as f32 * self.scale_factor) as u32).min(self.surface_config.width - clip_x);
-                    let clip_h = ((clip[3] as f32 * self.scale_factor) as u32).min(self.surface_config.height - clip_y);
+                    let clip_x = ((clip[0] as f32 * self.scale_factor) as u32)
+                        .min(self.surface_config.width);
+                    let clip_y = ((clip[1] as f32 * self.scale_factor) as u32)
+                        .min(self.surface_config.height);
+                    let clip_w = ((clip[2] as f32 * self.scale_factor) as u32)
+                        .min(self.surface_config.width - clip_x);
+                    let clip_h = ((clip[3] as f32 * self.scale_factor) as u32)
+                        .min(self.surface_config.height - clip_y);
                     if clip_w > 0 && clip_h > 0 {
                         render_pass.set_scissor_rect(clip_x, clip_y, clip_w, clip_h);
                     } else {
-                        render_pass.set_scissor_rect(0, 0, self.surface_config.width, self.surface_config.height);
+                        render_pass.set_scissor_rect(
+                            0,
+                            0,
+                            self.surface_config.width,
+                            self.surface_config.height,
+                        );
                     }
                 } else {
-                    render_pass.set_scissor_rect(0, 0, self.surface_config.width, self.surface_config.height);
+                    render_pass.set_scissor_rect(
+                        0,
+                        0,
+                        self.surface_config.width,
+                        self.surface_config.height,
+                    );
                 }
-                render_pass.draw(batch.start_vertex..batch.start_vertex + batch.vertex_count, 0..1);
+                render_pass.draw(
+                    batch.start_vertex..batch.start_vertex + batch.vertex_count,
+                    0..1,
+                );
             }
         }
 
@@ -1036,19 +1196,36 @@ impl Renderer {
 
             for batch in &self.batches {
                 if let Some(clip) = batch.clip_rect {
-                    let clip_x = ((clip[0] as f32 * self.scale_factor) as u32).min(self.surface_config.width);
-                    let clip_y = ((clip[1] as f32 * self.scale_factor) as u32).min(self.surface_config.height);
-                    let clip_w = ((clip[2] as f32 * self.scale_factor) as u32).min(self.surface_config.width - clip_x);
-                    let clip_h = ((clip[3] as f32 * self.scale_factor) as u32).min(self.surface_config.height - clip_y);
+                    let clip_x = ((clip[0] as f32 * self.scale_factor) as u32)
+                        .min(self.surface_config.width);
+                    let clip_y = ((clip[1] as f32 * self.scale_factor) as u32)
+                        .min(self.surface_config.height);
+                    let clip_w = ((clip[2] as f32 * self.scale_factor) as u32)
+                        .min(self.surface_config.width - clip_x);
+                    let clip_h = ((clip[3] as f32 * self.scale_factor) as u32)
+                        .min(self.surface_config.height - clip_y);
                     if clip_w > 0 && clip_h > 0 {
                         render_pass.set_scissor_rect(clip_x, clip_y, clip_w, clip_h);
                     } else {
-                        render_pass.set_scissor_rect(0, 0, self.surface_config.width, self.surface_config.height);
+                        render_pass.set_scissor_rect(
+                            0,
+                            0,
+                            self.surface_config.width,
+                            self.surface_config.height,
+                        );
                     }
                 } else {
-                    render_pass.set_scissor_rect(0, 0, self.surface_config.width, self.surface_config.height);
+                    render_pass.set_scissor_rect(
+                        0,
+                        0,
+                        self.surface_config.width,
+                        self.surface_config.height,
+                    );
                 }
-                render_pass.draw(batch.start_vertex..batch.start_vertex + batch.vertex_count, 0..1);
+                render_pass.draw(
+                    batch.start_vertex..batch.start_vertex + batch.vertex_count,
+                    0..1,
+                );
             }
         }
 

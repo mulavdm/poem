@@ -49,6 +49,10 @@ const (
 	BillboardSentry
 	BillboardStash
 	BillboardCue
+	BillboardTubeRing
+	BillboardNest
+	BillboardBowl
+	BillboardWheelGate
 )
 
 func NewFlatBufferPainter() *FlatBufferPainter {
@@ -95,6 +99,10 @@ func (f *FlatBufferPainter) DrawRaycaster(r image.Rectangle, playerX, playerY, p
 }
 
 func (f *FlatBufferPainter) DrawRaycasterStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA) {
+	f.DrawRaycasterMapStyled(r, playerX, playerY, playerAngle, accent, "")
+}
+
+func (f *FlatBufferPainter) DrawRaycasterMapStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA, mapData string) {
 	f.commands = append(f.commands, DrawCmdData{
 		Type:   poem.DrawCommandTypeDrawRoundedRect,
 		X1:     r.Min.X,
@@ -111,6 +119,7 @@ func (f *FlatBufferPainter) DrawRaycasterStyled(r image.Rectangle, playerX, play
 		G:      accent.G,
 		B:      accent.B,
 		A:      accent.A,
+		Text:   mapData,
 	})
 }
 
@@ -131,6 +140,14 @@ func (f *FlatBufferPainter) DrawBillboard3D(viewportRect image.Rectangle, worldX
 		radius = -996
 	case BillboardCue:
 		radius = -995
+	case BillboardTubeRing:
+		radius = -994
+	case BillboardNest:
+		radius = -993
+	case BillboardBowl:
+		radius = -992
+	case BillboardWheelGate:
+		radius = -991
 	}
 
 	f.commands = append(f.commands, DrawCmdData{

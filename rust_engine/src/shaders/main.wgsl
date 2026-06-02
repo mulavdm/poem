@@ -3,10 +3,15 @@ struct Globals {
     screen_size: vec2<f32>,
 }
 
+struct MapData {
+    cells: array<u32, 4096>,
+}
+
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var text_atlas: texture_2d<f32>;
 @group(0) @binding(2) var text_sampler: sampler;
 @group(0) @binding(3) var blurred_bg: texture_2d<f32>;
+@group(0) @binding(4) var<storage, read> map_data: MapData;
 
 struct VertexInput {
     @location(0) pos: vec2<f32>,
@@ -60,32 +65,11 @@ fn sd_rounded_rect(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
-fn in_rect(x: i32, y: i32, x1: i32, y1: i32, x2: i32, y2: i32) -> bool {
-    return x >= x1 && x <= x2 && y >= y1 && y <= y2;
-}
-
 fn get_grid_val(x: i32, y: i32) -> u32 {
     if (x < 0 || x >= 64 || y < 0 || y >= 64) {
         return 1u;
     }
-    if (x == 34 && y == 18) {
-        return 2u; // Snack stash.
-    }
-
-    // Authored starter habitat layout. Keep this synced with HamsterGame/game/engine.go.
-    if (in_rect(x, y, 2, 2, 8, 8) ||
-        in_rect(x, y, 8, 4, 28, 6) ||
-        in_rect(x, y, 26, 4, 30, 18) ||
-        in_rect(x, y, 10, 10, 20, 14) ||
-        in_rect(x, y, 16, 14, 20, 24) ||
-        in_rect(x, y, 20, 22, 32, 24) ||
-        in_rect(x, y, 32, 16, 36, 24) ||
-        in_rect(x, y, 6, 16, 12, 24) ||
-        in_rect(x, y, 8, 14, 18, 18)) {
-        return 0u;
-    }
-
-    return 1u;
+    return map_data.cells[u32(y * 64 + x)];
 }
 
 @fragment
@@ -161,7 +145,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             }
             
             let cell = get_grid_val(mapX, mapY);
-            if (cell > 0u) {
+            if (cell == 1u) {
                 hit = cell;
             }
         }
@@ -181,14 +165,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let y_center = in.rect_params.y + in.rect_params.w / 2.0 + 30.0;
         let draw_start = y_center - wall_h / 2.0;
         let draw_end = y_center + wall_h / 2.0;
+        var wall_x = 0.0;
+        if (side == 0) {
+            wall_x = posY + perpWallDist * rayDirY;
+        } else {
+            wall_x = posX + perpWallDist * rayDirX;
+        }
+        wall_x = fract(wall_x);
         
         if (in.frag_pos.y >= draw_start && in.frag_pos.y <= draw_end) {
             // Warm toy-plastic habitat walls, tinted by the game-provided room accent.
             let accent = max(in.color.rgb, vec3<f32>(0.35, 0.18, 0.08));
             var wall_color = mix(vec3<f32>(0.95, 0.42, 0.18), accent, 0.35);
-            if (hit == 2u) {
-                wall_color = vec3<f32>(1.0, 0.82, 0.12);
-            }
             if (side == 1) {
                 wall_color = wall_color * 0.72;
             }
@@ -196,7 +184,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             wall_color = wall_color * clamp(depth_shading, 0.0, 1.0);
 
             let stripe = step(0.92, fract((f32(mapX) + f32(mapY) + in.frag_pos.y * 0.015) * 0.5));
+            let rib = 1.0 - smoothstep(0.0, 0.08, abs(wall_x - 0.5));
+            let panel = smoothstep(0.18, 0.0, abs(fract(wall_x * 2.0) - 0.5));
+            let viewport_v = clamp((in.frag_pos.y - draw_start) / max(draw_end - draw_start, 1.0), 0.0, 1.0);
+            let base_strip = smoothstep(0.82, 1.0, viewport_v);
+            let top_gloss = smoothstep(0.22, 0.0, viewport_v) * smoothstep(0.20, 0.0, abs(wall_x - 0.18));
             wall_color = mix(wall_color, wall_color + vec3<f32>(0.16, 0.10, 0.03), stripe * 0.35);
+            wall_color = mix(wall_color, wall_color + vec3<f32>(0.12, 0.09, 0.06), rib * 0.32);
+            wall_color = mix(wall_color, wall_color + vec3<f32>(0.08, 0.05, 0.04), panel * 0.22);
+            wall_color = mix(wall_color, vec3<f32>(0.34, 0.16, 0.10), base_strip * 0.55);
+            wall_color = mix(wall_color, vec3<f32>(1.0, 0.82, 0.52), top_gloss * 0.45);
 
             if (in.frag_pos.y < draw_start + 2.0 || in.frag_pos.y > draw_end - 2.0) {
                 let edge_color = vec3<f32>(1.0, 0.58, 0.18);
@@ -210,11 +207,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let y_3d = posY + dirY * dist + planeY * cameraX * dist;
             let grid_x = fract(x_3d);
             let grid_y = fract(y_3d);
+            let arch = 1.0 - smoothstep(0.2, 0.95, abs(col_ratio));
+            let ribbing = smoothstep(0.06, 0.0, abs(fract(x_3d * 0.7 + y_3d * 0.7) - 0.5));
             if (grid_x < 0.035 || grid_y < 0.035) {
                 let tube_glow = vec3<f32>(0.35, 0.12, 0.34) * (1.0 / (1.0 + dist * 0.1));
                 return vec4<f32>(tube_glow, 1.0);
             }
-            return vec4<f32>(34.0/255.0, 22.0/255.0, 40.0/255.0, 1.0);
+            let ceil_base = mix(vec3<f32>(0.12, 0.08, 0.14), vec3<f32>(0.24, 0.12, 0.20), arch * 0.55);
+            let ceil_col = mix(ceil_base, ceil_base + vec3<f32>(0.10, 0.08, 0.05), ribbing * 0.22);
+            return vec4<f32>(ceil_col, 1.0);
         } else {
             // Floor
             let dist = (in.rect_params.w * 0.39) / (in.frag_pos.y - y_center);
@@ -224,15 +225,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let grid_y = fract(y_3d);
             let tile = step(0.5, fract((floor(x_3d) + floor(y_3d)) * 0.5));
             var floor_col = mix(vec3<f32>(0.22, 0.12, 0.20), vec3<f32>(0.30, 0.18, 0.16), tile * 0.35);
+            let run_lane = smoothstep(0.16, 0.0, abs(fract(x_3d * 0.5) - 0.5));
+            let dust_motes = smoothstep(0.94, 1.0, fract(sin(dot(vec2<f32>(floor(x_3d * 3.0), floor(y_3d * 3.0)), vec2<f32>(12.9898, 78.233))) * 43758.5453));
             if (grid_x < 0.035 || grid_y < 0.035) {
                 let floor_glow = vec3<f32>(0.75, 0.32, 0.12) * (1.0 / (1.0 + dist * 0.1));
                 return vec4<f32>(floor_glow, 1.0);
             }
+            floor_col = mix(floor_col, floor_col + vec3<f32>(0.08, 0.05, 0.02), run_lane * 0.18);
+            floor_col = mix(floor_col, vec3<f32>(0.75, 0.66, 0.42), dust_motes * 0.08);
             return vec4<f32>(floor_col, 1.0);
         }
     }
 
-    if (in.radius == -998.0 || in.radius == -997.0 || in.radius == -996.0 || in.radius == -995.0) {
+    if (in.radius == -998.0 || in.radius == -997.0 || in.radius == -996.0 || in.radius == -995.0 || in.radius == -994.0 || in.radius == -993.0 || in.radius == -992.0 || in.radius == -991.0) {
         // Z-BUFFER RAYCAST DEPTH CHECK FOR SPRITES!
         let posX = in.uv.x;
         let posY = in.uv.y;
@@ -305,7 +310,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             }
             
             let cell = get_grid_val(mapX, mapY);
-            if (cell > 0u) {
+            if (cell == 1u) {
                 hit = cell;
             }
         }
@@ -378,7 +383,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             jar_col = mix(jar_col, vec3<f32>(1.0, 0.95, 0.55), shine * 0.55);
             jar_col = mix(jar_col, vec3<f32>(1.0, 0.45, 0.08), glass_edge * 0.35);
             return vec4<f32>(jar_col, 0.96);
-        } else {
+        } else if (in.radius == -995.0) {
             // Floating route cue chevron.
             let chevron = abs(abs(p.x) - (0.22 + p.y * 0.42));
             if (p.y < -0.55 || p.y > 0.55 || chevron > 0.16) {
@@ -386,6 +391,45 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             }
             let pulse_col = mix(in.color.rgb, vec3<f32>(1.0, 0.95, 0.2), 0.35);
             return vec4<f32>(pulse_col, 0.85);
+        } else if (in.radius == -994.0) {
+            // Plastic tube ring joint.
+            let d = length(p);
+            if (d < 0.45 || d > 0.95) {
+                discard;
+            }
+            let band = smoothstep(0.02, 0.0, abs(d - 0.70));
+            let tube_col = mix(vec3<f32>(0.96, 0.48, 0.20), vec3<f32>(1.0, 0.84, 0.60), band * 0.65);
+            return vec4<f32>(tube_col, 0.92);
+        } else if (in.radius == -993.0) {
+            // Soft nest bedding mound.
+            let mound = (p.x * p.x) / 0.90 + ((p.y + 0.18) * (p.y + 0.18)) / 0.46;
+            if (mound > 1.0 || p.y > 0.55) {
+                discard;
+            }
+            let seedleck = smoothstep(0.94, 1.0, fract(sin(dot(vec2<f32>(floor((p.x + 1.0) * 5.0), floor((p.y + 1.0) * 5.0)), vec2<f32>(91.77, 21.13))) * 12511.331));
+            var nest_col = vec3<f32>(0.83, 0.66, 0.34);
+            nest_col = mix(nest_col, vec3<f32>(0.96, 0.84, 0.52), seedleck * 0.25);
+            return vec4<f32>(nest_col, 0.95);
+        } else if (in.radius == -992.0) {
+            // Seed bowl.
+            let rim = abs(length(vec2<f32>(p.x, p.y + 0.12)) - 0.62);
+            if (p.y > 0.46 || abs(p.x) > 0.74 || ((p.y + 0.12) > 0.0 && rim > 0.12)) {
+                discard;
+            }
+            var bowl_col = vec3<f32>(0.20, 0.78, 0.96);
+            if (p.y < -0.05) {
+                bowl_col = vec3<f32>(1.0, 0.82, 0.18);
+            }
+            return vec4<f32>(bowl_col, 0.96);
+        } else {
+            // Exercise wheel gate.
+            let ring = abs(length(p) - 0.76);
+            let spoke = smoothstep(0.05, 0.0, abs(p.x)) + smoothstep(0.05, 0.0, abs(p.y));
+            if (ring > 0.10 && spoke < 0.9) {
+                discard;
+            }
+            let gate_col = mix(vec3<f32>(0.92, 0.26, 0.30), vec3<f32>(1.0, 0.82, 0.22), spoke * 0.45);
+            return vec4<f32>(gate_col, 0.90);
         }
     }
 

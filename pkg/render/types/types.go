@@ -22,6 +22,7 @@ type Painter interface {
 	DrawLine(x1, y1, x2, y2 int, col color.RGBA)
 	DrawRaycaster(r image.Rectangle, playerX, playerY, playerAngle float32)
 	DrawRaycasterStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA)
+	DrawRaycasterMapStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA, mapData string)
 	DrawBillboard3D(viewportRect image.Rectangle, worldX, worldY float32, kind int, col color.RGBA)
 	DrawSeed3D(viewportRect image.Rectangle, seedX, seedY, playerX, playerY, playerAngle float32)
 	DrawSentry3D(viewportRect image.Rectangle, sentryX, sentryY, playerX, playerY, playerAngle float32, col color.RGBA)

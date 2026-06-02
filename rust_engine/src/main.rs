@@ -8,14 +8,14 @@ use renderer::Renderer;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use winit::{
     event::{ElementState, Event, MouseButton, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    window::{WindowBuilder, CursorIcon},
+    window::{CursorIcon, WindowBuilder},
 };
 
 const INVALID_HANDLE_VALUE: isize = -1;
@@ -39,7 +39,8 @@ impl Read for PipeConn {
         };
         if ok == 0 {
             let err = std::io::Error::last_os_error();
-            if err.raw_os_error() == Some(109) { // ERROR_BROKEN_PIPE
+            if err.raw_os_error() == Some(109) {
+                // ERROR_BROKEN_PIPE
                 return Ok(0);
             }
             return Err(err);
@@ -96,8 +97,14 @@ fn main() {
     println!("🔌 Rust presentation sidecar engine starting up...");
 
     // 1. Connect to both Windows Named Pipes
-    let pipe_name_read: Vec<u16> = "\\\\.\\pipe\\poem_ipc_go_to_rust".encode_utf16().chain(Some(0)).collect();
-    let pipe_name_write: Vec<u16> = "\\\\.\\pipe\\poem_ipc_rust_to_go".encode_utf16().chain(Some(0)).collect();
+    let pipe_name_read: Vec<u16> = "\\\\.\\pipe\\poem_ipc_go_to_rust"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let pipe_name_write: Vec<u16> = "\\\\.\\pipe\\poem_ipc_rust_to_go"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
 
     let mut read_handle = INVALID_HANDLE_VALUE as windows_sys::Win32::Foundation::HANDLE;
     let mut write_handle = INVALID_HANDLE_VALUE as windows_sys::Win32::Foundation::HANDLE;
@@ -105,7 +112,7 @@ fn main() {
     // Connect to read pipe
     for _attempt in 1..=20 {
         use windows_sys::Win32::Storage::FileSystem::{
-            CreateFileW, FILE_GENERIC_READ, FILE_GENERIC_WRITE, OPEN_EXISTING
+            CreateFileW, FILE_GENERIC_READ, FILE_GENERIC_WRITE, OPEN_EXISTING,
         };
         let h = unsafe {
             CreateFileW(
@@ -128,7 +135,7 @@ fn main() {
     // Connect to write pipe
     for _attempt in 1..=20 {
         use windows_sys::Win32::Storage::FileSystem::{
-            CreateFileW, FILE_GENERIC_READ, FILE_GENERIC_WRITE, OPEN_EXISTING
+            CreateFileW, FILE_GENERIC_READ, FILE_GENERIC_WRITE, OPEN_EXISTING,
         };
         let h = unsafe {
             CreateFileW(
@@ -148,25 +155,35 @@ fn main() {
         thread::sleep(Duration::from_millis(100));
     }
 
-    if read_handle == INVALID_HANDLE_VALUE as windows_sys::Win32::Foundation::HANDLE 
+    if read_handle == INVALID_HANDLE_VALUE as windows_sys::Win32::Foundation::HANDLE
         || write_handle == INVALID_HANDLE_VALUE as windows_sys::Win32::Foundation::HANDLE
     {
         panic!("❌ Failed to connect to Go Named Pipes after multiple attempts.");
     }
     println!("🤝 Bound to Go Named Pipes successfully!");
 
-    let mut pipe_reader = PipeConn { handle: read_handle };
-    let pipe_writer = Arc::new(Mutex::new(PipeConn { handle: write_handle }));
+    let mut pipe_reader = PipeConn {
+        handle: read_handle,
+    };
+    let pipe_writer = Arc::new(Mutex::new(PipeConn {
+        handle: write_handle,
+    }));
 
     // 2. Read bootstrap InitEngine FlatBuffer package
     let init_payload = match read_message(&mut pipe_reader) {
         Ok(p) => p,
-        Err(e) => panic!("❌ Failed to read InitEngine packet from Go orchestrator: {:?}", e),
+        Err(e) => panic!(
+            "❌ Failed to read InitEngine packet from Go orchestrator: {:?}",
+            e
+        ),
     };
 
     let envelope = poem::root_as_go_to_rust_message(&init_payload).unwrap();
     if envelope.message_type() != poem::GoToRustUnion::InitEngine {
-        panic!("❌ Violating handshaking logic. Received unexpected envelope: {:?}", envelope.message_type());
+        panic!(
+            "❌ Violating handshaking logic. Received unexpected envelope: {:?}",
+            envelope.message_type()
+        );
     }
 
     let init = envelope.message_as_init_engine().unwrap();
@@ -183,7 +200,10 @@ fn main() {
         let char_info = chars.get(i);
         char_map.insert(char_info.r() as u32, char_info);
     }
-    println!("🔤 Font Atlas glyph mapping synchronized: {} characters loaded.", char_map.len());
+    println!(
+        "🔤 Font Atlas glyph mapping synchronized: {} characters loaded.",
+        char_map.len()
+    );
 
     let args: Vec<String> = std::env::args().collect();
     let window_title = if args.len() > 1 && !args[1].is_empty() {
@@ -203,13 +223,14 @@ fn main() {
     let window = Arc::new(window);
 
     // 4. Initialize rodio audio engine
-    let (audio_engine, _audio_stream) = if let Ok((stream, handle)) = rodio::OutputStream::try_default() {
-        println!("🔊 Portable Acoustic Audio Device discovered and initialized.");
-        (AudioEngine::new(Some(handle)), Some(stream))
-    } else {
-        println!("⚠️ No active audio device detected. Sound feedback muted.");
-        (AudioEngine::new(None), None)
-    };
+    let (audio_engine, _audio_stream) =
+        if let Ok((stream, handle)) = rodio::OutputStream::try_default() {
+            println!("🔊 Portable Acoustic Audio Device discovered and initialized.");
+            (AudioEngine::new(Some(handle)), Some(stream))
+        } else {
+            println!("⚠️ No active audio device detected. Sound feedback muted.");
+            (AudioEngine::new(None), None)
+        };
     let audio_engine = Arc::new(audio_engine);
 
     // 5. Initialize wgpu Context
@@ -271,26 +292,24 @@ fn main() {
     // 6. Spawn Background Named Pipe Reader thread (avoids winit event blocking)
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let mut pipe_reader = pipe_reader;
-    thread::spawn(move || {
-        loop {
-            match read_message(&mut pipe_reader) {
-                Ok(payload) => {
-                    let env = poem::root_as_go_to_rust_message(&payload).unwrap();
-                    match env.message_type() {
-                        poem::GoToRustUnion::RenderFrame => {
-                            let _ = cmd_tx.send(GoCommand::RenderFrame(payload));
-                        }
-                        poem::GoToRustUnion::PlaySound => {
-                            let sound = env.message_as_play_sound().unwrap();
-                            let _ = cmd_tx.send(GoCommand::PlaySound(sound.type_()));
-                        }
-                        _ => {}
+    thread::spawn(move || loop {
+        match read_message(&mut pipe_reader) {
+            Ok(payload) => {
+                let env = poem::root_as_go_to_rust_message(&payload).unwrap();
+                match env.message_type() {
+                    poem::GoToRustUnion::RenderFrame => {
+                        let _ = cmd_tx.send(GoCommand::RenderFrame(payload));
                     }
+                    poem::GoToRustUnion::PlaySound => {
+                        let sound = env.message_as_play_sound().unwrap();
+                        let _ = cmd_tx.send(GoCommand::PlaySound(sound.type_()));
+                    }
+                    _ => {}
                 }
-                Err(e) => {
-                    println!("🔌 Go orchestrator pipe severed: {:?}", e);
-                    break;
-                }
+            }
+            Err(e) => {
+                println!("🔌 Go orchestrator pipe severed: {:?}", e);
+                break;
             }
         }
     });
@@ -311,14 +330,12 @@ fn main() {
 
                 while let Ok(cmd) = cmd_rx.try_recv() {
                     match cmd {
-                        GoCommand::PlaySound(sound_type) => {
-                            match sound_type {
-                                poem::SoundType::Hover => audio_engine.play_hover(),
-                                poem::SoundType::Click => audio_engine.play_click(),
-                                poem::SoundType::Success => audio_engine.play_success(),
-                                _ => {}
-                            }
-                        }
+                        GoCommand::PlaySound(sound_type) => match sound_type {
+                            poem::SoundType::Hover => audio_engine.play_hover(),
+                            poem::SoundType::Click => audio_engine.play_click(),
+                            poem::SoundType::Success => audio_engine.play_success(),
+                            _ => {}
+                        },
                         GoCommand::RenderFrame(payload) => {
                             latest_frame_payload = Some(payload);
                         }
@@ -354,6 +371,9 @@ fn main() {
                             poem::DrawCommandType::DrawRoundedRect => {
                                 let r_val = cmd.radius();
                                 if r_val == -999 {
+                                    if let Some(map_text) = cmd.text() {
+                                        ren.set_raycaster_map_from_ascii(map_text);
+                                    }
                                     ren.draw_raycaster(
                                         cmd.x1() as f32,
                                         cmd.y1() as f32,
@@ -364,7 +384,7 @@ fn main() {
                                         cmd.val3(),
                                         col,
                                     );
-                                } else if r_val >= -998 && r_val <= -995 {
+                                } else if r_val >= -998 && r_val <= -991 {
                                     ren.draw_billboard(
                                         cmd.x1() as f32,
                                         cmd.y1() as f32,
@@ -408,11 +428,13 @@ fn main() {
                                 if let Some(text) = cmd.text() {
                                     let mut x = cmd.x1() as f32;
                                     let y = cmd.y1() as f32;
-                                    let baseline_offset = if atlas_w == 256 { 13.0 } else { 11.0 };
-                                    let descender_offset = if atlas_w == 256 { 3.0 } else { 2.0 };
                                     for c in text.chars() {
                                         if let Some(info) = char_map.get(&(c as u32)) {
                                             let x1 = x;
+                                            let baseline_offset =
+                                                (info.height() as f32 * 0.78).max(1.0);
+                                            let descender_offset =
+                                                (info.height() as f32 - baseline_offset).max(2.0);
                                             let y1 = y - baseline_offset;
                                             let x2 = x + info.width() as f32;
                                             let y2 = y + descender_offset;
@@ -450,7 +472,9 @@ fn main() {
 
                     // Trigger GPU paint Pass
                     if let Ok(frame) = surface.get_current_texture() {
-                        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                        let view = frame
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
                         ren.render(&view);
                         frame.present();
                     }
@@ -501,7 +525,11 @@ fn main() {
                 WindowEvent::Resized(physical_size) => {
                     let scale_factor = window.scale_factor();
                     let mut ren = renderer.lock().unwrap();
-                    ren.resize(physical_size.width, physical_size.height, scale_factor as f32);
+                    ren.resize(
+                        physical_size.width,
+                        physical_size.height,
+                        scale_factor as f32,
+                    );
                     surface.configure(&device, &ren.surface_config);
 
                     let logical_w = (physical_size.width as f64 / scale_factor) as i32;
@@ -587,74 +615,172 @@ fn main() {
                     send_event_batch(&pipe_writer, vec![ev]);
                 }
 
-                WindowEvent::KeyboardInput { event: kb_event, .. } => {
+                WindowEvent::KeyboardInput {
+                    event: kb_event, ..
+                } => {
                     // Check modifiers
-                    if kb_event.physical_key == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ControlLeft)
-                        || kb_event.physical_key == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ControlRight)
+                    if kb_event.physical_key
+                        == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ControlLeft)
+                        || kb_event.physical_key
+                            == winit::keyboard::PhysicalKey::Code(
+                                winit::keyboard::KeyCode::ControlRight,
+                            )
                     {
                         is_ctrl_pressed = kb_event.state == ElementState::Pressed;
                     }
-                    if kb_event.physical_key == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ShiftLeft)
-                        || kb_event.physical_key == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ShiftRight)
+                    if kb_event.physical_key
+                        == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ShiftLeft)
+                        || kb_event.physical_key
+                            == winit::keyboard::PhysicalKey::Code(
+                                winit::keyboard::KeyCode::ShiftRight,
+                            )
                     {
                         is_shift_pressed = kb_event.state == ElementState::Pressed;
                     }
 
                     // Extract key code (match GDI vkCode mappings)
                     let vk_code = match kb_event.physical_key {
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape) => 0x1B,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape) => {
+                            0x1B
+                        }
                         winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Tab) => 0x09,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Backspace) => 0x08,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Backspace) => {
+                            0x08
+                        }
                         winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Enter) => 0x0D,
                         winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Space) => 0x20,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowLeft) => 0x25,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowUp) => 0x26,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowRight) => 0x27,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowDown) => 0x28,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyA) => 'A' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyB) => 'B' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyC) => 'C' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyD) => 'D' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyE) => 'E' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyF) => 'F' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyG) => 'G' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyH) => 'H' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyI) => 'I' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyJ) => 'J' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyK) => 'K' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyL) => 'L' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyM) => 'M' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyN) => 'N' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyO) => 'O' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyP) => 'P' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyQ) => 'Q' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyR) => 'R' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyS) => 'S' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyT) => 'T' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyU) => 'U' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyV) => 'V' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyW) => 'W' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyX) => 'X' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyY) => 'Y' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyZ) => 'Z' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit0) => '0' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit1) => '1' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit2) => '2' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit3) => '3' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit4) => '4' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit5) => '5' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit6) => '6' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit7) => '7' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit8) => '8' as u32,
-                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit9) => '9' as u32,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowLeft) => {
+                            0x25
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowUp) => {
+                            0x26
+                        }
+                        winit::keyboard::PhysicalKey::Code(
+                            winit::keyboard::KeyCode::ArrowRight,
+                        ) => 0x27,
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::ArrowDown) => {
+                            0x28
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyA) => {
+                            'A' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyB) => {
+                            'B' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyC) => {
+                            'C' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyD) => {
+                            'D' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyE) => {
+                            'E' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyF) => {
+                            'F' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyG) => {
+                            'G' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyH) => {
+                            'H' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyI) => {
+                            'I' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyJ) => {
+                            'J' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyK) => {
+                            'K' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyL) => {
+                            'L' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyM) => {
+                            'M' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyN) => {
+                            'N' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyO) => {
+                            'O' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyP) => {
+                            'P' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyQ) => {
+                            'Q' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyR) => {
+                            'R' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyS) => {
+                            'S' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyT) => {
+                            'T' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyU) => {
+                            'U' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyV) => {
+                            'V' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyW) => {
+                            'W' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyX) => {
+                            'X' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyY) => {
+                            'Y' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyZ) => {
+                            'Z' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit0) => {
+                            '0' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit1) => {
+                            '1' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit2) => {
+                            '2' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit3) => {
+                            '3' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit4) => {
+                            '4' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit5) => {
+                            '5' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit6) => {
+                            '6' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit7) => {
+                            '7' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit8) => {
+                            '8' as u32
+                        }
+                        winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Digit9) => {
+                            '9' as u32
+                        }
                         _ => 0,
                     };
 
                     if kb_event.state == ElementState::Pressed {
                         if vk_code != 0 {
                             let mut modifier_mask = 0;
-                            if is_ctrl_pressed { modifier_mask |= 1; }
-                            if is_shift_pressed { modifier_mask |= 2; }
+                            if is_ctrl_pressed {
+                                modifier_mask |= 1;
+                            }
+                            if is_shift_pressed {
+                                modifier_mask |= 2;
+                            }
 
                             let ev = PendingEvent {
                                 type_: poem::EventType::KeyDown,
@@ -692,8 +818,12 @@ fn main() {
                         // Released
                         if vk_code != 0 {
                             let mut modifier_mask = 0;
-                            if is_ctrl_pressed { modifier_mask |= 1; }
-                            if is_shift_pressed { modifier_mask |= 2; }
+                            if is_ctrl_pressed {
+                                modifier_mask |= 1;
+                            }
+                            if is_shift_pressed {
+                                modifier_mask |= 2;
+                            }
 
                             let ev = PendingEvent {
                                 type_: poem::EventType::KeyUp,
@@ -718,8 +848,6 @@ fn main() {
         }
     });
 }
-
-
 
 // Named Pipe Message read helper
 fn read_message(conn: &mut PipeConn) -> std::io::Result<Vec<u8>> {
