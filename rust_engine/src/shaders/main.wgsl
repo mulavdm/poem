@@ -469,7 +469,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             return mix(shadow_col, shape_col, shape_alpha);
         }
     } else { // TEXT
-        let alpha = textureSample(text_atlas, text_sampler, in.uv).r;
+        let atlas_size = vec2<f32>(textureDimensions(text_atlas));
+        let atlas_coord = vec2<i32>(clamp(in.uv * atlas_size, vec2<f32>(0.0, 0.0), atlas_size - vec2<f32>(1.0, 1.0)));
+        let alpha = textureLoad(text_atlas, atlas_coord, 0).r;
         return vec4<f32>(in.color.rgb, in.color.a * alpha);
     }
 }

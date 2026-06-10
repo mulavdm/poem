@@ -108,6 +108,7 @@ func (p *Paragraph) Draw(pnt types.Painter, state *types.ApplicationState) {
 	paragraphs = append(paragraphs, currentPara)
 
 	currentY := p.Rect.Min.Y + lineH - 4 // vertical offset with baseline adjustment
+	pnt.PushClip(p.Rect)
 
 	for _, paragraph := range paragraphs {
 		// If empty paragraph, skip a line height
@@ -264,6 +265,7 @@ func (p *Paragraph) Draw(pnt types.Painter, state *types.ApplicationState) {
 			}
 		}
 	}
+	pnt.PopClip()
 
 	// Update bounds height dynamically so flex layouts scroll perfectly
 	finalHeight := currentY - p.Rect.Min.Y

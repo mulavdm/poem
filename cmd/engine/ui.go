@@ -6,9 +6,99 @@ import (
 	"image/color"
 	"math"
 	"runtime"
+	"time"
 
 	"go_native_gpu_gui/pkg/render"
 )
+
+type RaycasterDemo struct {
+	CompID string
+	Rect   image.Rectangle
+}
+
+var raycasterDemoMap = buildRaycasterDemoMap()
+
+func buildRaycasterDemoMap() string {
+	cells := make([]byte, 64*64)
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			v := byte('0')
+			if x == 0 || y == 0 || x == 63 || y == 63 {
+				v = '1'
+			}
+			if x == 8 || x == 55 || y == 8 || y == 55 {
+				v = '1'
+			}
+			if x > 16 && x < 22 && y > 12 && y < 44 {
+				v = '1'
+			}
+			if x > 28 && x < 35 && y > 20 && y < 26 {
+				v = '1'
+			}
+			if x > 40 && x < 46 && y > 14 && y < 48 && y%7 != 0 {
+				v = '1'
+			}
+			if y > 30 && y < 36 && x > 22 && x < 52 {
+				v = '1'
+			}
+			if (x == 21 && y > 22 && y < 28) || (y == 35 && x > 31 && x < 37) {
+				v = '0'
+			}
+			if (x > 10 && x < 14 && y > 10 && y < 14) || (x > 48 && x < 53 && y > 43 && y < 48) {
+				v = '2'
+			}
+			cells[y*64+x] = v
+		}
+	}
+	return string(cells)
+}
+
+func (r *RaycasterDemo) ID() string                     { return r.CompID }
+func (r *RaycasterDemo) GetID() string                  { return r.CompID }
+func (r *RaycasterDemo) Bounds() image.Rectangle        { return r.Rect }
+func (r *RaycasterDemo) SetBounds(rect image.Rectangle) { r.Rect = rect }
+func (r *RaycasterDemo) Focusable() bool                { return false }
+func (r *RaycasterDemo) Walk(fn func(render.Component)) { fn(r) }
+func (r *RaycasterDemo) HitTest(pt image.Point) string {
+	if pt.In(r.Rect) {
+		return r.CompID
+	}
+	return ""
+}
+func (r *RaycasterDemo) OnKey(key uint32, char rune, state *render.ApplicationState) bool {
+	return false
+}
+func (r *RaycasterDemo) OnMouseDown(pt image.Point, state *render.ApplicationState) bool {
+	return false
+}
+func (r *RaycasterDemo) OnMouseUp(pt image.Point, state *render.ApplicationState) bool { return false }
+func (r *RaycasterDemo) OnMouseMove(pt image.Point, state *render.ApplicationState) bool {
+	return false
+}
+
+func (r *RaycasterDemo) Draw(p render.Painter, state *render.ApplicationState) {
+	elapsed := float32(time.Since(state.StartTime).Seconds())
+	playerX := float32(12.5 + math.Cos(float64(elapsed*0.33))*2.2)
+	playerY := float32(14.0 + math.Sin(float64(elapsed*0.27))*1.8)
+	playerAngle := elapsed * 0.9
+
+	p.SetGlass(state.GlassEnabled)
+	p.SetShadow(0, 6, 18)
+	p.DrawRoundedRect(r.Rect, 14, color.RGBA{22, 26, 38, 220})
+	p.SetShadow(0, 0, 0)
+	p.SetGlass(false)
+
+	viewport := image.Rect(r.Rect.Min.X+12, r.Rect.Min.Y+12, r.Rect.Max.X-12, r.Rect.Max.Y-12)
+	p.DrawRaycasterMapStyled(viewport, playerX, playerY, playerAngle, color.RGBA{255, 155, 70, 255}, raycasterDemoMap)
+	p.DrawBillboard3D(viewport, 13.5, 12.0, 1, color.RGBA{255, 215, 30, 255})
+	p.DrawBillboard3D(viewport, 18.0, 18.0, 2, color.RGBA{240, 90, 95, 255})
+	p.DrawBillboard3D(viewport, 26.0, 24.0, 3, color.RGBA{255, 190, 40, 255})
+	p.DrawBillboard3D(viewport, 34.0, 28.5, 4, color.RGBA{255, 245, 110, 255})
+	p.DrawBillboard3D(viewport, 43.0, 23.0, 5, color.RGBA{255, 170, 70, 255})
+	p.DrawBillboard3D(viewport, 47.5, 42.0, 6, color.RGBA{210, 170, 95, 255})
+	p.DrawBillboard3D(viewport, 29.5, 45.0, 7, color.RGBA{70, 205, 255, 255})
+	p.DrawBillboard3D(viewport, 52.0, 33.0, 8, color.RGBA{255, 110, 120, 255})
+}
 
 // BuildAllPages populates the application state's page registry.
 func BuildAllPages(state *render.ApplicationState) {
@@ -501,12 +591,17 @@ func BuildAnalytics(state *render.ApplicationState) []render.Component {
 		&render.Label{CompID: "lbl_chart", Pos: image.Point{500, 160}, Text: "REALTIME HEAP MONITOR", Color: color.RGBA{200, 200, 200, 255}},
 		&render.LineChart{
 			CompID:    "mem_load_chart",
-			Rect:      image.Rect(500, 180, render.Width-40, 480),
+			Rect:      image.Rect(500, 180, render.Width-40, 410),
 			BGColor:   color.RGBA{10, 10, 20, 255},
 			LineColor: color.RGBA{0, 255, 150, 255},
 			Data:      state.HeapHistory,
 			Title:     "REALTIME HEAP GRAPH (MB)",
 			Rounding:  10,
+		},
+		&render.Label{CompID: "lbl_raycaster_demo", Pos: image.Point{500, 440}, Text: "GPU SPECIAL PATH DIAGNOSTIC", Color: color.RGBA{200, 200, 200, 255}},
+		&RaycasterDemo{
+			CompID: "raycaster_demo",
+			Rect:   image.Rect(500, 460, render.Width-40, 650),
 		},
 	}
 }

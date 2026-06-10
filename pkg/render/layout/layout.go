@@ -125,7 +125,8 @@ func (f *FlexBox) OnKey(key uint32, char rune, state *types.ApplicationState) bo
 }
 
 func (f *FlexBox) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
-	for _, child := range f.Children {
+	for i := len(f.Children) - 1; i >= 0; i-- {
+		child := f.Children[i]
 		if pt.In(child.Bounds()) {
 			if child.OnMouseDown(pt, state) {
 				return true
@@ -136,7 +137,8 @@ func (f *FlexBox) OnMouseDown(pt image.Point, state *types.ApplicationState) boo
 }
 
 func (f *FlexBox) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
-	for _, child := range f.Children {
+	for i := len(f.Children) - 1; i >= 0; i-- {
+		child := f.Children[i]
 		if child.OnMouseUp(pt, state) {
 			return true
 		}
@@ -145,7 +147,8 @@ func (f *FlexBox) OnMouseUp(pt image.Point, state *types.ApplicationState) bool 
 }
 
 func (f *FlexBox) OnMouseMove(pt image.Point, state *types.ApplicationState) bool {
-	for _, child := range f.Children {
+	for i := len(f.Children) - 1; i >= 0; i-- {
+		child := f.Children[i]
 		if pt.In(child.Bounds()) {
 			if child.OnMouseMove(pt, state) {
 				return true
@@ -243,24 +246,31 @@ func (f *FlexBox) performLayout() {
 				crossOffset = f.Padding + (crossSize - b.Dy())
 			}
 		case AlignStretch:
-			// Stretching would require updating child bounds width/height
-			// For now, we just align start.
+			crossOffset = f.Padding
 		}
 
 		if f.Direction == Vertical {
+			childWidth := b.Dx()
+			if f.AlignItems == AlignStretch {
+				childWidth = crossSize
+			}
 			newRect = image.Rect(
 				f.Rect.Min.X+crossOffset,
 				f.Rect.Min.Y+cursorMain,
-				f.Rect.Min.X+crossOffset+b.Dx(),
+				f.Rect.Min.X+crossOffset+childWidth,
 				f.Rect.Min.Y+cursorMain+b.Dy(),
 			)
 			cursorMain += b.Dy() + f.Gap + extraGap
 		} else {
+			childHeight := b.Dy()
+			if f.AlignItems == AlignStretch {
+				childHeight = crossSize
+			}
 			newRect = image.Rect(
 				f.Rect.Min.X+cursorMain,
 				f.Rect.Min.Y+crossOffset,
 				f.Rect.Min.X+cursorMain+b.Dx(),
-				f.Rect.Min.Y+crossOffset+b.Dy(),
+				f.Rect.Min.Y+crossOffset+childHeight,
 			)
 			cursorMain += b.Dx() + f.Gap + extraGap
 		}

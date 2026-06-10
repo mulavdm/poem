@@ -26,6 +26,8 @@ type LineChart = components.LineChart
 type ScrollView = components.ScrollView
 type Paragraph = components.Paragraph
 type TextArea = components.TextArea
+type Modal = components.Modal
+type ImageView = components.ImageView
 
 // Re-export Layouts
 type FlexBox = layout.FlexBox

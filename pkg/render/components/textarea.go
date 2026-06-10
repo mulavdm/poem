@@ -66,19 +66,8 @@ func (t *TextArea) OnMouseDown(pt image.Point, state *types.ApplicationState) bo
 	bearingX := state.FontCharBearingX
 	clickX := pt.X - t.Rect.Min.X - padX - bearingX
 
-	// Split by newline to preserve paragraph boundaries and wrap
 	rawRunes := []rune(t.Text)
-	var paragraphs [][]rune
-	var currentPara []rune
-	for _, r := range rawRunes {
-		if r == '\n' {
-			paragraphs = append(paragraphs, currentPara)
-			currentPara = nil
-		} else {
-			currentPara = append(currentPara, r)
-		}
-	}
-	paragraphs = append(paragraphs, currentPara)
+	paragraphs := buildTextareaParagraphs(rawRunes)
 
 	maxWidth := t.Rect.Dx() - 2*padX
 	if maxWidth <= charW {
@@ -88,9 +77,9 @@ func (t *TextArea) OnMouseDown(pt image.Point, state *types.ApplicationState) bo
 
 	// Tracing lines and absolute indexes
 	type layoutLineInfo struct {
-		runes      []rune
-		startX     int
-		startY     int
+		chars       []textareaStyledChar
+		startX      int
+		startY      int
 		startAbsIdx int
 	}
 
@@ -99,69 +88,26 @@ func (t *TextArea) OnMouseDown(pt image.Point, state *types.ApplicationState) bo
 	absRuneOffset := 0
 
 	for _, paragraph := range paragraphs {
-		var lines [][]rune
 		if len(paragraph) == 0 {
 			// Empty paragraph represents an empty line
 			layoutLines = append(layoutLines, layoutLineInfo{
-				runes:      []rune{},
-				startX:     t.Rect.Min.X + padX,
-				startY:     t.Rect.Min.Y + padY + currentY,
+				chars:       []textareaStyledChar{},
+				startX:      t.Rect.Min.X + padX,
+				startY:      t.Rect.Min.Y + padY + currentY,
 				startAbsIdx: absRuneOffset,
 			})
 			currentY += lineH + 8
 			absRuneOffset += 1 // account for the newline character
 			continue
 		}
-
-		// Word wrap paragraph runes
-		var currentLine []rune
-		var currentWord []rune
-
-		for _, r := range paragraph {
-			if r == ' ' || r == '\t' {
-				if len(currentWord) > 0 {
-					if len(currentLine) == 0 {
-						currentLine = append(currentLine, currentWord...)
-					} else if len(currentLine)+1+len(currentWord) <= maxCharsPerLine {
-						currentLine = append(currentLine, ' ')
-						currentLine = append(currentLine, currentWord...)
-					} else {
-						lines = append(lines, currentLine)
-						currentLine = nil
-						currentLine = append(currentLine, currentWord...)
-					}
-					currentWord = nil
-				}
-			} else {
-				currentWord = append(currentWord, r)
-			}
-		}
-		if len(currentWord) > 0 {
-			if len(currentLine) == 0 {
-				currentLine = append(currentLine, currentWord...)
-			} else if len(currentLine)+1+len(currentWord) <= maxCharsPerLine {
-				currentLine = append(currentLine, ' ')
-				currentLine = append(currentLine, currentWord...)
-			} else {
-				lines = append(lines, currentLine)
-				currentLine = nil
-				currentLine = append(currentLine, currentWord...)
-			}
-		}
-		if len(currentLine) > 0 {
-			lines = append(lines, currentLine)
-		}
-
-		lineOffset := 0
-		for _, line := range lines {
+		for _, line := range wrapTextareaParagraph(paragraph, maxCharsPerLine) {
 			layoutLines = append(layoutLines, layoutLineInfo{
-				runes:      line,
-				startX:     t.Rect.Min.X + padX,
-				startY:     t.Rect.Min.Y + padY + currentY,
-				startAbsIdx: absRuneOffset + lineOffset,
+				chars:       line.chars,
+				startX:      t.Rect.Min.X + padX,
+				startY:      t.Rect.Min.Y + padY + currentY,
+				startAbsIdx: line.startAbsIdx,
 			})
 			currentY += lineH
-			lineOffset += len(line)
 		}
 
 		// account for paragraph runes + newline character
@@ -187,10 +133,13 @@ func (t *TextArea) OnMouseDown(pt image.Point, state *types.ApplicationState) bo
 		if charIdx < 0 {
 			charIdx = 0
 		}
-		if charIdx > len(l.runes) {
-			charIdx = len(l.runes)
+		if charIdx > len(l.chars) {
+			charIdx = len(l.chars)
 		}
-		t.CursorIndex = l.startAbsIdx + charIdx
+		t.CursorIndex = textareaLineBoundaryIndex(textareaLayoutLine{
+			chars:       l.chars,
+			startAbsIdx: l.startAbsIdx,
+		}, charIdx)
 		if t.CursorIndex > len(rawRunes) {
 			t.CursorIndex = len(rawRunes)
 		}
@@ -219,6 +168,97 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+type textareaLayoutLine struct {
+	chars       []textareaStyledChar
+	startAbsIdx int
+}
+
+func textareaLineBoundaryIndex(line textareaLayoutLine, visualBoundary int) int {
+	if visualBoundary <= 0 {
+		return line.startAbsIdx
+	}
+	if len(line.chars) == 0 {
+		return line.startAbsIdx
+	}
+	if visualBoundary >= len(line.chars) {
+		return line.chars[len(line.chars)-1].origIndex + 1
+	}
+	return line.chars[visualBoundary].origIndex
+}
+
+func textareaLineVisibleColumn(line textareaLayoutLine, cursorIndex int) int {
+	if cursorIndex <= line.startAbsIdx {
+		return 0
+	}
+	for idx, sc := range line.chars {
+		if cursorIndex <= sc.origIndex {
+			return idx
+		}
+	}
+	return len(line.chars)
+}
+
+func textareaLineEndIndex(line textareaLayoutLine) int {
+	if len(line.chars) == 0 {
+		return line.startAbsIdx
+	}
+	return line.chars[len(line.chars)-1].origIndex + 1
+}
+
+func wrapTextareaParagraph(chars []textareaStyledChar, maxCharsPerLine int) []textareaLayoutLine {
+	if maxCharsPerLine <= 0 {
+		maxCharsPerLine = 1
+	}
+	if len(chars) == 0 {
+		return []textareaLayoutLine{{chars: []textareaStyledChar{}, startAbsIdx: 0}}
+	}
+
+	lines := make([]textareaLayoutLine, 0, (len(chars)/maxCharsPerLine)+1)
+	for start := 0; start < len(chars); start += maxCharsPerLine {
+		end := start + maxCharsPerLine
+		if end > len(chars) {
+			end = len(chars)
+		}
+		lines = append(lines, textareaLayoutLine{
+			chars:       chars[start:end],
+			startAbsIdx: chars[start].origIndex,
+		})
+	}
+	return lines
+}
+
+func buildTextareaParagraphs(rawRunes []rune) [][]textareaStyledChar {
+	var parsedChars []textareaStyledChar
+	isBold := false
+
+	for i := 0; i < len(rawRunes); i++ {
+		if i < len(rawRunes)-1 && rawRunes[i] == '*' && rawRunes[i+1] == '*' {
+			isBold = !isBold
+			i++
+			continue
+		}
+
+		parsedChars = append(parsedChars, textareaStyledChar{
+			char:      rawRunes[i],
+			isBold:    isBold,
+			origIndex: i,
+		})
+	}
+
+	var paragraphs [][]textareaStyledChar
+	var currentPara []textareaStyledChar
+	for _, sc := range parsedChars {
+		if sc.char == '\n' {
+			paragraphs = append(paragraphs, currentPara)
+			currentPara = nil
+			continue
+		}
+		currentPara = append(currentPara, sc)
+	}
+	paragraphs = append(paragraphs, currentPara)
+	return paragraphs
 }
 
 func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
@@ -269,27 +309,21 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 			charW = 7
 		}
 		lineH := t.LineHeight
-		if lineH <= 0 { lineH = 24 }
-
-		var paragraphs [][]rune
-		var currentPara []rune
-		for _, r := range rawRunes {
-			if r == '\n' {
-				paragraphs = append(paragraphs, currentPara)
-				currentPara = nil
-			} else {
-				currentPara = append(currentPara, r)
-			}
+		if lineH <= 0 {
+			lineH = 24
 		}
-		paragraphs = append(paragraphs, currentPara)
+
+		paragraphs := buildTextareaParagraphs(rawRunes)
 
 		padX := 12
 		maxWidth := t.Rect.Dx() - 2*padX
-		if maxWidth <= charW { maxWidth = 300 }
+		if maxWidth <= charW {
+			maxWidth = 300
+		}
 		maxCharsPerLine := maxWidth / charW
 
 		type layoutLineInfo struct {
-			runes      []rune
+			chars       []textareaStyledChar
 			startAbsIdx int
 		}
 
@@ -297,61 +331,19 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 		absRuneOffset := 0
 
 		for _, paragraph := range paragraphs {
-			var lines [][]rune
 			if len(paragraph) == 0 {
 				layoutLines = append(layoutLines, layoutLineInfo{
-					runes:      []rune{},
+					chars:       []textareaStyledChar{},
 					startAbsIdx: absRuneOffset,
 				})
 				absRuneOffset += 1
 				continue
 			}
-
-			var currentLine []rune
-			var currentWord []rune
-
-			for _, r := range paragraph {
-				if r == ' ' || r == '\t' {
-					if len(currentWord) > 0 {
-						if len(currentLine) == 0 {
-							currentLine = append(currentLine, currentWord...)
-						} else if len(currentLine)+1+len(currentWord) <= maxCharsPerLine {
-							currentLine = append(currentLine, ' ')
-							currentLine = append(currentLine, currentWord...)
-						} else {
-							lines = append(lines, currentLine)
-							currentLine = nil
-							currentLine = append(currentLine, currentWord...)
-						}
-						currentWord = nil
-					}
-				} else {
-					currentWord = append(currentWord, r)
-				}
-			}
-			if len(currentWord) > 0 {
-				if len(currentLine) == 0 {
-					currentLine = append(currentLine, currentWord...)
-				} else if len(currentLine)+1+len(currentWord) <= maxCharsPerLine {
-					currentLine = append(currentLine, ' ')
-					currentLine = append(currentLine, currentWord...)
-				} else {
-					lines = append(lines, currentLine)
-					currentLine = nil
-					currentLine = append(currentLine, currentWord...)
-				}
-			}
-			if len(currentLine) > 0 {
-				lines = append(lines, currentLine)
-			}
-
-			lineOffset := 0
-			for _, line := range lines {
+			for _, line := range wrapTextareaParagraph(paragraph, maxCharsPerLine) {
 				layoutLines = append(layoutLines, layoutLineInfo{
-					runes:      line,
-					startAbsIdx: absRuneOffset + lineOffset,
+					chars:       line.chars,
+					startAbsIdx: line.startAbsIdx,
 				})
-				lineOffset += len(line)
 			}
 			absRuneOffset += len(paragraph) + 1
 		}
@@ -360,10 +352,16 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 		currLineIdx := 0
 		currColOffset := 0
 		for idx, l := range layoutLines {
-			endIdx := l.startAbsIdx + len(l.runes)
+			endIdx := textareaLineEndIndex(textareaLayoutLine{
+				chars:       l.chars,
+				startAbsIdx: l.startAbsIdx,
+			})
 			if t.CursorIndex >= l.startAbsIdx && t.CursorIndex <= endIdx {
 				currLineIdx = idx
-				currColOffset = t.CursorIndex - l.startAbsIdx
+				currColOffset = textareaLineVisibleColumn(textareaLayoutLine{
+					chars:       l.chars,
+					startAbsIdx: l.startAbsIdx,
+				}, t.CursorIndex)
 				break
 			}
 		}
@@ -371,14 +369,20 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 		if key == VK_UP {
 			if currLineIdx > 0 {
 				prevLine := layoutLines[currLineIdx-1]
-				newCol := minInt(currColOffset, len(prevLine.runes))
-				t.CursorIndex = prevLine.startAbsIdx + newCol
+				newCol := minInt(currColOffset, len(prevLine.chars))
+				t.CursorIndex = textareaLineBoundaryIndex(textareaLayoutLine{
+					chars:       prevLine.chars,
+					startAbsIdx: prevLine.startAbsIdx,
+				}, newCol)
 			}
 		} else { // VK_DOWN
 			if currLineIdx < len(layoutLines)-1 {
 				nextLine := layoutLines[currLineIdx+1]
-				newCol := minInt(currColOffset, len(nextLine.runes))
-				t.CursorIndex = nextLine.startAbsIdx + newCol
+				newCol := minInt(currColOffset, len(nextLine.chars))
+				t.CursorIndex = textareaLineBoundaryIndex(textareaLayoutLine{
+					chars:       nextLine.chars,
+					startAbsIdx: nextLine.startAbsIdx,
+				}, newCol)
 			}
 		}
 		return true
@@ -475,10 +479,8 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 		pnt.DrawRoundedRect(t.Rect, t.Rounding, t.BGColor)
 	}
 
-	// Rich text parsing for paragraph display
 	rawRunes := []rune(t.Text)
-	var parsedChars []textareaStyledChar
-	isBold := false
+	paragraphs := buildTextareaParagraphs(rawRunes)
 
 	// If cursor is not set yet, set to end
 	if t.CursorIndex < 0 || t.CursorIndex > len(rawRunes) {
@@ -488,34 +490,6 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 		}
 	}
 
-	for i := 0; i < len(rawRunes); i++ {
-		if i < len(rawRunes)-1 && rawRunes[i] == '*' && rawRunes[i+1] == '*' {
-			isBold = !isBold
-			i++
-			continue
-		}
-
-		parsedChars = append(parsedChars, textareaStyledChar{
-			char:      rawRunes[i],
-			isBold:    isBold,
-			origIndex: i,
-		})
-	}
-
-	// Split paragraphs
-	var paragraphs [][]textareaStyledChar
-	var currentPara []textareaStyledChar
-
-	for _, sc := range parsedChars {
-		if sc.char == '\n' {
-			paragraphs = append(paragraphs, currentPara)
-			currentPara = nil
-		} else {
-			currentPara = append(currentPara, sc)
-		}
-	}
-	paragraphs = append(paragraphs, currentPara)
-
 	currentY := t.Rect.Min.Y + padY
 
 	// Caret registers to completely avoid map allocations
@@ -524,6 +498,7 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 
 	startAbsIdx := 0
 
+	pnt.PushClip(t.Rect)
 	for _, paragraph := range paragraphs {
 		// Empty paragraph represents a single newline
 		if len(paragraph) == 0 {
@@ -541,54 +516,13 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 			caretY = currentY
 		}
 
-		// Word wrap styled paragraph characters
-		var lines [][]textareaStyledChar
-		var currentLine []textareaStyledChar
-		var currentWord []textareaStyledChar
-
-		for _, sc := range paragraph {
-			if sc.char == ' ' || sc.char == '\t' {
-				if len(currentWord) > 0 {
-					if len(currentLine) == 0 {
-						currentLine = append(currentLine, currentWord...)
-					} else if len(currentLine)+1+len(currentWord) <= maxCharsPerLine {
-						currentLine = append(currentLine, textareaStyledChar{char: ' '})
-						currentLine = append(currentLine, currentWord...)
-					} else {
-						lines = append(lines, currentLine)
-						currentLine = nil
-						currentLine = append(currentLine, currentWord...)
-					}
-					currentWord = nil
-				}
-			} else {
-				currentWord = append(currentWord, sc)
-			}
-		}
-		if len(currentWord) > 0 {
-			if len(currentLine) == 0 {
-				currentLine = append(currentLine, currentWord...)
-			} else if len(currentLine)+1+len(currentWord) <= maxCharsPerLine {
-				currentLine = append(currentLine, textareaStyledChar{char: ' '})
-				currentLine = append(currentLine, currentWord...)
-			} else {
-				lines = append(lines, currentLine)
-				currentLine = nil
-				currentLine = append(currentLine, currentWord...)
-			}
-		}
-		if len(currentLine) > 0 {
-			lines = append(lines, currentLine)
-		}
-
-		// Render wrapped lines
-		lineAbsOffset := 0
-		for _, line := range lines {
+		for _, line := range wrapTextareaParagraph(paragraph, maxCharsPerLine) {
 			if currentY > t.Rect.Max.Y+lineH {
 				break
 			}
 
 			cursorX := t.Rect.Min.X + padX
+			caretVisualCol := textareaLineVisibleColumn(line, t.CursorIndex)
 			var subsegment []rune
 			subIsBold := false
 
@@ -607,7 +541,7 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 				subsegment = nil
 			}
 
-			for idx, sc := range line {
+			for idx, sc := range line.chars {
 				if idx == 0 {
 					subIsBold = sc.isBold
 				}
@@ -616,7 +550,7 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 					subIsBold = sc.isBold
 				}
 
-				if sc.origIndex == t.CursorIndex {
+				if idx == caretVisualCol {
 					caretX = cursorX + len(subsegment)*charW
 					caretY = currentY
 				}
@@ -624,14 +558,13 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 			}
 			flushSub()
 
-			lineEndAbsIdx := startAbsIdx + lineAbsOffset + len(line)
+			lineEndAbsIdx := textareaLineEndIndex(line)
 			if lineEndAbsIdx == t.CursorIndex {
 				caretX = cursorX
 				caretY = currentY
 			}
 
 			currentY += lineH
-			lineAbsOffset += len(line)
 		}
 
 		paraEndAbsIdx := startAbsIdx + len(paragraph)
@@ -643,6 +576,7 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 		currentY += 8
 		startAbsIdx += len(paragraph) + 1 // account for the paragraph characters + the newline
 	}
+	pnt.PopClip()
 
 	// Draw the caret blinking (if focused)
 	if state.FocusedID == t.CompID {
@@ -654,13 +588,13 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 
 			pnt.SetGlow(6.0)
 			bearingX := state.FontCharBearingX
-			pnt.FillRect(image.Rect(caretX + bearingX, caretY - 13, caretX + bearingX + 2, caretY + 3), caretColor)
+			pnt.PushClip(t.Rect)
+			pnt.FillRect(image.Rect(caretX+bearingX, caretY-13, caretX+bearingX+2, caretY+3), caretColor)
+			pnt.PopClip()
 			pnt.SetGlow(0)
 		}
 	}
 
-	finalHeight := currentY - t.Rect.Min.Y + padY
-	t.Rect.Max.Y = t.Rect.Min.Y + finalHeight
 }
 
 func (t *TextArea) OnMouseUp(pt image.Point, state *types.ApplicationState) bool   { return false }

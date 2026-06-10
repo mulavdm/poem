@@ -1,9 +1,11 @@
 package components
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math"
+	"strings"
 	"time"
 
 	"go_native_gpu_gui/pkg/render/types"
@@ -98,10 +100,17 @@ func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 	if charW <= 0 {
 		charW = 8
 	}
-	// Center text manually using the active font atlas metrics.
-	tx := b.Rect.Min.X + (b.Rect.Dx() / 2) - ((len(b.Label) * charW) / 2)
+	label := fitButtonLabel(b.Label, b.Rect.Dx(), charW)
+	labelWidth := len([]rune(label)) * charW
+	tx := b.Rect.Min.X + 10
+	if labelWidth <= b.Rect.Dx()-20 {
+		// Center short labels while keeping long labels anchored visibly inside the button.
+		tx = b.Rect.Min.X + (b.Rect.Dx() / 2) - (labelWidth / 2)
+	}
 	ty := b.Rect.Min.Y + (b.Rect.Dy() / 2) + 5
-	pnt.DrawText(b.Label, tx, ty, color.RGBA{255, 255, 255, 255})
+	pnt.PushClip(b.Rect)
+	pnt.DrawText(label, tx, ty, color.RGBA{255, 255, 255, 255})
+	pnt.PopClip()
 }
 func (b *Button) SetBounds(r image.Rectangle) { b.Rect = r }
 func (b *Button) HitTest(pt image.Point) string {
@@ -131,6 +140,26 @@ func (b *Button) OnMouseMove(pt image.Point, state *types.ApplicationState) bool
 
 func (b *Button) Focusable() bool               { return true }
 func (b *Button) Walk(fn func(types.Component)) { fn(b) }
+
+func fitButtonLabel(label string, width, charW int) string {
+	if strings.TrimSpace(label) == "" || width <= 0 || charW <= 0 {
+		return label
+	}
+
+	maxChars := (width - 20) / charW
+	if maxChars <= 0 {
+		return ""
+	}
+
+	runes := []rune(label)
+	if len(runes) <= maxChars {
+		return label
+	}
+	if maxChars <= 3 {
+		return string(runes[:maxChars])
+	}
+	return string(runes[:maxChars-3]) + "..."
+}
 
 // Label is a simple text element
 type Label struct {
@@ -207,6 +236,7 @@ type TextInput struct {
 	BGColor     color.RGBA
 	TextColor   color.RGBA
 	Rounding    int
+	CursorIndex int
 	OnSubmit    func(text string, state *types.ApplicationState)
 }
 
@@ -229,6 +259,16 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 		} else {
 			state.TextInputValues[t.CompID] = t.Text
 		}
+		if cursorVal, ok := state.TextInputValues[t.CompID+"_cursor"]; ok {
+			var restoredCursor int
+			if n, err := fmt.Sscanf(cursorVal, "%d", &restoredCursor); err == nil && n == 1 {
+				t.CursorIndex = restoredCursor
+			}
+		}
+	}
+	runes := []rune(t.Text)
+	if t.CursorIndex < 0 || t.CursorIndex > len(runes) {
+		t.CursorIndex = len(runes)
 	}
 
 	// Draw glowing focus outline ring if focused
@@ -253,7 +293,9 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 		col.A = 120 // Fade placeholder
 	}
 
+	pnt.PushClip(t.Rect)
 	pnt.DrawText(disp, t.Rect.Min.X+10, t.Rect.Min.Y+20, col)
+	pnt.PopClip()
 
 	// Draw cursor if focused
 	if state.FocusedID == t.CompID {
@@ -263,7 +305,7 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 			if charW <= 0 {
 				charW = 8
 			}
-			cursorX := t.Rect.Min.X + 10 + (len(t.Text) * charW)
+			cursorX := t.Rect.Min.X + 10 + (t.CursorIndex * charW)
 			pnt.FillRect(image.Rect(cursorX, t.Rect.Min.Y+8, cursorX+2, t.Rect.Min.Y+28), t.TextColor)
 		}
 	}
@@ -276,6 +318,15 @@ func (t *TextInput) OnKey(key uint32, char rune, state *types.ApplicationState) 
 
 	const VK_BACK = 0x08
 	const VK_RETURN = 0x0D
+	const VK_LEFT = 0x25
+	const VK_RIGHT = 0x27
+	const VK_HOME = 0x24
+	const VK_END = 0x23
+
+	rawRunes := []rune(t.Text)
+	if t.CursorIndex < 0 || t.CursorIndex > len(rawRunes) {
+		t.CursorIndex = len(rawRunes)
+	}
 
 	if key == VK_RETURN {
 		if t.OnSubmit != nil {
@@ -285,20 +336,62 @@ func (t *TextInput) OnKey(key uint32, char rune, state *types.ApplicationState) 
 		return false
 	}
 
-	if key == VK_BACK {
-		if len(t.Text) > 0 {
-			t.Text = t.Text[:len(t.Text)-1]
+	if key == VK_LEFT {
+		if t.CursorIndex > 0 {
+			t.CursorIndex--
 		}
 		if state.TextInputValues != nil {
-			state.TextInputValues[t.CompID] = t.Text
+			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
 		}
 		return true
 	}
 
-	if char >= 32 && char <= 126 { // Printable ASCII
-		t.Text += string(char)
+	if key == VK_RIGHT {
+		if t.CursorIndex < len(rawRunes) {
+			t.CursorIndex++
+		}
+		if state.TextInputValues != nil {
+			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
+		}
+		return true
+	}
+
+	if key == VK_HOME {
+		t.CursorIndex = 0
+		if state.TextInputValues != nil {
+			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
+		}
+		return true
+	}
+
+	if key == VK_END {
+		t.CursorIndex = len(rawRunes)
+		if state.TextInputValues != nil {
+			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
+		}
+		return true
+	}
+
+	if key == VK_BACK {
+		if t.CursorIndex > 0 {
+			rawRunes = append(rawRunes[:t.CursorIndex-1], rawRunes[t.CursorIndex:]...)
+			t.Text = string(rawRunes)
+			t.CursorIndex--
+		}
 		if state.TextInputValues != nil {
 			state.TextInputValues[t.CompID] = t.Text
+			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
+		}
+		return true
+	}
+
+	if char >= 32 && char != 127 {
+		rawRunes = append(rawRunes[:t.CursorIndex], append([]rune{char}, rawRunes[t.CursorIndex:]...)...)
+		t.Text = string(rawRunes)
+		t.CursorIndex++
+		if state.TextInputValues != nil {
+			state.TextInputValues[t.CompID] = t.Text
+			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
 		}
 		return true
 	}
@@ -306,7 +399,31 @@ func (t *TextInput) OnKey(key uint32, char rune, state *types.ApplicationState) 
 	return false
 }
 
-func (t *TextInput) OnMouseDown(pt image.Point, state *types.ApplicationState) bool { return false }
+func (t *TextInput) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
+	state.FocusedID = t.CompID
+
+	charW := state.FontCharWidth
+	if charW <= 0 {
+		charW = 8
+	}
+
+	clickX := pt.X - t.Rect.Min.X - 10
+	cursor := (clickX + charW/2) / charW
+	runes := []rune(t.Text)
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	t.CursorIndex = cursor
+
+	if state.TextInputValues != nil {
+		state.TextInputValues[t.CompID] = t.Text
+		state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
+	}
+	return true
+}
 func (t *TextInput) OnMouseUp(pt image.Point, state *types.ApplicationState) bool   { return false }
 func (t *TextInput) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
 

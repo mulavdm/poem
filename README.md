@@ -1,188 +1,159 @@
-# POEM: Hybrid Process-Isolated GUI Engine in Go & Rust
+# POEM
 
-A lightweight, highly modular, zero-framework desktop window engine. This project features a state-of-the-art **process-isolated dual-runtime architecture**: an orchestrating Go backend driving a hardware-accelerated **wgpu/winit Rust sidecar** over high-performance FlatBuffers and Windows Named Pipes.
+POEM is a frameworkless desktop UI engine for Go applications. The public API lives in `pkg/render`, where consumers call `render.Run(render.AppConfig{...})` and build pages declaratively from Go. Native presentation is handled by a separate sidecar process so layout, state, focus, and input semantics stay in Go while the window, GPU rendering, and local audio stay native.
 
-Originally a prototype engine, POEM is now fully packaged as an **importable standalone library (`pkg/render`)** so that any external Go application (like the Book Manager) can easily construct stunning, premium user interfaces.
+The active runtime today is:
 
-POEM also includes automated **High-DPI / 4K Multi-Resolution Display Scaling**, and a low-latency **Keyboard Focus Engine** supporting active-page cycling (`Tab`/`Shift+Tab`), glowing neon outline focus indicators, automatic scroll view centering, modular input bindings, and declarative global hotkeys (like `Ctrl+S`).
+- Go orchestrator for state, layout, page rebuilds, hit-testing, focus, automation semantics, and draw-command generation
+- Windows C++ sidecar for Win32 windowing, D3D11 rendering, cursor updates, DPI handling, and native capture hooks
+- local IPC over two Windows named pipes
+- repo-owned binary protocol in `pkg/render/protocol`
 
----
+The public Go API remains stable while the native presentation layer evolves underneath it.
 
-## 🏗️ Project Architecture
-
-The engine is decoupled into modular packages to isolate concerns and enforce a strict acyclic dependency flow:
+## Project Layout
 
 ```text
 .
-├── cmd/engine/         # Main demo entry point dogfooding the library
-├── pkg/
-│   └── render/         # Public Standalone Library (Go Orchestrator)
-│       ├── render.go   # Type Aliases & Constants (Single Import Interface)
-│       ├── run.go      # Named Pipe Server & Loop Orchestration
-│       ├── types/      # Component Contracts, ApplicationState & Telemetry
-│       ├── components/ # Declarative Primitives (Panel, Button, TextInput, Slider, etc.)
-│       └── layout/     # Axis-Aligned FlexBox calculations
-├── internal/
-│   └── win32/          # Private Syscalls & Named Pipe DLL Bindings
-├── rust_engine/        # Hardware-Accelerated wgpu/winit Rust Sidecar
-│   ├── src/main.rs     # Event loop & Named Pipe connection logic
-│   └── src/renderer.rs # Batch-renderer & Gaussian frosted-glass shaders
-├── ARCHITECTURE.md     # Technical Deep-Dive & Engineering Log
-└── GEMINI.md           # Developer Guide for AI Assistants
+|-- cmd/engine/            # Demo entrypoint that exercises the library
+|-- cpp_sidecar/           # Windows-first native presentation sidecar (Win32 + D3D11)
+|-- docs/                  # Focused reference docs such as automation
+|-- internal/win32/        # Private Win32 syscall wrappers used by the Go side
+|-- pkg/render/            # Public Go UI library
+|   |-- components/        # Declarative UI primitives
+|   |-- layout/            # Layout helpers
+|   |-- protocol/          # Custom binary wire protocol
+|   |-- types/             # Shared state, interfaces, and contracts
+|   |-- painter.go         # Draw-command capture and frame serialization
+|   `-- run.go             # Sidecar launch, IPC, and event/render orchestration
+|-- AGENTS.md              # Project-specific agent guidance
+|-- ARCHITECTURE.md        # Design notes and deeper implementation context
+|-- GEMINI.md              # Mirrored project-specific agent guidance
+`-- GUIDE.md               # UI authoring quickstart
 ```
 
----
+`rust_engine/` is still present as legacy reference material during the port, but it is no longer the active runtime path.
 
-## 🚀 How to Consume the POEM Library
-
-A client Go application only requires a **single import statement** to gain access to the complete component registry, layout tools, and window runner:
+## Using POEM
 
 ```go
 package main
 
-import (
-	"go_native_gpu_gui/pkg/render"
-)
+import "go_native_gpu_gui/pkg/render"
 
 func main() {
 	render.Run(render.AppConfig{
-		Title:  "Book Manager // Realized",
+		Title:  "POEM App",
 		Width:  1024,
 		Height: 768,
 		BuildPagesFn: func(state *render.ApplicationState) {
-			// Populate page registry components reactively here!
+			// Build or rebuild your page tree here.
 		},
 	})
 }
 ```
 
-### 🔗 Linking the Dependency in Your Project
+Consumers keep importing only `go_native_gpu_gui/pkg/render`. They do not need to know whether the native runtime is implemented in C++, Rust, or another sidecar later.
 
-Depending on your distribution and team environment, you can reference the POEM library in one of three clean Go-standard ways:
+## Automation
 
-#### Strategy A: Remote Git Repository (Production Release)
-If you publish the POEM repository to a hosting platform like GitHub:
-1. Change the root `go.mod` module path to match your repo (e.g., `module github.com/username/poem`).
-2. Downstream developers simply import it in their source file:
-   ```go
-   import "github.com/username/poem/pkg/render"
-   ```
-3. Run standard package fetching:
-   ```bash
-   go get github.com/username/poem@latest
-   ```
+POEM includes a shared automation layer for downstream native apps. When enabled through `render.AutomationConfig`, it can expose:
 
-#### Strategy B: Local Module Override (Isolated Local Dev)
-If downstream developers want to consume a local folder copy without online hosting:
-1. In the downstream project's `go.mod`, declare the dependency and add a **local override path**:
-   ```go
-   module my_app
+- component tree snapshots
+- click/focus/text/key commands
+- direct PNG frame capture
+- native window state
+- dedicated inspection captures:
+  - `self-frame`
+  - `window-frame`
+  - `desktop-frame`
+- a shared `inspect-frame` endpoint that chooses the safest inspection source automatically
 
-   go 1.26.3
+Minimal example:
 
-   require go_native_gpu_gui v0.0.0-00010101000000-000000000000
-
-   // Direct the compiler to search a local absolute or relative folder
-   replace go_native_gpu_gui => ../POEM
-   ```
-2. The Go compiler will seamlessly map `go_native_gpu_gui/pkg/render` to the local target directory.
-
-#### Strategy C: Go Multi-Module Workspaces (Clean Monorepos)
-If you are actively developing both the library and consumer application concurrently, you can establish a clean, hardcode-free development workspace:
-1. Create a `go.work` file in the shared parent directory:
-   ```work
-   go 1.26.3
-
-   use (
-       ./POEM
-       ./Library
-   )
-   ```
-2. This completely eliminates the need for `replace` lines in individual `go.mod` files, resolving modules locally across package boundaries automatically!
-
-### 📦 2. Rust Sidecar Binary Distribution & Spawning
-
-For a downstream project to run successfully, the compiled **`poem_rust_engine.exe`** binary must be available for the Go orchestrator to spawn at runtime. 
-
-POEM implements a robust, multi-stage path resolution strategy that locates the sidecar dynamically in the following order:
-
-1. **Environment Variable Override (`POEM_SIDECAR_PATH`)**:
-   During active downstream development, you can point the library directly to the compiled engine binary in the POEM workspace. Set the environment variable:
-   ```powershell
-   # Windows PowerShell
-   $env:POEM_SIDECAR_PATH="D:\Programming\GUIProject\POEM\rust_engine\target\release\poem_rust_engine.exe"
-   ```
-2. **Same Executable Directory (Production Distribution)**:
-   For compiled applications distributed to end-users, simply copy the compiled `poem_rust_engine.exe` into the **same folder** as your built Go application executable. When your Go program starts, POEM automatically finds it next to the running executable and spawns it with zero configuration.
-3. **Local Dev Fallbacks**:
-   If neither path is set, POEM falls back to searching for folders relative to the current working directory, including the development workspace path `rust_engine/target/release/poem_rust_engine.exe` and compiling via local `cargo run`.
-
----
-
-## 🛠️ Build & Run Instructions
-
-To compile and run the process-isolated dual-runtime POEM GUI framework, you need to compile both the Rust presentation sidecar and the Go orchestrator.
-
-### 1. Compile the Rust Sidecar Core (Release Mode)
-This generates the hardware-accelerated wgpu binary which is dynamically spawned by Go.
-
-```bash
-cargo build --release --manifest-path rust_engine/Cargo.toml
+```go
+render.Run(render.AppConfig{
+	Title:        "POEM App",
+	Width:        1024,
+	Height:       768,
+	BuildPagesFn: buildPages,
+	Automation: &render.AutomationConfig{
+		Enabled:    true,
+		Mode:       "http",
+		Host:       "127.0.0.1",
+		Port:       47831,
+		CaptureDir: "output/automation",
+	},
+})
 ```
 
-### 2. Compile the Go Orchestrator
-This compiles the orchestrator containing all layout formulas, hotkeys, state telemetry, and named pipe logic.
+The source-of-truth automation reference is [docs/AUTOMATION.md](./docs/AUTOMATION.md).
 
-```bash
+## Sidecar Resolution
+
+At runtime, POEM resolves `poem_cpp_sidecar.exe` in this order:
+
+1. `POEM_SIDECAR_PATH`
+2. the same directory as the host executable
+3. development build outputs under `cpp_sidecar/build`
+4. an embedded Windows sidecar payload extracted automatically by POEM
+
+This keeps downstream apps simple: a consumer can import `go_native_gpu_gui/pkg/render` and call the Go API without adding project-specific sidecar path setup.
+
+## Build
+
+Build the sidecar:
+
+```powershell
+cmake -S cpp_sidecar -B cpp_sidecar\build
+cmake --build cpp_sidecar\build --config Release
+```
+
+Build the Go demo:
+
+```powershell
 go build ./cmd/engine
 ```
 
-### 3. Run the Dual-Runtime Application
-Simply launch the Go orchestrator. It will automatically detect, launch, and establish named pipe communication loops with the Rust wgpu sidecar:
+Run the demo:
 
-```bash
-go run ./cmd/engine
+```powershell
+.\engine.exe
 ```
 
----
+For a Windows GUI binary without a console window:
 
-## 📦 Production Release Optimization
-To package a clean distribution without intermediate debug binaries or visible command prompt consoles on launch:
-1. Compile the Rust sidecar in release mode (creates `poem_rust_engine.exe` inside `rust_engine/target/release/`).
-2. Compile the Go engine with headless GUI flags:
-   ```bash
-   go build -ldflags="-s -w -H=windowsgui" -o POEM.exe ./cmd/engine
-   ```
-
----
-
-## 📂 Developer Guide: Extending the Engine
-
-### Adding Application State variables
-Modify **[types.go](file:///d:/Programming/GUIProject/POEM/pkg/render/types/types.go)**:
-```go
-type ApplicationState struct {
-    ClickCount int
-    StatusText string
-    // Add your custom variables here!
-}
+```powershell
+go build -ldflags="-s -w -H=windowsgui" -o POEM.exe ./cmd/engine
 ```
 
-### Adding New UI Primitives
-1. Create your component struct in **[components.go](file:///d:/Programming/GUIProject/POEM/pkg/render/components/components.go)** implementing the `types.Component` interface.
-2. Re-export the component inside **[render.go](file:///d:/Programming/GUIProject/POEM/pkg/render/render.go)** using type aliasing:
-   ```go
-   type MyNewComponent = components.MyNewComponent
-   ```
+For custom packaging, you can still place `poem_cpp_sidecar.exe` next to the built Go executable or override it with `POEM_SIDECAR_PATH`, but POEM now also carries an embedded Windows fallback for downstream consumers.
 
-### Modifying Painting & Rendering Logic
-* **Updating Painters**: Adjust the drawing command serialization in `pkg/render/painter.go` and schema definitions.
-* **Updating GPU Shaders**: Adjust the signed distance fields or blending calculations in **[main.wgsl](file:///d:/Programming/GUIProject/POEM/rust_engine/src/shaders/main.wgsl)** and **[blur.wgsl](file:///d:/Programming/GUIProject/POEM/rust_engine/src/shaders/blur.wgsl)**.
-* **Updating GPU Batcher**: Adjust the vertex buffer allocation, batch ranges, or clipping rules inside the wgpu pipeline in **[renderer.rs](file:///d:/Programming/GUIProject/POEM/rust_engine/src/renderer.rs)**.
+## Current Runtime Status
 
----
+The active C++ sidecar supports the current core path:
 
-## 📜 Documentation
-- **[GUIDE.md](./GUIDE.md)**: A comprehensive quickstart guide to building declarative UIs, laying out widgets with FlexBox, and binding reactive state events.
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)**: Deep-dive analysis of memory management, thread locking (`LockOSThread`), and Win32 syscall stabilization strategies.
-- **[GEMINI.md](./GEMINI.md)**: Project-specific guardrails and instructions for AI-assisted development.
+- sidecar spawn and shutdown
+- bootstrap atlas upload
+- render frames over the custom protocol
+- mouse, wheel, keyboard, resize, and DPI events
+- cursor switching
+- core draw commands, text atlas rendering, clipping, and sound triggers
+- HTTP automation transport
+- native window state reporting
+- self/window/desktop capture modes
+- shared inspection fallback flow for agents and tests
+
+Known follow-up work:
+
+- Rust-specific special rendering paths such as raycaster or billboard sentinel handling are not fully ported yet
+- glass and blur are currently functional approximations, not full parity with the old renderer
+- cross-platform sidecars are a later step; the current native runtime is Windows-first
+
+## Docs
+
+- [GUIDE.md](./GUIDE.md)
+- [ARCHITECTURE.md](./ARCHITECTURE.md)
+- [docs/AUTOMATION.md](./docs/AUTOMATION.md)
+- [AGENTS.md](./AGENTS.md)
+- [GEMINI.md](./GEMINI.md)

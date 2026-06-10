@@ -1,6 +1,10 @@
-# PolyEngine Architectural Specification
+# POEM Architectural Specification
 
 This document details the core architectural challenges, thread mechanics, memory trade-offs, and package boundaries involved in building low-level, frameworkless user interfaces in Go.
+
+Current runtime note: historical sections below describe earlier single-process and Rust-sidecar experiments. The active runtime is now a Go orchestrator plus a Windows-first C++ sidecar using Win32, D3D11, named pipes, and a repo-owned binary protocol.
+
+Current automation note: the active runtime also includes a shared automation layer in `pkg/render/automation.go`. HTTP is the recommended transport. That layer exposes component snapshots, interaction commands, native window state, self/window/desktop capture modes, and a high-level inspection flow (`/inspect-frame`) that can distinguish app-render truth from desktop-visible truth. The source-of-truth API reference for this layer is `docs/AUTOMATION.md`.
 
 ---
 
@@ -84,11 +88,11 @@ To meet strict software engineering standards, we have migrated the engine into 
 | Architectural Vector | Original Single-Process GDI/OpenGL | New Dual-Process Go-Rust wgpu Core |
 | :--- | :--- | :--- |
 | **Runtime Isolation** | None (Any native crash terminates Go main program) | **Full Process Isolation** (Rust presentation core runs separately) |
-| **Graphics API** | GDI / OpenGL Core Profile 3.3 | **Modern WebGPU (`wgpu`)** (Vulkan/DX12 hardware pipeline) |
-| **Windowing & Input** | Custom Win32 Syscalls (Go thread-locked) | **`winit`** (Cross-platform, highly optimized thread mechanics) |
-| **IPC Strategy** | Direct heap pointer sharing (same process thread) | **Win32 Named Pipes** with serialized **FlatBuffers** |
-| **Acoustic Audio** | Win32 DSP (winmm.dll) in Go | **PCM Float Synthesis** played asynchronously via **`rodio`** |
-| **CGO Required** | Yes (when building `-tags gpu` with `go-gl`) | **No CGO Required!** (100% clean Go orchestrator + Rust binary) |
+| **Graphics API** | GDI / OpenGL Core Profile 3.3 | **Direct3D 11** in the active Windows sidecar |
+| **Windowing & Input** | Custom Win32 Syscalls (Go thread-locked) | **Win32** in the active Windows sidecar |
+| **IPC Strategy** | Direct heap pointer sharing (same process thread) | **Win32 Named Pipes** with a repo-owned custom binary protocol |
+| **Acoustic Audio** | Win32 DSP (winmm.dll) in Go | **Native sidecar playback** via Windows multimedia APIs |
+| **CGO Required** | Yes (when building `-tags gpu` with `go-gl`) | **No CGO Required** for the active Go + C++ sidecar runtime |
 | **High-DPI / 4K Scaling** | None (Microscopic elements, layout coordinate clash) | **Automated Coordinate Translation Subsystem** (Logical vs. Physical) |
 | **Frame Telemetry** | CPU bound (~1.1ms), thrashes Go GC on VBO arrays | **Zero-GC Vertex Batching** (Rust memory) & <0.1ms IPC latency |
 
@@ -130,8 +134,8 @@ To support large lists, telemetry streams, and logging consoles, we integrated v
 
 ### 1. Viewport Bounded Clipping (wgpu Scissor tests)
 To render items inside a scroll container without them bleeding onto stationary UI elements, we introduced a native viewport clipping bounding box to the drawing tree:
-* **wgpu Hardware Scissor Tests**: The Rust presentation sidecar dynamically executes native GPU hardware-level scissor tests (`set_scissor_rect`) in WebGPU render passes.
-* **Aspect Scaling Conversion**: Because wgpu operates on physical pixels, the renderer converts the logical scissor bounds requested by Go into physical pixels using the current display's High-DPI `scale_factor`. The calculated bounds are safely clamped to avoid exceeding swapchain sizes, providing zero-overhead, anti-aliased sub-frame viewport clipping.
+* **Native GPU Scissor Tests**: The active Windows sidecar executes hardware scissor tests in D3D11 render passes.
+* **Aspect Scaling Conversion**: Because the native renderer operates on physical pixels, it converts the logical scissor bounds requested by Go into physical pixels using the current display DPI scale factor. The calculated bounds are safely clamped to avoid exceeding swapchain sizes, providing zero-overhead, anti-aliased sub-frame viewport clipping.
 
 ### 2. Relative Coordinate Translation
 Hit-testing and event dispatching (mouse clicks, dragging, hovers) normally operate on absolute screen coordinates. If a child component is scrolled up by `ScrollY`, it is drawn at screen coordinate `Y - ScrollY`.
@@ -295,10 +299,10 @@ Sound triggers are carefully routed inside the core window message loop to optim
 
 ## 🖥️ X. Process Isolation & High-DPI Coordinate Translation Subsystem
 
-POEM implements a modern **process-isolated dual-runtime architecture**. The Go orchestrator manages business logic, layout generation, and state metrics, while driving a high-performance **wgpu/winit Rust sidecar** over FlatBuffers and dual-pipe asynchronous Win32 Named Pipes. To ensure pixel-perfect rendering across varied screen resolutions, POEM incorporates a fully automated **High-DPI Coordinate Translation Subsystem**.
+POEM implements a modern **process-isolated dual-runtime architecture**. The Go orchestrator manages business logic, layout generation, and state metrics, while driving a native presentation sidecar over local IPC. The current Windows runtime uses a C++ sidecar built on Win32 and D3D11 with a repo-owned binary protocol over dual named pipes. To ensure pixel-perfect rendering across varied screen resolutions, POEM incorporates a fully automated **High-DPI Coordinate Translation Subsystem**.
 
 ### 1. The High-DPI Engineering Challenge
-On high-DPI displays (e.g., 4K monitors with 150%–250% system scaling), rendering layouts at a 1:1 pixel ratio causes the entire UI to appear microscopic. Standard operating system window managers automatically scale windows, but low-level hardware-accelerated drawing surfaces (such as WebGPU) must manually adjust their orthographic projection and scissor boundaries. 
+On high-DPI displays (e.g., 4K monitors with 150%–250% system scaling), rendering layouts at a 1:1 pixel ratio causes the entire UI to appear microscopic. Standard operating system window managers automatically scale windows, but low-level hardware-accelerated drawing surfaces must manually adjust their projection and scissor boundaries.
 
 However, forcing the layout engine to compute high-DPI coordinates causes dynamic layout code to become highly complex and prone to visual alignment bugs.
 
@@ -308,14 +312,14 @@ POEM segregates the framework into two distinct coordinate systems:
 2. **Physical Coordinate Space (Rust wgpu Sidecar)**: The GPU textures, render targets, Gaussian blur FBOs, and viewport swapchains run strictly in the device's **Physical Pixel Space** (e.g. 2048x1536 pixels on 200% scaling).
 
 ### 3. Dynamic Orthographic Projection Translation
-To bridge these coordinate spaces, the Rust sidecar dynamically scales the WebGPU projection matrix when configuring the orthographic view:
+To bridge these coordinate spaces, the sidecar scales its render projection using the current physical size and DPI factor:
 ```rust
 let left = 0.0;
 let right = physical_width as f32 / scale_factor;
 let bottom = physical_height as f32 / scale_factor;
 let top = 0.0;
 ```
-This maps logical layout coordinates directly into normalized device coordinates (NDC, `[-1.0, 1.0]`), allowing WebGPU to render elements at their perfect physical sizes automatically.
+This maps logical layout coordinates into the sidecar's native render space while preserving correct physical sizing.
 
 ```
        Go Orchestrator                     Rust wgpu Sidecar
@@ -347,9 +351,7 @@ This ensures that the Settings scrollview is cropped perfectly down to the physi
 
 ### 6. Bidirectional Event Scaling
 To keep the Go orchestrator decoupled from scaling metrics:
-* **Cursor Movements**: Raw `position.x` and `position.y` from winit `CursorMoved` are divided by `window.scale_factor()` before being sent back to Go for precise hit-testing.
+* **Cursor Movements**: Raw native cursor positions are divided by the active DPI scale before being sent back to Go for precise hit-testing.
 * **Scroll Deltas**: Pixel-based wheel scroll offsets from `MouseWheel` are divided by `scale_factor` to maintain uniform scrolling sensitivity across all screens.
 * **Window Resizes**: Physical window resizes are divided by the scale factor, keeping Go aware of the true logical grid bounds.
-
-
 

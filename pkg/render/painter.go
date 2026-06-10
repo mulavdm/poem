@@ -4,28 +4,28 @@ import (
 	"image"
 	"image/color"
 
-	flatbuffers "github.com/google/flatbuffers/go"
-	"go_native_gpu_gui/pkg/render/poem"
+	"go_native_gpu_gui/pkg/render/protocol"
 )
 
-type FlatBufferPainter struct {
-	commands []DrawCmdData
-	offsetX  float32
-	offsetY  float32
-	glow     float32
-	glass    bool
-	shadowOx float32
-	shadowOy float32
-	shadowBl float32
-	clipX    int
-	clipY    int
-	clipW    int
-	clipH    int
-	clipEn   bool
+type ProtocolPainter struct {
+	commands  []DrawCmdData
+	offsetX   float32
+	offsetY   float32
+	glow      float32
+	glass     bool
+	shadowOx  float32
+	shadowOy  float32
+	shadowBl  float32
+	clipX     int
+	clipY     int
+	clipW     int
+	clipH     int
+	clipEn    bool
+	clipStack []image.Rectangle
 }
 
 type DrawCmdData struct {
-	Type   poem.DrawCommandType
+	Type   protocol.DrawCommandType
 	X1     int
 	Y1     int
 	X2     int
@@ -38,6 +38,7 @@ type DrawCmdData struct {
 	B      byte
 	A      byte
 	Text   string
+	Bytes  []byte
 	Val1   float32
 	Val2   float32
 	Val3   float32
@@ -55,13 +56,14 @@ const (
 	BillboardWheelGate
 )
 
-func NewFlatBufferPainter() *FlatBufferPainter {
-	return &FlatBufferPainter{
-		commands: make([]DrawCmdData, 0, 256),
+func NewProtocolPainter() *ProtocolPainter {
+	return &ProtocolPainter{
+		commands:  make([]DrawCmdData, 0, 256),
+		clipStack: make([]image.Rectangle, 0, 8),
 	}
 }
 
-func (f *FlatBufferPainter) Reset() {
+func (f *ProtocolPainter) Reset() {
 	f.commands = f.commands[:0]
 	f.offsetX = 0
 	f.offsetY = 0
@@ -75,11 +77,12 @@ func (f *FlatBufferPainter) Reset() {
 	f.clipW = 0
 	f.clipH = 0
 	f.clipEn = false
+	f.clipStack = f.clipStack[:0]
 }
 
-func (f *FlatBufferPainter) DrawRoundedRect(r image.Rectangle, radius int, col color.RGBA) {
+func (f *ProtocolPainter) DrawRoundedRect(r image.Rectangle, radius int, col color.RGBA) {
 	f.commands = append(f.commands, DrawCmdData{
-		Type:   poem.DrawCommandTypeDrawRoundedRect,
+		Type:   protocol.DrawCommandTypeDrawRoundedRect,
 		X1:     r.Min.X,
 		Y1:     r.Min.Y,
 		X2:     r.Max.X,
@@ -94,17 +97,17 @@ func (f *FlatBufferPainter) DrawRoundedRect(r image.Rectangle, radius int, col c
 	})
 }
 
-func (f *FlatBufferPainter) DrawRaycaster(r image.Rectangle, playerX, playerY, playerAngle float32) {
+func (f *ProtocolPainter) DrawRaycaster(r image.Rectangle, playerX, playerY, playerAngle float32) {
 	f.DrawRaycasterStyled(r, playerX, playerY, playerAngle, color.RGBA{255, 155, 70, 255})
 }
 
-func (f *FlatBufferPainter) DrawRaycasterStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA) {
+func (f *ProtocolPainter) DrawRaycasterStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA) {
 	f.DrawRaycasterMapStyled(r, playerX, playerY, playerAngle, accent, "")
 }
 
-func (f *FlatBufferPainter) DrawRaycasterMapStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA, mapData string) {
+func (f *ProtocolPainter) DrawRaycasterMapStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA, mapData string) {
 	f.commands = append(f.commands, DrawCmdData{
-		Type:   poem.DrawCommandTypeDrawRoundedRect,
+		Type:   protocol.DrawCommandTypeDrawRoundedRect,
 		X1:     r.Min.X,
 		Y1:     r.Min.Y,
 		X2:     r.Max.X,
@@ -123,15 +126,15 @@ func (f *FlatBufferPainter) DrawRaycasterMapStyled(r image.Rectangle, playerX, p
 	})
 }
 
-func (f *FlatBufferPainter) DrawSeed3D(viewportRect image.Rectangle, seedX, seedY, playerX, playerY, playerAngle float32) {
+func (f *ProtocolPainter) DrawSeed3D(viewportRect image.Rectangle, seedX, seedY, playerX, playerY, playerAngle float32) {
 	f.DrawBillboard3D(viewportRect, seedX, seedY, BillboardSeed, color.RGBA{255, 215, 30, 255})
 }
 
-func (f *FlatBufferPainter) DrawSentry3D(viewportRect image.Rectangle, sentryX, sentryY, playerX, playerY, playerAngle float32, col color.RGBA) {
+func (f *ProtocolPainter) DrawSentry3D(viewportRect image.Rectangle, sentryX, sentryY, playerX, playerY, playerAngle float32, col color.RGBA) {
 	f.DrawBillboard3D(viewportRect, sentryX, sentryY, BillboardSentry, col)
 }
 
-func (f *FlatBufferPainter) DrawBillboard3D(viewportRect image.Rectangle, worldX, worldY float32, kind int, col color.RGBA) {
+func (f *ProtocolPainter) DrawBillboard3D(viewportRect image.Rectangle, worldX, worldY float32, kind int, col color.RGBA) {
 	radius := -998
 	switch kind {
 	case BillboardSentry:
@@ -151,7 +154,7 @@ func (f *FlatBufferPainter) DrawBillboard3D(viewportRect image.Rectangle, worldX
 	}
 
 	f.commands = append(f.commands, DrawCmdData{
-		Type:   poem.DrawCommandTypeDrawRoundedRect,
+		Type:   protocol.DrawCommandTypeDrawRoundedRect,
 		X1:     viewportRect.Min.X,
 		Y1:     viewportRect.Min.Y,
 		X2:     viewportRect.Max.X,
@@ -168,9 +171,9 @@ func (f *FlatBufferPainter) DrawBillboard3D(viewportRect image.Rectangle, worldX
 	})
 }
 
-func (f *FlatBufferPainter) DrawText(text string, x, y int, col color.RGBA) {
+func (f *ProtocolPainter) DrawText(text string, x, y int, col color.RGBA) {
 	f.commands = append(f.commands, DrawCmdData{
-		Type: poem.DrawCommandTypeDrawText,
+		Type: protocol.DrawCommandTypeDrawText,
 		X1:   x,
 		Y1:   y,
 		R:    col.R,
@@ -181,9 +184,9 @@ func (f *FlatBufferPainter) DrawText(text string, x, y int, col color.RGBA) {
 	})
 }
 
-func (f *FlatBufferPainter) FillRect(r image.Rectangle, col color.RGBA) {
+func (f *ProtocolPainter) FillRect(r image.Rectangle, col color.RGBA) {
 	f.commands = append(f.commands, DrawCmdData{
-		Type: poem.DrawCommandTypeFillRect,
+		Type: protocol.DrawCommandTypeFillRect,
 		X1:   r.Min.X,
 		Y1:   r.Min.Y,
 		X2:   r.Max.X,
@@ -197,9 +200,9 @@ func (f *FlatBufferPainter) FillRect(r image.Rectangle, col color.RGBA) {
 	})
 }
 
-func (f *FlatBufferPainter) DrawLine(x1, y1, x2, y2 int, col color.RGBA) {
+func (f *ProtocolPainter) DrawLine(x1, y1, x2, y2 int, col color.RGBA) {
 	f.commands = append(f.commands, DrawCmdData{
-		Type: poem.DrawCommandTypeDrawLine,
+		Type: protocol.DrawCommandTypeDrawLine,
 		X1:   x1,
 		Y1:   y1,
 		X2:   x2,
@@ -211,49 +214,68 @@ func (f *FlatBufferPainter) DrawLine(x1, y1, x2, y2 int, col color.RGBA) {
 	})
 }
 
-func (f *FlatBufferPainter) SetGlow(strength float32) {
+func (f *ProtocolPainter) DrawImage(r image.Rectangle, imageWidth, imageHeight int, pixels []byte) {
+	if len(pixels) == 0 || imageWidth <= 0 || imageHeight <= 0 {
+		return
+	}
+	cloned := make([]byte, len(pixels))
+	copy(cloned, pixels)
+	f.commands = append(f.commands, DrawCmdData{
+		Type:   protocol.DrawCommandTypeDrawImage,
+		X1:     r.Min.X,
+		Y1:     r.Min.Y,
+		X2:     r.Max.X,
+		Y2:     r.Max.Y,
+		W:      imageWidth,
+		H:      imageHeight,
+		Bytes:  cloned,
+		Radius: 0,
+	})
+}
+
+func (f *ProtocolPainter) SetGlow(strength float32) {
 	f.glow = strength
 	f.commands = append(f.commands, DrawCmdData{
-		Type: poem.DrawCommandTypeSetGlow,
+		Type: protocol.DrawCommandTypeSetGlow,
 		Val1: strength,
 	})
 }
 
-func (f *FlatBufferPainter) SetGlass(enabled bool) {
+func (f *ProtocolPainter) SetGlass(enabled bool) {
 	f.glass = enabled
 	f.commands = append(f.commands, DrawCmdData{
-		Type: poem.DrawCommandTypeSetGlass,
+		Type: protocol.DrawCommandTypeSetGlass,
 		Flag: enabled,
 	})
 }
 
-func (f *FlatBufferPainter) SetShadow(ox, oy, blur float32) {
+func (f *ProtocolPainter) SetShadow(ox, oy, blur float32) {
 	f.shadowOx = ox
 	f.shadowOy = oy
 	f.shadowBl = blur
 	f.commands = append(f.commands, DrawCmdData{
-		Type: poem.DrawCommandTypeSetShadow,
+		Type: protocol.DrawCommandTypeSetShadow,
 		Val1: ox,
 		Val2: oy,
 		Val3: blur,
 	})
 }
 
-func (f *FlatBufferPainter) SetOffset(x, y float32) {
+func (f *ProtocolPainter) SetOffset(x, y float32) {
 	f.offsetX = x
 	f.offsetY = y
 	f.commands = append(f.commands, DrawCmdData{
-		Type: poem.DrawCommandTypeSetOffset,
+		Type: protocol.DrawCommandTypeSetOffset,
 		Val1: x,
 		Val2: y,
 	})
 }
 
-func (f *FlatBufferPainter) SetClip(r image.Rectangle) {
+func (f *ProtocolPainter) SetClip(r image.Rectangle) {
 	if r.Empty() {
 		f.clipEn = false
 		f.commands = append(f.commands, DrawCmdData{
-			Type: poem.DrawCommandTypeSetClip,
+			Type: protocol.DrawCommandTypeSetClip,
 			Flag: false,
 		})
 	} else {
@@ -263,7 +285,7 @@ func (f *FlatBufferPainter) SetClip(r image.Rectangle) {
 		f.clipW = r.Dx()
 		f.clipH = r.Dy()
 		f.commands = append(f.commands, DrawCmdData{
-			Type: poem.DrawCommandTypeSetClip,
+			Type: protocol.DrawCommandTypeSetClip,
 			X1:   r.Min.X,
 			Y1:   r.Min.Y,
 			W:    r.Dx(),
@@ -273,63 +295,71 @@ func (f *FlatBufferPainter) SetClip(r image.Rectangle) {
 	}
 }
 
-func (f *FlatBufferPainter) Flush() {
+func (f *ProtocolPainter) PushClip(r image.Rectangle) {
+	if r.Empty() {
+		f.clipStack = append(f.clipStack, image.Rectangle{})
+		f.SetClip(image.Rectangle{})
+		return
+	}
+
+	if f.clipEn {
+		current := image.Rect(f.clipX, f.clipY, f.clipX+f.clipW, f.clipY+f.clipH)
+		f.clipStack = append(f.clipStack, current)
+		f.SetClip(current.Intersect(r))
+		return
+	}
+
+	f.clipStack = append(f.clipStack, image.Rectangle{})
+	f.SetClip(r)
+}
+
+func (f *ProtocolPainter) PopClip() {
+	if len(f.clipStack) == 0 {
+		f.SetClip(image.Rectangle{})
+		return
+	}
+
+	prev := f.clipStack[len(f.clipStack)-1]
+	f.clipStack = f.clipStack[:len(f.clipStack)-1]
+	f.SetClip(prev)
+}
+
+func (f *ProtocolPainter) Flush() {
 	// Immediate translation to drawing queue complete, no-op
 }
 
-func (f *FlatBufferPainter) Serialize(builder *flatbuffers.Builder, width, height int, cursor byte) flatbuffers.UOffsetT {
-	// 1. Create string offsets first (flatbuffers forbids nested builder tables)
-	textOffsets := make([]flatbuffers.UOffsetT, len(f.commands))
-	for i, cmd := range f.commands {
-		if cmd.Text != "" {
-			textOffsets[i] = builder.CreateString(cmd.Text)
-		}
+func (f *ProtocolPainter) ToRenderFrame(width, height int, cursor byte) protocol.RenderFrame {
+	commands := make([]protocol.DrawCommand, 0, len(f.commands))
+	for _, cmd := range f.commands {
+		commands = append(commands, protocol.DrawCommand{
+			Type:   cmd.Type,
+			X1:     int32(cmd.X1),
+			Y1:     int32(cmd.Y1),
+			X2:     int32(cmd.X2),
+			Y2:     int32(cmd.Y2),
+			W:      int32(cmd.W),
+			H:      int32(cmd.H),
+			Radius: int32(cmd.Radius),
+			R:      cmd.R,
+			G:      cmd.G,
+			B:      cmd.B,
+			A:      cmd.A,
+			Text:   cmd.Text,
+			Bytes:  cmd.Bytes,
+			Val1:   cmd.Val1,
+			Val2:   cmd.Val2,
+			Val3:   cmd.Val3,
+			Flag:   cmd.Flag,
+		})
 	}
-
-	// 2. Build DrawCommand tables
-	cmdOffsets := make([]flatbuffers.UOffsetT, len(f.commands))
-	for i, cmd := range f.commands {
-		poem.DrawCommandStart(builder)
-		poem.DrawCommandAddType(builder, cmd.Type)
-		poem.DrawCommandAddX1(builder, int32(cmd.X1))
-		poem.DrawCommandAddY1(builder, int32(cmd.Y1))
-		poem.DrawCommandAddX2(builder, int32(cmd.X2))
-		poem.DrawCommandAddY2(builder, int32(cmd.Y2))
-		poem.DrawCommandAddW(builder, int32(cmd.W))
-		poem.DrawCommandAddH(builder, int32(cmd.H))
-		poem.DrawCommandAddRadius(builder, int32(cmd.Radius))
-		poem.DrawCommandAddR(builder, cmd.R)
-		poem.DrawCommandAddG(builder, cmd.G)
-		poem.DrawCommandAddB(builder, cmd.B)
-		poem.DrawCommandAddA(builder, cmd.A)
-		if textOffsets[i] != 0 {
-			poem.DrawCommandAddText(builder, textOffsets[i])
-		}
-		poem.DrawCommandAddVal1(builder, cmd.Val1)
-		poem.DrawCommandAddVal2(builder, cmd.Val2)
-		poem.DrawCommandAddVal3(builder, cmd.Val3)
-		poem.DrawCommandAddFlag(builder, cmd.Flag)
-		cmdOffsets[i] = poem.DrawCommandEnd(builder)
+	return protocol.RenderFrame{
+		Width:    int32(width),
+		Height:   int32(height),
+		Commands: commands,
+		Cursor:   cursor,
 	}
+}
 
-	// 3. Build commands vector
-	poem.RenderFrameStartCommandsVector(builder, len(cmdOffsets))
-	for i := len(cmdOffsets) - 1; i >= 0; i-- {
-		builder.PrependUOffsetT(cmdOffsets[i])
-	}
-	commandsVector := builder.EndVector(len(cmdOffsets))
-
-	// 4. Build RenderFrame
-	poem.RenderFrameStart(builder)
-	poem.RenderFrameAddWidth(builder, int32(width))
-	poem.RenderFrameAddHeight(builder, int32(height))
-	poem.RenderFrameAddCommands(builder, commandsVector)
-	poem.RenderFrameAddCursor(builder, int8(cursor))
-	frameOffset := poem.RenderFrameEnd(builder)
-
-	// 5. Wrap in GoToRustMessage envelope
-	poem.GoToRustMessageStart(builder)
-	poem.GoToRustMessageAddMessageType(builder, poem.GoToRustUnionRenderFrame)
-	poem.GoToRustMessageAddMessage(builder, frameOffset)
-	return poem.GoToRustMessageEnd(builder)
+func (f *ProtocolPainter) Serialize(width, height int, cursor byte) ([]byte, error) {
+	return protocol.EncodeRenderFrame(f.ToRenderFrame(width, height, cursor))
 }

@@ -20,6 +20,7 @@ type Painter interface {
 	DrawText(text string, x, y int, col color.RGBA)
 	FillRect(r image.Rectangle, col color.RGBA)
 	DrawLine(x1, y1, x2, y2 int, col color.RGBA)
+	DrawImage(r image.Rectangle, imageWidth, imageHeight int, pixels []byte)
 	DrawRaycaster(r image.Rectangle, playerX, playerY, playerAngle float32)
 	DrawRaycasterStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA)
 	DrawRaycasterMapStyled(r image.Rectangle, playerX, playerY, playerAngle float32, accent color.RGBA, mapData string)
@@ -31,6 +32,8 @@ type Painter interface {
 	SetShadow(ox, oy, blur float32)
 	SetOffset(x, y float32)
 	SetClip(r image.Rectangle)
+	PushClip(r image.Rectangle)
+	PopClip()
 	Flush()
 }
 
@@ -88,10 +91,12 @@ type ApplicationState struct {
 	LastDt           float64
 
 	// Window Dimensions
-	WindowWidth   int
-	WindowHeight  int
-	LastPaintTime time.Time
-	RenderDt      float64
+	WindowWidth          int
+	WindowHeight         int
+	PhysicalWindowWidth  int
+	PhysicalWindowHeight int
+	LastPaintTime        time.Time
+	RenderDt             float64
 
 	// Live Telemetry Stream History Slices
 	FPSHistory  []float32
@@ -312,10 +317,25 @@ func RenderPipeline(p Painter, s *ApplicationState) {
 	pulse := uint8(150 + math.Sin(elapsed*5)*100)
 	statusCol.A = pulse
 
-	p.DrawText("SYSTEM OPERATIONAL // ENCRYPTED", w-280, h-25, statusCol)
+	statusText := "SYSTEM OPERATIONAL // ENCRYPTED"
+	charWidth := s.FontCharWidth
+	if charWidth <= 0 {
+		charWidth = 8
+	}
+	statusWidth := len([]rune(statusText)) * charWidth
+	statusX := w - statusWidth - 20
+	if statusX < 20 {
+		statusX = 20
+	}
+
+	p.DrawText(statusText, statusX, h-25, statusCol)
 
 	// Small diagnostic line
-	p.DrawLine(w-285, h-15, w-20, h-15, color.RGBA{0, 255, 150, 50})
+	lineStartX := statusX - 5
+	if lineStartX < 20 {
+		lineStartX = 20
+	}
+	p.DrawLine(lineStartX, h-15, w-20, h-15, color.RGBA{0, 255, 150, 50})
 }
 
 // Component represents a UI element that can be drawn and interacted with

@@ -1,24 +1,59 @@
 # POEM UI Development Guide (Quickstart)
 
-Welcome to the **P.O.E.M. Operational Engine Matrix (POEM)** UI framework! This guide will walk you through the declarative UI architecture, component catalog, layout system, and reactive state loops so you can start building premium, high-performance, glassmorphic interfaces.
+Welcome to the **P.O.E.M. Operational Engine Matrix (POEM)** UI framework! This guide will walk you through the declarative UI architecture, component catalog, layout system, reactive state loops, and shared automation hooks so you can start building premium, high-performance, glassmorphic interfaces.
+
+## Automation Quickstart
+
+POEM can optionally expose a shared localhost automation server for downstream apps.
+
+Enable it through `render.AppConfig.Automation`:
+
+```go
+render.Run(render.AppConfig{
+    Title:        "My Downstream POEM App",
+    Width:        800,
+    Height:       600,
+    BuildPagesFn: BuildAllPages,
+    Automation: &render.AutomationConfig{
+        Enabled:    true,
+        Mode:       "http",
+        Host:       "127.0.0.1",
+        Port:       47831,
+        CaptureDir: "output/automation",
+    },
+})
+```
+
+Recommended endpoints:
+
+- `GET /state`
+- `GET /components`
+- `POST /click`
+- `POST /set-text`
+- `POST /prepare-window`
+- `POST /inspect-frame`
+
+Use `POST /inspect-frame` when you want the safest "show me the app now" PNG for debugging or agent inspection. It prefers a desktop-visible capture only when the window is actually foregrounded, and otherwise falls back to the app's own self-frame.
+
+Full details live in [docs/AUTOMATION.md](./docs/AUTOMATION.md).
 
 ---
 
 ## 🏗️ 1. Core Architecture & Reactive Loop
 
-POEM uses an elegant, process-isolated **re-evaluation loop** driven over Windows Named Pipes. Instead of manually updating widgets, you write a **Page Builder function**. 
+POEM uses an elegant, process-isolated **re-evaluation loop** driven over local IPC. Instead of manually updating widgets, you write a **Page Builder function**.
 
 The lifecycle works as follows:
-1. The **Rust Sidecar (`rust_engine`)** captures low-level window interactions via `winit` (clicks, typing, drags, or resizes) and transmits them back to Go over the `poem_ipc_rust_to_go` Named Pipe.
-2. The **Go Orchestrator** processes these events, mutates the global `ApplicationState`, and invokes your **Page Builder function** to rebuild the component hierarchy from scratch.
-3. Go serializes the new drawing commands using FlatBuffers and streams them back to Rust over the `poem_ipc_go_to_rust` Named Pipe.
-4. The Rust sidecar processes the frame asynchronously, flushing draw calls to the GPU via **WebGPU (`wgpu`)** at a locked 60FPS.
+1. The native **presentation sidecar** captures low-level window interactions and transmits them back to Go.
+2. The **Go orchestrator** processes these events, mutates the global `ApplicationState`, and invokes your **Page Builder function** to rebuild the component hierarchy from scratch.
+3. Go serializes the new drawing commands using the repo-owned binary protocol in `pkg/render/protocol`.
+4. The sidecar processes the frame asynchronously and flushes draw calls to the GPU.
 
 ```
-+--------------------+   FlatBuffer Input Event    +-------------------+
-| Rust Sidecar Core  | --------------------------> |  Go Orchestrator  |
-|  (winit / wgpu)    | <-------------------------- |    (Game Loop)    |
-+--------------------+   Serialized Draw Commands  +-------------------+
++---------------------+   Input Event Batch        +-------------------+
+| Native Sidecar Core | -------------------------> |  Go Orchestrator  |
+| (Win32 / D3D11 now) | <------------------------- |    (Game Loop)    |
++---------------------+   Render / Sound Commands  +-------------------+
                                                              |
                                                              v Triggers
                                                    +-------------------+
@@ -335,8 +370,8 @@ POEM features a high-performance, fully composable vertical scrolling container 
 ### A. Viewport Bounded Clipping
 When rendering massive, high-volume lists or logs, downstream elements must be clipped to prevent them from bleeding onto stationary sections (like headers, sidebars, and background panels). 
 
-POEM implements this by adding a native viewport clipping bounding box to the flat drawing tree. Elements outside the ScrollView `Rect` are automatically clipped at the GPU level inside the Rust wgpu sidecar:
-- **wgpu Scissor Test**: Employs hardware-level scissor tests (`set_scissor_rect`) in WebGPU render passes, dynamically translating the logical boundaries into physical screen pixels based on your display's High-DPI scale factor. This achieves ultra-crisp, sub-millisecond clipping performance.
+POEM implements this by adding a native viewport clipping bounding box to the draw-command tree. Elements outside the ScrollView `Rect` are automatically clipped at the GPU level inside the native sidecar:
+- **GPU Scissor Test**: The Windows C++ sidecar currently applies hardware scissor clipping in D3D11, translating logical boundaries into physical screen pixels based on the active DPI scale factor.
 
 ### B. Nested Layout Composition Example
 To build a scrollable view, simply wrap a vertical `render.FlexBox` container inside a `render.ScrollView` and place as many interactive components (labels, buttons, text fields) as you want inside:
@@ -429,8 +464,6 @@ As a downstream developer, **you do not need to perform any scaling math, factor
 
 ### Transparent Scaling Mechanics
 * **Pure Logical Layouts**: When declaring widgets in `BuildPagesFn` (e.g. `image.Rect(100, 100, 300, 400)`), you define them strictly in **logical units**. POEM's layout flexboxes and margins run in this logical space.
-* **Auto-Adjusted Views**: Behind the scenes, the presentation engine uses hardware-accelerated WebGPU projection mappings to scale elements to match the screen's system density perfectly, preventing them from appearing tiny on high-resolution screens.
+* **Auto-Adjusted Views**: Behind the scenes, the presentation engine scales elements to match the screen's system density, preventing them from appearing tiny on high-resolution screens.
 * **Integrated Clipping & Interaction**: Scissor clips inside `ScrollView` and mouse coordinates (`MouseMove`, `MouseDown`, `MouseWheel`) are automatically converted between physical screen pixels and your logical layout space. Custom hover cues, clicks, and scrolling operate cleanly out-of-the-box on any screen size.
-
-
 

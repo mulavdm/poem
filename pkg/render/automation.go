@@ -1,0 +1,1053 @@
+package render
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
+	"io"
+	"math"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+
+	xdraw "golang.org/x/image/draw"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/math/fixed"
+
+	"go_native_gpu_gui/internal/win32"
+	"go_native_gpu_gui/pkg/render/components"
+	"go_native_gpu_gui/pkg/render/layout"
+	"go_native_gpu_gui/pkg/render/protocol"
+	"go_native_gpu_gui/pkg/render/types"
+)
+
+var nativeDebugRequest = requestNativeDebugWithOptions
+
+type AutomationConfig struct {
+	Enabled    bool
+	Mode       string
+	Host       string
+	Port       int
+	PipeName   string
+	CaptureDir string
+	Verbose    bool
+}
+
+type AutomationNode struct {
+	ID        string           `json:"id"`
+	Type      string           `json:"type"`
+	Bounds    AutomationBounds `json:"bounds"`
+	Text      string           `json:"text,omitempty"`
+	Visible   bool             `json:"visible"`
+	Focusable bool             `json:"focusable"`
+	Focused   bool             `json:"focused"`
+	Children  []AutomationNode `json:"children,omitempty"`
+}
+
+type AutomationBounds struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+type AutomationRequest struct {
+	Command string `json:"command"`
+	ID      string `json:"id,omitempty"`
+	Value   string `json:"value,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Key     string `json:"key,omitempty"`
+}
+
+type AutomationResponse struct {
+	OK                   bool             `json:"ok"`
+	Error                string           `json:"error,omitempty"`
+	CurrentPage          string           `json:"current_page,omitempty"`
+	FocusedID            string           `json:"focused_id,omitempty"`
+	HoveredID            string           `json:"hovered_id,omitempty"`
+	WindowWidth          int              `json:"window_width,omitempty"`
+	WindowHeight         int              `json:"window_height,omitempty"`
+	PhysicalWindowWidth  int              `json:"physical_window_width,omitempty"`
+	PhysicalWindowHeight int              `json:"physical_window_height,omitempty"`
+	Nodes                []AutomationNode `json:"nodes,omitempty"`
+	Flat                 []AutomationNode `json:"flat,omitempty"`
+	CapturePath          string           `json:"capture_path,omitempty"`
+}
+
+type NativeAutomationState struct {
+	DPI int32 `json:"dpi"`
+
+	WindowVisible    bool `json:"window_visible"`
+	WindowMinimized  bool `json:"window_minimized"`
+	WindowForeground bool `json:"window_foreground"`
+
+	WindowLeft   int32 `json:"window_left"`
+	WindowTop    int32 `json:"window_top"`
+	WindowRight  int32 `json:"window_right"`
+	WindowBottom int32 `json:"window_bottom"`
+
+	ClientWidth  int32 `json:"client_width"`
+	ClientHeight int32 `json:"client_height"`
+
+	WorkLeft   int32 `json:"work_left"`
+	WorkTop    int32 `json:"work_top"`
+	WorkRight  int32 `json:"work_right"`
+	WorkBottom int32 `json:"work_bottom"`
+
+	BackbufferWidth  int32 `json:"backbuffer_width"`
+	BackbufferHeight int32 `json:"backbuffer_height"`
+
+	FrameWidth  int32 `json:"frame_width,omitempty"`
+	FrameHeight int32 `json:"frame_height,omitempty"`
+}
+
+type NativeWindowControlRequest struct {
+	RestoreWindow     bool `json:"restore_window"`
+	ClampToWorkArea   bool `json:"clamp_to_work_area"`
+	BringToForeground bool `json:"bring_to_foreground"`
+}
+
+type InspectFrameRequest struct {
+	PrepareWindow     bool `json:"prepare_window"`
+	RestoreWindow     bool `json:"restore_window"`
+	ClampToWorkArea   bool `json:"clamp_to_work_area"`
+	BringToForeground bool `json:"bring_to_foreground"`
+	PreferDesktop     bool `json:"prefer_desktop"`
+	FallbackToSelf    bool `json:"fallback_to_self"`
+}
+
+func resolveAutomationConfig(cfg *AutomationConfig) AutomationConfig {
+	resolved := *cfg
+	if strings.TrimSpace(resolved.Mode) == "" {
+		resolved.Mode = "http"
+	}
+	if strings.TrimSpace(resolved.Host) == "" {
+		resolved.Host = "127.0.0.1"
+	}
+	if resolved.Port == 0 {
+		resolved.Port = 47831
+	}
+	if strings.TrimSpace(resolved.PipeName) == "" {
+		resolved.PipeName = `\\.\pipe\poem_automation`
+	}
+	if strings.TrimSpace(resolved.CaptureDir) == "" {
+		resolved.CaptureDir = "."
+	}
+	return resolved
+}
+
+func startAutomationServer(cfg AutomationConfig) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Mode)) {
+	case "pipe":
+		startPipeAutomationServer(cfg)
+	default:
+		startHTTPAutomationServer(cfg)
+	}
+}
+
+func startPipeAutomationServer(cfg AutomationConfig) {
+	go func() {
+		for {
+			pipeNameUTF16, _ := syscall.UTF16PtrFromString(cfg.PipeName)
+			handle, err := win32.CreateNamedPipe(
+				pipeNameUTF16,
+				win32.PIPE_ACCESS_DUPLEX,
+				win32.PIPE_TYPE_BYTE|win32.PIPE_READMODE_BYTE|win32.PIPE_WAIT,
+				win32.PIPE_UNLIMITED_INSTANCES,
+				1024*1024,
+				1024*1024,
+				0,
+				0,
+			)
+			if err != nil || handle == 0 {
+				fmt.Printf("POEM automation pipe create failed: %v\n", err)
+				return
+			}
+
+			connected, err := win32.ConnectNamedPipe(handle, 0)
+			if err != nil || !connected {
+				win32.CloseHandle(handle)
+				continue
+			}
+
+			conn := &pipeReadWriteCloser{handle: handle}
+			handleAutomationConnection(conn, cfg)
+			_ = conn.Close()
+		}
+	}()
+}
+
+func startHTTPAutomationServer(cfg AutomationConfig) {
+	go func() {
+		addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+		server := &http.Server{
+			Addr:    addr,
+			Handler: newAutomationHTTPHandler(cfg),
+		}
+		if cfg.Verbose {
+			fmt.Printf("POEM automation HTTP listening on http://%s\n", addr)
+		}
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("POEM automation HTTP server failed: %v\n", err)
+		}
+	}()
+}
+
+func handleAutomationConnection(conn io.ReadWriteCloser, cfg AutomationConfig) {
+	defer conn.Close()
+
+	payload, err := readMessage(conn)
+	if err != nil {
+		return
+	}
+
+	var req AutomationRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		_ = writeAutomationResponse(conn, AutomationResponse{OK: false, Error: err.Error()})
+		return
+	}
+
+	resp := handleAutomationRequest(req, cfg)
+	_ = writeAutomationResponse(conn, resp)
+}
+
+func writeAutomationResponse(conn io.Writer, resp AutomationResponse) error {
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	return writeMessage(conn, payload)
+}
+
+func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		writeHTTPAutomationJSON(w, http.StatusOK, handleAutomationRequest(AutomationRequest{Command: "get-state"}, cfg))
+	})
+	mux.HandleFunc("/components", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		writeHTTPAutomationJSON(w, http.StatusOK, handleAutomationRequest(AutomationRequest{Command: "list-components"}, cfg))
+	})
+	mux.HandleFunc("/click", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "click")
+	})
+	mux.HandleFunc("/focus", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "focus")
+	})
+	mux.HandleFunc("/set-text", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "set-text")
+	})
+	mux.HandleFunc("/press-key", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "press-key")
+	})
+	mux.HandleFunc("/capture-frame", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "capture-frame")
+	})
+	mux.HandleFunc("/frame", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		bytes, err := captureCurrentFrameBytes()
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bytes)
+	})
+	mux.HandleFunc("/native-state", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{})
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		writeHTTPNativeStateJSON(w, http.StatusOK, nativeAutomationStateFromProtocol(resp))
+	})
+	mux.HandleFunc("/native-frame", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{CaptureFrame: true})
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		pngBytes, err := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pngBytes)
+	})
+	mux.HandleFunc("/self-frame", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{CaptureFrame: true})
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		pngBytes, err := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pngBytes)
+	})
+	mux.HandleFunc("/window-frame", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{CapturePresentedFrame: true})
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		pngBytes, err := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pngBytes)
+	})
+	mux.HandleFunc("/desktop-frame", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{CaptureDesktopFrame: true})
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		pngBytes, err := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pngBytes)
+	})
+	mux.HandleFunc("/prepare-window", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		defer r.Body.Close()
+
+		req := NativeWindowControlRequest{
+			RestoreWindow:     true,
+			ClampToWorkArea:   true,
+			BringToForeground: true,
+		}
+		if r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
+				return
+			}
+		}
+
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{
+			RestoreWindow:     req.RestoreWindow,
+			ClampToWorkArea:   req.ClampToWorkArea,
+			BringToForeground: req.BringToForeground,
+		})
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		writeHTTPNativeStateJSON(w, http.StatusOK, nativeAutomationStateFromProtocol(resp))
+	})
+	mux.HandleFunc("/inspect-frame", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		defer r.Body.Close()
+
+		req := InspectFrameRequest{
+			PrepareWindow:     true,
+			RestoreWindow:     true,
+			ClampToWorkArea:   true,
+			BringToForeground: true,
+			PreferDesktop:     true,
+			FallbackToSelf:    true,
+		}
+		if r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
+				return
+			}
+		}
+
+		pngBytes, source, state, err := inspectFramePNG(req)
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("X-POEM-Frame-Source", source)
+		w.Header().Set("X-POEM-Window-Visible", strconv.FormatBool(state.WindowVisible))
+		w.Header().Set("X-POEM-Window-Minimized", strconv.FormatBool(state.WindowMinimized))
+		w.Header().Set("X-POEM-Window-Foreground", strconv.FormatBool(state.WindowForeground))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pngBytes)
+	})
+	return mux
+}
+
+func inspectFramePNG(req InspectFrameRequest) ([]byte, string, NativeAutomationState, error) {
+	stateReq := protocol.NativeDebugRequest{}
+	if req.PrepareWindow {
+		stateReq.RestoreWindow = req.RestoreWindow
+		stateReq.ClampToWorkArea = req.ClampToWorkArea
+		stateReq.BringToForeground = req.BringToForeground
+	}
+
+	stateResp, err := nativeDebugRequest(stateReq)
+	if err != nil {
+		return nil, "", NativeAutomationState{}, err
+	}
+	state := nativeAutomationStateFromProtocol(stateResp)
+
+	if req.PreferDesktop && state.WindowVisible && !state.WindowMinimized && state.WindowForeground {
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{CaptureDesktopFrame: true})
+		if err == nil {
+			pngBytes, encodeErr := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
+			if encodeErr == nil {
+				return pngBytes, "desktop", state, nil
+			}
+		}
+	}
+
+	if req.FallbackToSelf {
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{CaptureFrame: true})
+		if err != nil {
+			return nil, "", state, err
+		}
+		pngBytes, err := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
+		if err != nil {
+			return nil, "", state, err
+		}
+		return pngBytes, "self", state, nil
+	}
+
+	if req.PreferDesktop && (!state.WindowVisible || state.WindowMinimized || !state.WindowForeground) {
+		return nil, "", state, fmt.Errorf("window not ready for desktop capture: visible=%t minimized=%t foreground=%t", state.WindowVisible, state.WindowMinimized, state.WindowForeground)
+	}
+
+	return nil, "", state, fmt.Errorf("no inspection frame strategy succeeded")
+}
+
+func writeAutomationHTTPCommand(w http.ResponseWriter, r *http.Request, cfg AutomationConfig, command string) {
+	if r.Method != http.MethodPost {
+		writeHTTPAutomationMethodNotAllowed(w)
+		return
+	}
+	defer r.Body.Close()
+
+	var req AutomationRequest
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+	}
+	req.Command = command
+	resp := handleAutomationRequest(req, cfg)
+	status := http.StatusOK
+	if !resp.OK {
+		status = http.StatusBadRequest
+	}
+	writeHTTPAutomationJSON(w, status, resp)
+}
+
+func writeHTTPAutomationMethodNotAllowed(w http.ResponseWriter) {
+	writeHTTPAutomationJSON(w, http.StatusMethodNotAllowed, AutomationResponse{OK: false, Error: "method not allowed"})
+}
+
+func writeHTTPAutomationJSON(w http.ResponseWriter, status int, resp AutomationResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func writeHTTPNativeStateJSON(w http.ResponseWriter, status int, state NativeAutomationState) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(state)
+}
+
+func handleAutomationRequest(req AutomationRequest, cfg AutomationConfig) AutomationResponse {
+	stateMutex.Lock()
+	defer stateMutex.Unlock()
+
+	if globalState == nil {
+		return AutomationResponse{OK: false, Error: "POEM state not initialized"}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(req.Command)) {
+	case "list-components":
+		nodes, flat := buildAutomationSnapshot()
+		return baseAutomationResponse(nodes, flat)
+	case "get-state":
+		return baseAutomationResponse(nil, nil)
+	case "click":
+		if err := automationClickComponent(req.ID); err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		automationRepaint()
+		return baseAutomationResponse(nil, nil)
+	case "focus":
+		if err := automationFocusComponent(req.ID); err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		automationRepaint()
+		return baseAutomationResponse(nil, nil)
+	case "set-text":
+		if err := automationSetText(req.ID, req.Value); err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		automationRepaint()
+		return baseAutomationResponse(nil, nil)
+	case "press-key":
+		if err := automationPressKey(req.Key); err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		automationRepaint()
+		return baseAutomationResponse(nil, nil)
+	case "capture-frame":
+		targetPath := req.Path
+		if strings.TrimSpace(targetPath) == "" {
+			targetPath = filepath.Join(cfg.CaptureDir, "poem_capture.png")
+		}
+		if !filepath.IsAbs(targetPath) {
+			targetPath = filepath.Join(cfg.CaptureDir, targetPath)
+		}
+		if err := captureCurrentFrame(targetPath); err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		resp := baseAutomationResponse(nil, nil)
+		resp.CapturePath = targetPath
+		return resp
+	default:
+		return AutomationResponse{OK: false, Error: "unknown automation command"}
+	}
+}
+
+func baseAutomationResponse(nodes, flat []AutomationNode) AutomationResponse {
+	resp := AutomationResponse{
+		OK:                   true,
+		CurrentPage:          globalState.CurrentPage,
+		FocusedID:            globalState.FocusedID,
+		HoveredID:            globalState.HoveredID,
+		WindowWidth:          globalState.WindowWidth,
+		WindowHeight:         globalState.WindowHeight,
+		PhysicalWindowWidth:  globalState.PhysicalWindowWidth,
+		PhysicalWindowHeight: globalState.PhysicalWindowHeight,
+	}
+	if nodes != nil {
+		resp.Nodes = nodes
+	}
+	if flat != nil {
+		resp.Flat = flat
+	}
+	return resp
+}
+
+func buildAutomationSnapshot() ([]AutomationNode, []AutomationNode) {
+	nodes := make([]AutomationNode, 0)
+	flat := make([]AutomationNode, 0)
+	if globalState == nil {
+		return nodes, flat
+	}
+	comps := globalState.Pages[globalState.CurrentPage]
+	for _, comp := range comps {
+		comp.SetBounds(comp.Bounds())
+		node := buildAutomationNode(comp)
+		nodes = append(nodes, node)
+		flattenAutomationNode(node, &flat)
+	}
+	return nodes, flat
+}
+
+func buildAutomationNode(comp types.Component) AutomationNode {
+	bounds := comp.Bounds()
+	node := AutomationNode{
+		ID:        comp.ID(),
+		Type:      componentTypeName(comp),
+		Bounds:    AutomationBounds{X: bounds.Min.X, Y: bounds.Min.Y, W: bounds.Dx(), H: bounds.Dy()},
+		Text:      componentText(comp),
+		Visible:   true,
+		Focusable: comp.Focusable(),
+		Focused:   globalState != nil && globalState.FocusedID == comp.ID(),
+	}
+	switch c := comp.(type) {
+	case *layout.FlexBox:
+		node.Children = make([]AutomationNode, 0, len(c.Children))
+		for _, child := range c.Children {
+			node.Children = append(node.Children, buildAutomationNode(child))
+		}
+	case *components.ScrollView:
+		node.Children = make([]AutomationNode, 0, len(c.Children))
+		for _, child := range c.Children {
+			node.Children = append(node.Children, buildAutomationNode(child))
+		}
+	case *components.Modal:
+		node.Children = make([]AutomationNode, 0, len(c.Children))
+		for _, child := range c.Children {
+			node.Children = append(node.Children, buildAutomationNode(child))
+		}
+	}
+	return node
+}
+
+func flattenAutomationNode(node AutomationNode, flat *[]AutomationNode) {
+	*flat = append(*flat, node)
+	for _, child := range node.Children {
+		flattenAutomationNode(child, flat)
+	}
+}
+
+func componentTypeName(comp types.Component) string {
+	switch comp.(type) {
+	case *components.Button:
+		return "Button"
+	case *components.TextInput:
+		return "TextInput"
+	case *components.TextArea:
+		return "TextArea"
+	case *components.Label:
+		return "Label"
+	case *components.DynamicLabel:
+		return "DynamicLabel"
+	case *components.Panel:
+		return "Panel"
+	case *components.GlassPanel:
+		return "GlassPanel"
+	case *components.ScrollView:
+		return "ScrollView"
+	case *components.Paragraph:
+		return "Paragraph"
+	case *components.ImageView:
+		return "ImageView"
+	case *layout.FlexBox:
+		return "FlexBox"
+	default:
+		return fmt.Sprintf("%T", comp)
+	}
+}
+
+func componentText(comp types.Component) string {
+	switch c := comp.(type) {
+	case *components.Button:
+		return c.Label
+	case *components.Label:
+		return c.Text
+	case *components.TextInput:
+		if globalState != nil && globalState.TextInputValues != nil {
+			if val, ok := globalState.TextInputValues[c.CompID]; ok {
+				return val
+			}
+		}
+		return c.Text
+	case *components.TextArea:
+		if globalState != nil && globalState.TextInputValues != nil {
+			if val, ok := globalState.TextInputValues[c.CompID]; ok {
+				return val
+			}
+		}
+		return c.Text
+	case *components.Paragraph:
+		return c.Text
+	default:
+		return ""
+	}
+}
+
+func automationClickComponent(id string) error {
+	comp := libFindComponent(id)
+	if comp == nil {
+		return fmt.Errorf("component %q not found", id)
+	}
+	bounds := comp.Bounds()
+	pt := image.Pt(bounds.Min.X+bounds.Dx()/2, bounds.Min.Y+bounds.Dy()/2)
+	globalState.MouseX = pt.X
+	globalState.MouseY = pt.Y
+	globalState.HoveredID = id
+	globalState.FocusedID = id
+	globalState.ActiveID = id
+	_ = comp.OnMouseDown(pt, globalState)
+	_ = comp.OnMouseUp(pt, globalState)
+	globalState.ActiveID = ""
+	return nil
+}
+
+func automationFocusComponent(id string) error {
+	comp := libFindComponent(id)
+	if comp == nil {
+		return fmt.Errorf("component %q not found", id)
+	}
+	if !comp.Focusable() {
+		return fmt.Errorf("component %q is not focusable", id)
+	}
+	globalState.FocusedID = id
+	return nil
+}
+
+func automationSetText(id, value string) error {
+	comp := libFindComponent(id)
+	if comp == nil {
+		return fmt.Errorf("component %q not found", id)
+	}
+	if globalState.TextInputValues == nil {
+		globalState.TextInputValues = make(map[string]string)
+	}
+	switch c := comp.(type) {
+	case *components.TextInput:
+		c.Text = value
+		c.CursorIndex = len([]rune(value))
+		globalState.TextInputValues[id] = value
+		globalState.TextInputValues[id+"_cursor"] = strconv.Itoa(c.CursorIndex)
+		globalState.FocusedID = id
+		return nil
+	case *components.TextArea:
+		c.Text = value
+		c.CursorIndex = len([]rune(value))
+		globalState.TextInputValues[id] = value
+		globalState.TextInputValues[id+"_cursor"] = strconv.Itoa(c.CursorIndex)
+		globalState.FocusedID = id
+		return nil
+	default:
+		return fmt.Errorf("component %q is not a text input", id)
+	}
+}
+
+func automationPressKey(key string) error {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if normalized == "" {
+		return fmt.Errorf("missing key")
+	}
+	if normalized == "tab" {
+		globalState.CycleFocus(false)
+		return nil
+	}
+	if globalState.FocusedID == "" {
+		return fmt.Errorf("no focused component")
+	}
+	var code uint32
+	var ch rune
+	switch normalized {
+	case "enter":
+		code = 13
+	case "space":
+		code = 32
+	case "backspace":
+		code = 8
+	default:
+		runes := []rune(key)
+		if len(runes) != 1 {
+			return fmt.Errorf("unsupported key %q", key)
+		}
+		ch = runes[0]
+	}
+
+	if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+		for _, comp := range comps {
+			if comp.OnKey(code, ch, globalState) {
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func automationRepaint() {
+	if globalPainter != nil && globalRenderConn != nil {
+		triggerRepaintFrame(globalRenderConn, globalPainter)
+	}
+}
+
+func captureCurrentFrame(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	img, err := captureCurrentFrameBytes()
+	if err != nil {
+		return err
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write(img)
+	return err
+}
+
+func captureCurrentFrameBytes() ([]byte, error) {
+	img := renderFrameToImage(globalLastFrame)
+	if globalState != nil && globalState.PhysicalWindowWidth > 0 && globalState.PhysicalWindowHeight > 0 {
+		target := image.Rect(0, 0, globalState.PhysicalWindowWidth, globalState.PhysicalWindowHeight)
+		if !target.Eq(img.Bounds()) {
+			scaled := image.NewRGBA(target)
+			xdraw.CatmullRom.Scale(scaled, target, img, img.Bounds(), xdraw.Over, nil)
+			img = scaled
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func encodeRGBAToPNG(pixels []byte, width, height int) ([]byte, error) {
+	if len(pixels) == 0 || width <= 0 || height <= 0 {
+		return nil, fmt.Errorf("missing native frame data")
+	}
+	img := &image.RGBA{
+		Pix:    append([]byte(nil), pixels...),
+		Stride: width * 4,
+		Rect:   image.Rect(0, 0, width, height),
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func nativeAutomationStateFromProtocol(resp protocol.NativeDebugResponse) NativeAutomationState {
+	return NativeAutomationState{
+		DPI:              resp.DPI,
+		WindowVisible:    resp.WindowVisible,
+		WindowMinimized:  resp.WindowMinimized,
+		WindowForeground: resp.WindowForeground,
+		WindowLeft:       resp.WindowLeft,
+		WindowTop:        resp.WindowTop,
+		WindowRight:      resp.WindowRight,
+		WindowBottom:     resp.WindowBottom,
+		ClientWidth:      resp.ClientWidth,
+		ClientHeight:     resp.ClientHeight,
+		WorkLeft:         resp.WorkLeft,
+		WorkTop:          resp.WorkTop,
+		WorkRight:        resp.WorkRight,
+		WorkBottom:       resp.WorkBottom,
+		BackbufferWidth:  resp.BackbufferWidth,
+		BackbufferHeight: resp.BackbufferHeight,
+		FrameWidth:       resp.FrameWidth,
+		FrameHeight:      resp.FrameHeight,
+	}
+}
+
+func renderFrameToImage(frame protocol.RenderFrame) *image.RGBA {
+	width := int(frame.Width)
+	height := int(frame.Height)
+	if width <= 0 {
+		width = 1024
+	}
+	if height <= 0 {
+		height = 768
+	}
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	currentClip := image.Rect(0, 0, width, height)
+	clipEnabled := false
+	offsetX := 0
+	offsetY := 0
+	for _, cmd := range frame.Commands {
+		switch cmd.Type {
+		case protocol.DrawCommandTypeSetOffset:
+			offsetX = int(math.Round(float64(cmd.Val1)))
+			offsetY = int(math.Round(float64(cmd.Val2)))
+		case protocol.DrawCommandTypeSetClip:
+			if cmd.Flag {
+				currentClip = image.Rect(
+					int(cmd.X1)+offsetX,
+					int(cmd.Y1)+offsetY,
+					int(cmd.X1+cmd.W)+offsetX,
+					int(cmd.Y1+cmd.H)+offsetY,
+				)
+				clipEnabled = true
+			} else {
+				currentClip = image.Rect(0, 0, width, height)
+				clipEnabled = false
+			}
+		case protocol.DrawCommandTypeFillRect, protocol.DrawCommandTypeDrawRoundedRect:
+			fillRoundedRect(
+				img,
+				image.Rect(int(cmd.X1)+offsetX, int(cmd.Y1)+offsetY, int(cmd.X2)+offsetX, int(cmd.Y2)+offsetY),
+				int(cmd.Radius),
+				color.RGBA{cmd.R, cmd.G, cmd.B, cmd.A},
+				clipEnabled,
+				currentClip,
+			)
+		case protocol.DrawCommandTypeDrawLine:
+			drawLine(img, int(cmd.X1)+offsetX, int(cmd.Y1)+offsetY, int(cmd.X2)+offsetX, int(cmd.Y2)+offsetY, color.RGBA{cmd.R, cmd.G, cmd.B, cmd.A}, clipEnabled, currentClip)
+		case protocol.DrawCommandTypeDrawText:
+			drawTextToImage(img, int(cmd.X1)+offsetX, int(cmd.Y1)+offsetY, cmd.Text, color.RGBA{cmd.R, cmd.G, cmd.B, cmd.A}, clipEnabled, currentClip)
+		case protocol.DrawCommandTypeDrawImage:
+			drawImageBytes(img, image.Rect(int(cmd.X1)+offsetX, int(cmd.Y1)+offsetY, int(cmd.X2)+offsetX, int(cmd.Y2)+offsetY), int(cmd.W), int(cmd.H), cmd.Bytes, clipEnabled, currentClip)
+		}
+	}
+	return img
+}
+
+func fillRoundedRect(dst *image.RGBA, rect image.Rectangle, radius int, col color.RGBA, clipEnabled bool, clip image.Rectangle) {
+	if radius < 0 {
+		radius = 0
+	}
+	target := rect
+	if clipEnabled {
+		target = target.Intersect(clip)
+	}
+	if target.Empty() {
+		return
+	}
+	for y := target.Min.Y; y < target.Max.Y; y++ {
+		for x := target.Min.X; x < target.Max.X; x++ {
+			if radius > 0 && !pointInRoundedRect(x, y, rect, radius) {
+				continue
+			}
+			blendPixel(dst, x, y, col)
+		}
+	}
+}
+
+func pointInRoundedRect(x, y int, rect image.Rectangle, radius int) bool {
+	if x >= rect.Min.X+radius && x < rect.Max.X-radius {
+		return true
+	}
+	if y >= rect.Min.Y+radius && y < rect.Max.Y-radius {
+		return true
+	}
+	corners := []image.Point{
+		{rect.Min.X + radius, rect.Min.Y + radius},
+		{rect.Max.X - radius - 1, rect.Min.Y + radius},
+		{rect.Min.X + radius, rect.Max.Y - radius - 1},
+		{rect.Max.X - radius - 1, rect.Max.Y - radius - 1},
+	}
+	for _, center := range corners {
+		dx := float64(x - center.X)
+		dy := float64(y - center.Y)
+		if dx*dx+dy*dy <= float64(radius*radius) {
+			return true
+		}
+	}
+	return false
+}
+
+func drawLine(dst *image.RGBA, x1, y1, x2, y2 int, col color.RGBA, clipEnabled bool, clip image.Rectangle) {
+	dx := float64(x2 - x1)
+	dy := float64(y2 - y1)
+	steps := int(math.Max(math.Abs(dx), math.Abs(dy)))
+	if steps == 0 {
+		steps = 1
+	}
+	for i := 0; i <= steps; i++ {
+		x := x1 + int(float64(i)*dx/float64(steps))
+		y := y1 + int(float64(i)*dy/float64(steps))
+		if clipEnabled && !image.Pt(x, y).In(clip) {
+			continue
+		}
+		blendPixel(dst, x, y, col)
+	}
+}
+
+func drawTextToImage(dst *image.RGBA, x, y int, text string, col color.RGBA, clipEnabled bool, clip image.Rectangle) {
+	if text == "" {
+		return
+	}
+	tmp := image.NewRGBA(dst.Bounds())
+	drawer := &font.Drawer{
+		Dst:  tmp,
+		Src:  image.NewUniform(col),
+		Face: basicfont.Face7x13,
+		Dot:  fixed.P(x, y),
+	}
+	drawer.DrawString(text)
+	if clipEnabled {
+		target := clip.Intersect(dst.Bounds())
+		if target.Empty() {
+			return
+		}
+		draw.Draw(dst, target, tmp, target.Min, draw.Over)
+		return
+	}
+	draw.Draw(dst, dst.Bounds(), tmp, image.Point{}, draw.Over)
+}
+
+func drawImageBytes(dst *image.RGBA, rect image.Rectangle, srcW, srcH int, pixels []byte, clipEnabled bool, clip image.Rectangle) {
+	if srcW <= 0 || srcH <= 0 || len(pixels) < srcW*srcH*4 {
+		return
+	}
+	src := &image.RGBA{
+		Pix:    append([]byte(nil), pixels...),
+		Stride: srcW * 4,
+		Rect:   image.Rect(0, 0, srcW, srcH),
+	}
+	if rect.Dx() == srcW && rect.Dy() == srcH {
+		target := rect
+		if clipEnabled {
+			target = target.Intersect(clip)
+		}
+		draw.Draw(dst, target, src, image.Pt(target.Min.X-rect.Min.X, target.Min.Y-rect.Min.Y), draw.Over)
+		return
+	}
+	scaled := image.NewRGBA(rect)
+	xdraw.CatmullRom.Scale(scaled, rect, src, src.Bounds(), xdraw.Over, nil)
+	target := rect
+	if clipEnabled {
+		target = target.Intersect(clip)
+	}
+	draw.Draw(dst, target, scaled, target.Min, draw.Over)
+}
+
+func blendPixel(img *image.RGBA, x, y int, src color.RGBA) {
+	if !image.Pt(x, y).In(img.Bounds()) {
+		return
+	}
+	dst := img.RGBAAt(x, y)
+	alpha := float64(src.A) / 255.0
+	inv := 1.0 - alpha
+	img.SetRGBA(x, y, color.RGBA{
+		R: uint8(float64(src.R)*alpha + float64(dst.R)*inv),
+		G: uint8(float64(src.G)*alpha + float64(dst.G)*inv),
+		B: uint8(float64(src.B)*alpha + float64(dst.B)*inv),
+		A: uint8(math.Min(255, float64(src.A)+float64(dst.A)*inv)),
+	})
+}
