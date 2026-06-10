@@ -174,6 +174,7 @@ NativeDebugRequest DecodeNativeDebugRequest(const std::vector<std::uint8_t>& bod
     out.restoreWindow = r.Read<std::uint8_t>() != 0;
     out.clampToWorkArea = r.Read<std::uint8_t>() != 0;
     out.bringToForeground = r.Read<std::uint8_t>() != 0;
+    out.maximizeWindow = r.Read<std::uint8_t>() != 0;
     return out;
 }
 

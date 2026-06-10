@@ -724,16 +724,21 @@ func triggerRepaintFrame(conn io.Writer, painter *ProtocolPainter) {
 	if globalState == nil {
 		return
 	}
+	frameStart := time.Now()
 
 	painter.Reset()
 
 	// Rebuild dynamic page descriptors
+	buildPagesStart := time.Now()
 	if globalBuildPages != nil {
 		globalBuildPages(globalState)
 	}
+	buildPagesDuration := time.Since(buildPagesStart)
 
 	// Trigger layout logic & flat drawing tree population
+	renderStart := time.Now()
 	types.RenderPipeline(painter, globalState)
+	renderDuration := time.Since(renderStart)
 
 	// Update dynamic hover-based cursor type automatically on every frame
 	globalState.CursorID = globalState.ArrowCursor
@@ -784,14 +789,19 @@ func triggerRepaintFrame(conn io.Writer, painter *ProtocolPainter) {
 	}
 
 	// Serialize
+	serializeStart := time.Now()
 	frame := painter.ToRenderFrame(Width, Height, cursorVal)
 	globalLastFrame = frame
 	payload, err := protocol.EncodeRenderFrame(frame)
+	serializeDuration := time.Since(serializeStart)
 	if err != nil {
 		fmt.Printf("failed to serialize render frame: %v\n", err)
 		return
 	}
+	writeStart := time.Now()
 	_ = writeMessage(conn, payload)
+	writeDuration := time.Since(writeStart)
+	globalPerfTracker.recordFrame(buildPagesDuration, renderDuration, serializeDuration, writeDuration, time.Since(frameStart), len(painter.commands))
 }
 
 // Input event processor & state mapping
@@ -799,8 +809,12 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 	if globalState == nil {
 		return
 	}
+	batchStart := time.Now()
 
 	stateChanged := false
+	resizeEvents := 0
+	mouseEvents := 0
+	keyboardEvents := 0
 
 	for _, ev := range batch.Events {
 		stateChanged = true
@@ -811,6 +825,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			os.Exit(0)
 
 		case protocol.EventTypeWindowSize:
+			resizeEvents++
 			w := int(ev.Width)
 			h := int(ev.Height)
 			if w > 0 && h > 0 {
@@ -827,6 +842,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			}
 
 		case protocol.EventTypeMouseDown:
+			mouseEvents++
 			globalState.ClickCount++
 			globalState.MouseX = int(ev.X)
 			globalState.MouseY = int(ev.Y)
@@ -867,6 +883,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			globalState.StatusText = fmt.Sprintf("Interaction Captured: %d Clicks | Active target: %q", globalState.ClickCount, newFocus)
 
 		case protocol.EventTypeMouseUp:
+			mouseEvents++
 			globalState.MouseX = int(ev.X)
 			globalState.MouseY = int(ev.Y)
 			pt := image.Point{globalState.MouseX, globalState.MouseY}
@@ -893,6 +910,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			}
 
 		case protocol.EventTypeMouseMove:
+			mouseEvents++
 			globalState.MouseX = int(ev.X)
 			globalState.MouseY = int(ev.Y)
 			pt := image.Point{globalState.MouseX, globalState.MouseY}
@@ -948,6 +966,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			}
 
 		case protocol.EventTypeMouseWheel:
+			mouseEvents++
 			delta := int(ev.Delta)
 			pt := image.Point{globalState.MouseX, globalState.MouseY}
 
@@ -964,6 +983,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			}
 
 		case protocol.EventTypeKeyDown:
+			keyboardEvents++
 			wparam := ev.Keycode
 			if globalState.KeysPressed == nil {
 				globalState.KeysPressed = make(map[uint32]bool)
@@ -1003,6 +1023,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			}
 
 		case protocol.EventTypeKeyUp:
+			keyboardEvents++
 			wparam := ev.Keycode
 			if globalState.KeysPressed == nil {
 				globalState.KeysPressed = make(map[uint32]bool)
@@ -1010,6 +1031,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			globalState.KeysPressed[wparam] = false
 
 		case protocol.EventTypeKeyChar:
+			keyboardEvents++
 			charRune := rune(ev.Char)
 			if globalState.FocusedID != "" {
 				if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
@@ -1022,6 +1044,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			}
 		}
 	}
+	globalPerfTracker.recordEventBatch(len(batch.Events), time.Since(batchStart), resizeEvents, mouseEvents, keyboardEvents)
 	if stateChanged {
 		triggerRepaintFrame(conn, painter)
 	}

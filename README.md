@@ -62,6 +62,8 @@ POEM includes a shared automation layer for downstream native apps. When enabled
 - component tree snapshots
 - click/focus/text/key commands
 - direct PNG frame capture
+- shared performance snapshots and action measurement helpers
+- native window-action measurement for latency debugging
 - native window state
 - dedicated inspection captures:
   - `self-frame`
@@ -137,9 +139,11 @@ The active C++ sidecar supports the current core path:
 - bootstrap atlas upload
 - render frames over the custom protocol
 - mouse, wheel, keyboard, resize, and DPI events
+- startup sizing that uses the target monitor DPI and launches within a conservative work-area fraction
 - cursor switching
 - core draw commands, text atlas rendering, clipping, and sound triggers
 - HTTP automation transport
+- stronger native foreground activation for automation and inspection flows
 - native window state reporting
 - self/window/desktop capture modes
 - shared inspection fallback flow for agents and tests

@@ -129,6 +129,7 @@ struct NativeDebugRequest {
     bool restoreWindow{};
     bool clampToWorkArea{};
     bool bringToForeground{};
+    bool maximizeWindow{};
 };
 
 struct NativeDebugResponse {

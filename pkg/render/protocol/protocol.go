@@ -128,6 +128,7 @@ type NativeDebugRequest struct {
 	RestoreWindow         bool
 	ClampToWorkArea       bool
 	BringToForeground     bool
+	MaximizeWindow        bool
 }
 
 type NativeDebugResponse struct {

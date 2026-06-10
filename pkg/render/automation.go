@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
@@ -114,6 +115,7 @@ type NativeWindowControlRequest struct {
 	RestoreWindow     bool `json:"restore_window"`
 	ClampToWorkArea   bool `json:"clamp_to_work_area"`
 	BringToForeground bool `json:"bring_to_foreground"`
+	MaximizeWindow    bool `json:"maximize_window"`
 }
 
 type InspectFrameRequest struct {
@@ -123,6 +125,73 @@ type InspectFrameRequest struct {
 	BringToForeground bool `json:"bring_to_foreground"`
 	PreferDesktop     bool `json:"prefer_desktop"`
 	FallbackToSelf    bool `json:"fallback_to_self"`
+}
+
+type PerfCondition struct {
+	FocusedID           string `json:"focused_id,omitempty"`
+	CurrentPage         string `json:"current_page,omitempty"`
+	ComponentID         string `json:"component_id,omitempty"`
+	ContainsText        string `json:"contains_text,omitempty"`
+	WindowWidthAtLeast  int    `json:"window_width_at_least,omitempty"`
+	WindowHeightAtLeast int    `json:"window_height_at_least,omitempty"`
+	MinFrameCountDelta  uint64 `json:"min_frame_count_delta,omitempty"`
+}
+
+type PerfMeasureActionRequest struct {
+	Command        string        `json:"command"`
+	ID             string        `json:"id,omitempty"`
+	Value          string        `json:"value,omitempty"`
+	Path           string        `json:"path,omitempty"`
+	Key            string        `json:"key,omitempty"`
+	TimeoutMS      int           `json:"timeout_ms,omitempty"`
+	PollIntervalMS int           `json:"poll_interval_ms,omitempty"`
+	Condition      PerfCondition `json:"condition"`
+}
+
+type PerfMeasureActionResponse struct {
+	OK           bool               `json:"ok"`
+	Error        string             `json:"error,omitempty"`
+	Command      string             `json:"command"`
+	ElapsedMS    float64            `json:"elapsed_ms"`
+	ConditionMet bool               `json:"condition_met"`
+	FrameDelta   uint64             `json:"frame_delta"`
+	Perf         PerfState          `json:"perf"`
+	FinalState   AutomationResponse `json:"final_state"`
+}
+
+type NativePerfCondition struct {
+	WindowVisible           bool   `json:"window_visible,omitempty"`
+	WindowForeground        bool   `json:"window_foreground,omitempty"`
+	WindowNotMinimized      bool   `json:"window_not_minimized,omitempty"`
+	ClientWidthAtLeast      int    `json:"client_width_at_least,omitempty"`
+	ClientHeightAtLeast     int    `json:"client_height_at_least,omitempty"`
+	BackbufferWidthAtLeast  int    `json:"backbuffer_width_at_least,omitempty"`
+	BackbufferHeightAtLeast int    `json:"backbuffer_height_at_least,omitempty"`
+	WindowWidthAtLeast      int    `json:"window_width_at_least,omitempty"`
+	WindowHeightAtLeast     int    `json:"window_height_at_least,omitempty"`
+	MinFrameCountDelta      uint64 `json:"min_frame_count_delta,omitempty"`
+	MinEventBatchCountDelta uint64 `json:"min_event_batch_count_delta,omitempty"`
+}
+
+type PerfMeasureNativeActionRequest struct {
+	RestoreWindow     bool                `json:"restore_window"`
+	ClampToWorkArea   bool                `json:"clamp_to_work_area"`
+	BringToForeground bool                `json:"bring_to_foreground"`
+	MaximizeWindow    bool                `json:"maximize_window"`
+	TimeoutMS         int                 `json:"timeout_ms,omitempty"`
+	PollIntervalMS    int                 `json:"poll_interval_ms,omitempty"`
+	Condition         NativePerfCondition `json:"condition"`
+}
+
+type PerfMeasureNativeActionResponse struct {
+	OK           bool                  `json:"ok"`
+	Error        string                `json:"error,omitempty"`
+	ElapsedMS    float64               `json:"elapsed_ms"`
+	ConditionMet bool                  `json:"condition_met"`
+	FrameDelta   uint64                `json:"frame_delta"`
+	EventDelta   uint64                `json:"event_delta"`
+	Perf         PerfState             `json:"perf"`
+	NativeState  NativeAutomationState `json:"native_state"`
 }
 
 func resolveAutomationConfig(cfg *AutomationConfig) AutomationConfig {
@@ -372,6 +441,7 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 			RestoreWindow:     true,
 			ClampToWorkArea:   true,
 			BringToForeground: true,
+			MaximizeWindow:    false,
 		}
 		if r.ContentLength != 0 {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -384,6 +454,7 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 			RestoreWindow:     req.RestoreWindow,
 			ClampToWorkArea:   req.ClampToWorkArea,
 			BringToForeground: req.BringToForeground,
+			MaximizeWindow:    req.MaximizeWindow,
 		})
 		if err != nil {
 			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
@@ -426,6 +497,66 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 		w.Header().Set("X-POEM-Window-Foreground", strconv.FormatBool(state.WindowForeground))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(pngBytes)
+	})
+	mux.HandleFunc("/perf/state", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		writeHTTPPerfJSON(w, http.StatusOK, globalPerfTracker.snapshot())
+	})
+	mux.HandleFunc("/perf/events", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		writeHTTPPerfJSON(w, http.StatusOK, map[string]any{"events": globalPerfTracker.snapshot().Events})
+	})
+	mux.HandleFunc("/perf/reset", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		globalPerfTracker.reset()
+		writeHTTPPerfJSON(w, http.StatusOK, globalPerfTracker.snapshot())
+	})
+	mux.HandleFunc("/perf/measure-action", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		defer r.Body.Close()
+
+		var req PerfMeasureActionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		resp := measureAutomationAction(req, cfg)
+		status := http.StatusOK
+		if !resp.OK {
+			status = http.StatusBadRequest
+		}
+		writeHTTPPerfJSON(w, status, resp)
+	})
+	mux.HandleFunc("/perf/measure-native-action", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		defer r.Body.Close()
+
+		var req PerfMeasureNativeActionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		resp := measureNativeAction(req)
+		status := http.StatusOK
+		if !resp.OK {
+			status = http.StatusBadRequest
+		}
+		writeHTTPPerfJSON(w, status, resp)
 	})
 	return mux
 }
@@ -488,7 +619,7 @@ func writeAutomationHTTPCommand(w http.ResponseWriter, r *http.Request, cfg Auto
 		}
 	}
 	req.Command = command
-	resp := handleAutomationRequest(req, cfg)
+	resp := executeAutomationRequest(req, cfg)
 	status := http.StatusOK
 	if !resp.OK {
 		status = http.StatusBadRequest
@@ -510,6 +641,284 @@ func writeHTTPNativeStateJSON(w http.ResponseWriter, status int, state NativeAut
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(state)
+}
+
+func writeHTTPPerfJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func executeAutomationRequest(req AutomationRequest, cfg AutomationConfig) AutomationResponse {
+	start := time.Now()
+	resp := handleAutomationRequest(req, cfg)
+	if strings.TrimSpace(req.Command) != "" {
+		globalPerfTracker.recordAutomationAction(strings.ToLower(strings.TrimSpace(req.Command)), time.Since(start), automationActionDetails(req, resp))
+	}
+	return resp
+}
+
+func automationActionDetails(req AutomationRequest, resp AutomationResponse) string {
+	details := []string{}
+	if req.ID != "" {
+		details = append(details, "id="+req.ID)
+	}
+	if req.Key != "" {
+		details = append(details, "key="+req.Key)
+	}
+	if !resp.OK && resp.Error != "" {
+		details = append(details, "error="+resp.Error)
+	}
+	return strings.Join(details, " ")
+}
+
+func measureAutomationAction(req PerfMeasureActionRequest, cfg AutomationConfig) PerfMeasureActionResponse {
+	timeout := 5 * time.Second
+	if req.TimeoutMS > 0 {
+		timeout = time.Duration(req.TimeoutMS) * time.Millisecond
+	}
+	pollInterval := 15 * time.Millisecond
+	if req.PollIntervalMS > 0 {
+		pollInterval = time.Duration(req.PollIntervalMS) * time.Millisecond
+	}
+
+	startPerf := globalPerfTracker.snapshot()
+	startFrameCount := startPerf.Frames.FrameCount
+	start := time.Now()
+	actionResp := executeAutomationRequest(AutomationRequest{
+		Command: req.Command,
+		ID:      req.ID,
+		Value:   req.Value,
+		Path:    req.Path,
+		Key:     req.Key,
+	}, cfg)
+	if !actionResp.OK {
+		return PerfMeasureActionResponse{
+			OK:           false,
+			Error:        actionResp.Error,
+			Command:      req.Command,
+			ElapsedMS:    durationMS(time.Since(start)),
+			ConditionMet: false,
+			FrameDelta:   globalPerfTracker.snapshot().Frames.FrameCount - startFrameCount,
+			Perf:         globalPerfTracker.snapshot(),
+			FinalState:   actionResp,
+		}
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		stateMutex.Lock()
+		met := perfConditionMetLocked(req.Condition, startFrameCount)
+		finalState := baseAutomationResponse(nil, nil)
+		stateMutex.Unlock()
+		if met {
+			elapsed := time.Since(start)
+			globalPerfTracker.recordAutomationAction("measure-"+strings.ToLower(strings.TrimSpace(req.Command)), elapsed, "condition_met=true")
+			return PerfMeasureActionResponse{
+				OK:           true,
+				Command:      req.Command,
+				ElapsedMS:    durationMS(elapsed),
+				ConditionMet: true,
+				FrameDelta:   globalPerfTracker.snapshot().Frames.FrameCount - startFrameCount,
+				Perf:         globalPerfTracker.snapshot(),
+				FinalState:   finalState,
+			}
+		}
+		if time.Now().After(deadline) {
+			elapsed := time.Since(start)
+			globalPerfTracker.recordAutomationAction("measure-"+strings.ToLower(strings.TrimSpace(req.Command)), elapsed, "condition_met=false")
+			return PerfMeasureActionResponse{
+				OK:           false,
+				Error:        "timed out waiting for condition",
+				Command:      req.Command,
+				ElapsedMS:    durationMS(elapsed),
+				ConditionMet: false,
+				FrameDelta:   globalPerfTracker.snapshot().Frames.FrameCount - startFrameCount,
+				Perf:         globalPerfTracker.snapshot(),
+				FinalState:   actionResp,
+			}
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+func measureNativeAction(req PerfMeasureNativeActionRequest) PerfMeasureNativeActionResponse {
+	timeout := 5 * time.Second
+	if req.TimeoutMS > 0 {
+		timeout = time.Duration(req.TimeoutMS) * time.Millisecond
+	}
+	pollInterval := 15 * time.Millisecond
+	if req.PollIntervalMS > 0 {
+		pollInterval = time.Duration(req.PollIntervalMS) * time.Millisecond
+	}
+
+	startPerf := globalPerfTracker.snapshot()
+	startFrameCount := startPerf.Frames.FrameCount
+	startEventBatchCount := startPerf.EventBatches.BatchCount
+	start := time.Now()
+
+	initialResp, err := nativeDebugRequest(protocol.NativeDebugRequest{
+		RestoreWindow:     req.RestoreWindow,
+		ClampToWorkArea:   req.ClampToWorkArea,
+		BringToForeground: req.BringToForeground,
+		MaximizeWindow:    req.MaximizeWindow,
+	})
+	if err != nil {
+		globalPerfTracker.recordAutomationAction("native-action", time.Since(start), "error="+err.Error())
+		return PerfMeasureNativeActionResponse{
+			OK:          false,
+			Error:       err.Error(),
+			ElapsedMS:   durationMS(time.Since(start)),
+			FrameDelta:  globalPerfTracker.snapshot().Frames.FrameCount - startFrameCount,
+			EventDelta:  globalPerfTracker.snapshot().EventBatches.BatchCount - startEventBatchCount,
+			Perf:        globalPerfTracker.snapshot(),
+			NativeState: NativeAutomationState{},
+		}
+	}
+	globalPerfTracker.recordAutomationAction("native-action", time.Since(start), nativeActionDetails(req))
+
+	initialState := nativeAutomationStateFromProtocol(initialResp)
+	if nativePerfConditionMet(req.Condition, initialState, startFrameCount, startEventBatchCount) {
+		elapsed := time.Since(start)
+		globalPerfTracker.recordAutomationAction("measure-native-action", elapsed, "condition_met=true")
+		return PerfMeasureNativeActionResponse{
+			OK:           true,
+			ElapsedMS:    durationMS(elapsed),
+			ConditionMet: true,
+			FrameDelta:   globalPerfTracker.snapshot().Frames.FrameCount - startFrameCount,
+			EventDelta:   globalPerfTracker.snapshot().EventBatches.BatchCount - startEventBatchCount,
+			Perf:         globalPerfTracker.snapshot(),
+			NativeState:  initialState,
+		}
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		if time.Now().After(deadline) {
+			elapsed := time.Since(start)
+			globalPerfTracker.recordAutomationAction("measure-native-action", elapsed, "condition_met=false")
+			return PerfMeasureNativeActionResponse{
+				OK:           false,
+				Error:        "timed out waiting for native condition",
+				ElapsedMS:    durationMS(elapsed),
+				ConditionMet: false,
+				FrameDelta:   globalPerfTracker.snapshot().Frames.FrameCount - startFrameCount,
+				EventDelta:   globalPerfTracker.snapshot().EventBatches.BatchCount - startEventBatchCount,
+				Perf:         globalPerfTracker.snapshot(),
+				NativeState:  initialState,
+			}
+		}
+
+		time.Sleep(pollInterval)
+
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{})
+		if err != nil {
+			continue
+		}
+		state := nativeAutomationStateFromProtocol(resp)
+		if nativePerfConditionMet(req.Condition, state, startFrameCount, startEventBatchCount) {
+			elapsed := time.Since(start)
+			globalPerfTracker.recordAutomationAction("measure-native-action", elapsed, "condition_met=true")
+			return PerfMeasureNativeActionResponse{
+				OK:           true,
+				ElapsedMS:    durationMS(elapsed),
+				ConditionMet: true,
+				FrameDelta:   globalPerfTracker.snapshot().Frames.FrameCount - startFrameCount,
+				EventDelta:   globalPerfTracker.snapshot().EventBatches.BatchCount - startEventBatchCount,
+				Perf:         globalPerfTracker.snapshot(),
+				NativeState:  state,
+			}
+		}
+		initialState = state
+	}
+}
+
+func nativeActionDetails(req PerfMeasureNativeActionRequest) string {
+	details := []string{}
+	if req.RestoreWindow {
+		details = append(details, "restore=true")
+	}
+	if req.ClampToWorkArea {
+		details = append(details, "clamp=true")
+	}
+	if req.BringToForeground {
+		details = append(details, "foreground=true")
+	}
+	if req.MaximizeWindow {
+		details = append(details, "maximize=true")
+	}
+	return strings.Join(details, " ")
+}
+
+func perfConditionMetLocked(cond PerfCondition, startFrameCount uint64) bool {
+	if globalState == nil {
+		return false
+	}
+	if cond.FocusedID != "" && globalState.FocusedID != cond.FocusedID {
+		return false
+	}
+	if cond.CurrentPage != "" && globalState.CurrentPage != cond.CurrentPage {
+		return false
+	}
+	if cond.WindowWidthAtLeast > 0 && globalState.WindowWidth < cond.WindowWidthAtLeast {
+		return false
+	}
+	if cond.WindowHeightAtLeast > 0 && globalState.WindowHeight < cond.WindowHeightAtLeast {
+		return false
+	}
+	if cond.ComponentID != "" {
+		comp := libFindComponent(cond.ComponentID)
+		if comp == nil {
+			return false
+		}
+		if cond.ContainsText != "" && !strings.Contains(componentText(comp), cond.ContainsText) {
+			return false
+		}
+	}
+	if cond.MinFrameCountDelta > 0 {
+		if globalPerfTracker.snapshot().Frames.FrameCount-startFrameCount < cond.MinFrameCountDelta {
+			return false
+		}
+	}
+	return true
+}
+
+func nativePerfConditionMet(cond NativePerfCondition, state NativeAutomationState, startFrameCount, startEventBatchCount uint64) bool {
+	if cond.WindowVisible && !state.WindowVisible {
+		return false
+	}
+	if cond.WindowForeground && !state.WindowForeground {
+		return false
+	}
+	if cond.WindowNotMinimized && state.WindowMinimized {
+		return false
+	}
+	if cond.ClientWidthAtLeast > 0 && int(state.ClientWidth) < cond.ClientWidthAtLeast {
+		return false
+	}
+	if cond.ClientHeightAtLeast > 0 && int(state.ClientHeight) < cond.ClientHeightAtLeast {
+		return false
+	}
+	if cond.BackbufferWidthAtLeast > 0 && int(state.BackbufferWidth) < cond.BackbufferWidthAtLeast {
+		return false
+	}
+	if cond.BackbufferHeightAtLeast > 0 && int(state.BackbufferHeight) < cond.BackbufferHeightAtLeast {
+		return false
+	}
+	if cond.WindowWidthAtLeast > 0 && int(state.WindowRight-state.WindowLeft) < cond.WindowWidthAtLeast {
+		return false
+	}
+	if cond.WindowHeightAtLeast > 0 && int(state.WindowBottom-state.WindowTop) < cond.WindowHeightAtLeast {
+		return false
+	}
+	snapshot := globalPerfTracker.snapshot()
+	if cond.MinFrameCountDelta > 0 && snapshot.Frames.FrameCount-startFrameCount < cond.MinFrameCountDelta {
+		return false
+	}
+	if cond.MinEventBatchCountDelta > 0 && snapshot.EventBatches.BatchCount-startEventBatchCount < cond.MinEventBatchCountDelta {
+		return false
+	}
+	return true
 }
 
 func handleAutomationRequest(req AutomationRequest, cfg AutomationConfig) AutomationResponse {

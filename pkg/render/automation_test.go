@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"go_native_gpu_gui/pkg/render/components"
 	"go_native_gpu_gui/pkg/render/protocol"
@@ -293,6 +294,31 @@ func TestAutomationHTTPPrepareWindowUsesNativeHelper(t *testing.T) {
 	}
 }
 
+func TestAutomationHTTPPrepareWindowPassesMaximizeFlag(t *testing.T) {
+	previous := nativeDebugRequest
+	t.Cleanup(func() {
+		nativeDebugRequest = previous
+	})
+
+	var captured protocol.NativeDebugRequest
+	nativeDebugRequest = func(req protocol.NativeDebugRequest) (protocol.NativeDebugResponse, error) {
+		captured = req
+		return protocol.NativeDebugResponse{WindowVisible: true}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/prepare-window", bytes.NewBufferString(`{"maximize_window":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !captured.MaximizeWindow {
+		t.Fatalf("expected maximize flag in native request, got %+v", captured)
+	}
+}
+
 func TestAutomationHTTPPrepareWindowRejectsInvalidJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/prepare-window", bytes.NewBufferString(`{`))
 	req.Header.Set("Content-Type", "application/json")
@@ -479,5 +505,145 @@ func TestAutomationHTTPInspectFrameReturnsPNGAndSourceHeader(t *testing.T) {
 	body := rec.Body.Bytes()
 	if len(body) < 8 || string(body[:8]) != "\x89PNG\r\n\x1a\n" {
 		t.Fatalf("response is not a png payload")
+	}
+}
+
+func TestAutomationHTTPPerfStateEndpoint(t *testing.T) {
+	globalPerfTracker.reset()
+	t.Cleanup(func() { globalPerfTracker.reset() })
+	globalPerfTracker.recordFrame(10*time.Millisecond, 5*time.Millisecond, 2*time.Millisecond, time.Millisecond, 18*time.Millisecond, 42)
+
+	req := httptest.NewRequest(http.MethodGet, "/perf/state", nil)
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var state PerfState
+	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if state.Frames.FrameCount != 1 || state.Frames.LastTotalMS <= 0 {
+		t.Fatalf("unexpected perf state: %+v", state)
+	}
+}
+
+func TestAutomationHTTPPerfResetEndpoint(t *testing.T) {
+	globalPerfTracker.reset()
+	t.Cleanup(func() { globalPerfTracker.reset() })
+	globalPerfTracker.recordAutomationAction("click", 20*time.Millisecond, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/perf/reset", nil)
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var state PerfState
+	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if state.Automation.ActionCount != 0 || len(state.Events) != 0 {
+		t.Fatalf("expected reset tracker, got %+v", state)
+	}
+}
+
+func TestAutomationHTTPMeasureActionReportsLatency(t *testing.T) {
+	globalPerfTracker.reset()
+	t.Cleanup(func() { globalPerfTracker.reset() })
+	globalState = &ApplicationState{
+		Pages:       make(map[string][]Component),
+		CurrentPage: PageDashboard,
+	}
+	clicked := false
+	globalState.Pages[PageDashboard] = []Component{
+		&components.Button{
+			CompID:    "btn_measure",
+			Rect:      image.Rect(0, 0, 100, 40),
+			Label:     "Measure",
+			OnClick:   func(state *ApplicationState) { clicked = true; state.StatusText = "clicked" },
+			BaseColor: color.RGBA{10, 10, 10, 255},
+		},
+	}
+
+	body := bytes.NewBufferString(`{"command":"click","id":"btn_measure","condition":{"focused_id":"btn_measure"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/perf/measure-action", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !clicked {
+		t.Fatalf("expected click callback to fire")
+	}
+	var resp PerfMeasureActionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v body=%s", err, rec.Body.String())
+	}
+	if !resp.OK || !resp.ConditionMet || resp.ElapsedMS < 0 {
+		t.Fatalf("unexpected measure response: %+v", resp)
+	}
+	if resp.Perf.Automation.ActionCount == 0 {
+		t.Fatalf("expected automation perf entries, got %+v", resp.Perf)
+	}
+}
+
+func TestAutomationHTTPMeasureNativeActionReportsLatency(t *testing.T) {
+	globalPerfTracker.reset()
+	t.Cleanup(func() { globalPerfTracker.reset() })
+
+	previous := nativeDebugRequest
+	t.Cleanup(func() {
+		nativeDebugRequest = previous
+	})
+
+	call := 0
+	nativeDebugRequest = func(req protocol.NativeDebugRequest) (protocol.NativeDebugResponse, error) {
+		call++
+		if call == 1 {
+			if !req.MaximizeWindow || !req.BringToForeground {
+				t.Fatalf("unexpected native request: %+v", req)
+			}
+			return protocol.NativeDebugResponse{
+				WindowVisible:    true,
+				WindowForeground: false,
+				WindowMinimized:  false,
+				ClientWidth:      900,
+				ClientHeight:     700,
+			}, nil
+		}
+		return protocol.NativeDebugResponse{
+			WindowVisible:    true,
+			WindowForeground: true,
+			WindowMinimized:  false,
+			ClientWidth:      1600,
+			ClientHeight:     1000,
+			BackbufferWidth:  1600,
+			BackbufferHeight: 1000,
+		}, nil
+	}
+
+	body := bytes.NewBufferString(`{"maximize_window":true,"bring_to_foreground":true,"condition":{"window_foreground":true,"window_not_minimized":true,"client_width_at_least":1200}}`)
+	req := httptest.NewRequest(http.MethodPost, "/perf/measure-native-action", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp PerfMeasureNativeActionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v body=%s", err, rec.Body.String())
+	}
+	if !resp.OK || !resp.ConditionMet || !resp.NativeState.WindowForeground || resp.NativeState.ClientWidth < 1200 {
+		t.Fatalf("unexpected native measure response: %+v", resp)
+	}
+	if resp.Perf.Automation.ActionCount == 0 {
+		t.Fatalf("expected automation perf entries, got %+v", resp.Perf)
 	}
 }

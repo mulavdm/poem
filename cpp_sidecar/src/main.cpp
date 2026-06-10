@@ -180,29 +180,63 @@ std::wstring Utf8ToWide(const std::string& input) {
     return out;
 }
 
-RECT ResolveStartupWindowRect(const RECT& desiredWindowRect) {
+struct StartupMonitorInfo {
+    HMONITOR monitor = nullptr;
+    MONITORINFO info{};
+    UINT dpiX = 96;
+    UINT dpiY = 96;
+};
+
+StartupMonitorInfo ResolveStartupMonitorInfo() {
     POINT anchor{};
     if (!GetCursorPos(&anchor)) {
         anchor = POINT{0, 0};
     }
 
-    HMONITOR monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitorInfo{};
-    monitorInfo.cbSize = sizeof(monitorInfo);
-    if (!GetMonitorInfoW(monitor, &monitorInfo)) {
+    StartupMonitorInfo out;
+    out.monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
+    out.info.cbSize = sizeof(out.info);
+    if (!GetMonitorInfoW(out.monitor, &out.info)) {
+        out.info = MONITORINFO{};
+        out.info.cbSize = sizeof(out.info);
+        return out;
+    }
+
+    UINT dpiX = 96;
+    UINT dpiY = 96;
+    if (GetDpiForMonitor(out.monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY) == S_OK) {
+        out.dpiX = dpiX;
+        out.dpiY = dpiY;
+    }
+    return out;
+}
+
+RECT ResolveStartupWindowRect(const RECT& desiredWindowRect, const RECT& workArea) {
+    constexpr double kStartupWorkAreaUsage = 0.92;
+
+    if (workArea.right <= workArea.left || workArea.bottom <= workArea.top) {
         return desiredWindowRect;
     }
 
-    RECT workArea = monitorInfo.rcWork;
     const int desiredWidth = desiredWindowRect.right - desiredWindowRect.left;
     const int desiredHeight = desiredWindowRect.bottom - desiredWindowRect.top;
-    const int maxWidth = workArea.right - workArea.left;
-    const int maxHeight = workArea.bottom - workArea.top;
+    const int workWidth = workArea.right - workArea.left;
+    const int workHeight = workArea.bottom - workArea.top;
 
-    const int clampedWidth = std::min(desiredWidth, maxWidth);
-    const int clampedHeight = std::min(desiredHeight, maxHeight);
-    const int left = workArea.left + std::max(0, (maxWidth - clampedWidth) / 2);
-    const int top = workArea.top + std::max(0, (maxHeight - clampedHeight) / 2);
+    const int maxWidth = std::max(640, static_cast<int>(workWidth * kStartupWorkAreaUsage));
+    const int maxHeight = std::max(480, static_cast<int>(workHeight * kStartupWorkAreaUsage));
+
+    double scale = 1.0;
+    if (desiredWidth > maxWidth || desiredHeight > maxHeight) {
+        const double scaleX = desiredWidth > 0 ? static_cast<double>(maxWidth) / static_cast<double>(desiredWidth) : 1.0;
+        const double scaleY = desiredHeight > 0 ? static_cast<double>(maxHeight) / static_cast<double>(desiredHeight) : 1.0;
+        scale = std::min(scaleX, scaleY);
+    }
+
+    const int clampedWidth = std::max(640, std::min(workWidth, static_cast<int>(desiredWidth * scale)));
+    const int clampedHeight = std::max(480, std::min(workHeight, static_cast<int>(desiredHeight * scale)));
+    const int left = workArea.left + std::max(0, (workWidth - clampedWidth) / 2);
+    const int top = workArea.top + std::max(0, (workHeight - clampedHeight) / 2);
 
     return RECT{left, top, left + clampedWidth, top + clampedHeight};
 }
@@ -346,6 +380,43 @@ bool CaptureDesktopRegionRGBA(HWND hwnd, std::vector<std::uint8_t>& rgba, int& w
     return captured;
 }
 
+void RequestForegroundActivation(HWND hwnd) {
+    if (!hwnd) {
+        return;
+    }
+
+    ShowWindow(hwnd, SW_SHOW);
+    BringWindowToTop(hwnd);
+
+    const HWND currentForeground = GetForegroundWindow();
+    const DWORD currentThread = GetCurrentThreadId();
+    DWORD foregroundThread = 0;
+    if (currentForeground) {
+        foregroundThread = GetWindowThreadProcessId(currentForeground, nullptr);
+    }
+
+    bool attached = false;
+    if (foregroundThread != 0 && foregroundThread != currentThread) {
+        attached = AttachThreadInput(currentThread, foregroundThread, TRUE) == TRUE;
+    }
+
+    SetForegroundWindow(hwnd);
+    SetActiveWindow(hwnd);
+    SetFocus(hwnd);
+
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+    BringWindowToTop(hwnd);
+    SetForegroundWindow(hwnd);
+
+    if (attached) {
+        AttachThreadInput(currentThread, foregroundThread, FALSE);
+    }
+}
+
 void ApplyNativeWindowControl(HWND hwnd, const poem::protocol::NativeDebugRequest& request) {
     if (!hwnd) {
         return;
@@ -362,11 +433,13 @@ void ApplyNativeWindowControl(HWND hwnd, const poem::protocol::NativeDebugReques
         ClampWindowToCurrentMonitorWorkArea(hwnd);
     }
     if (request.bringToForeground) {
-        ShowWindow(hwnd, SW_SHOW);
-        BringWindowToTop(hwnd);
-        SetForegroundWindow(hwnd);
-        SetActiveWindow(hwnd);
-        SetFocus(hwnd);
+        RequestForegroundActivation(hwnd);
+    }
+    if (request.maximizeWindow) {
+        ShowWindow(hwnd, SW_MAXIMIZE);
+        if (request.bringToForeground) {
+            RequestForegroundActivation(hwnd);
+        }
     }
 }
 
@@ -522,12 +595,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassW(&wc);
 
-    UINT initialDpi = GetDpiForSystem();
+    const StartupMonitorInfo startupMonitor = ResolveStartupMonitorInfo();
+    const UINT initialDpi = startupMonitor.dpiX;
     int desiredClientWidth = MulDiv(app.init.width, static_cast<int>(initialDpi), 96);
     int desiredClientHeight = MulDiv(app.init.height, static_cast<int>(initialDpi), 96);
     RECT desiredWindowRect{0, 0, desiredClientWidth, desiredClientHeight};
     AdjustWindowRectExForDpi(&desiredWindowRect, WS_OVERLAPPEDWINDOW, FALSE, 0, initialDpi);
-    RECT startupWindowRect = ResolveStartupWindowRect(desiredWindowRect);
+    RECT startupWindowRect = ResolveStartupWindowRect(desiredWindowRect, startupMonitor.info.rcWork);
 
     HWND hwnd = CreateWindowExW(0, wc.lpszClassName, title.c_str(), WS_OVERLAPPEDWINDOW,
                                 startupWindowRect.left, startupWindowRect.top,

@@ -47,6 +47,7 @@ func TestNativeDebugRoundTrip(t *testing.T) {
 		RestoreWindow:         true,
 		ClampToWorkArea:       true,
 		BringToForeground:     true,
+		MaximizeWindow:        true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +56,7 @@ func TestNativeDebugRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !req.CaptureFrame || !req.CapturePresentedFrame || !req.CaptureDesktopFrame || !req.RestoreWindow || !req.ClampToWorkArea || !req.BringToForeground {
+	if !req.CaptureFrame || !req.CapturePresentedFrame || !req.CaptureDesktopFrame || !req.RestoreWindow || !req.ClampToWorkArea || !req.BringToForeground || !req.MaximizeWindow {
 		t.Fatalf("expected both native capture flags: %+v", req)
 	}
 
