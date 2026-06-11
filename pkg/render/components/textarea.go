@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 	"time"
 
 	"go_native_gpu_gui/pkg/render/types"
@@ -31,6 +32,31 @@ type TextArea struct {
 func (t *TextArea) ID() string              { return t.CompID }
 func (t *TextArea) GetID() string           { return t.CompID }
 func (t *TextArea) Bounds() image.Rectangle { return t.Rect }
+func (t *TextArea) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	charW := defaultCharWidth(t.CharWidth)
+	if state != nil && t.CharWidth <= 0 && state.FontCharWidth > 0 {
+		charW = state.FontCharWidth
+	}
+	lineH := defaultLineHeight(t.LineHeight)
+	padX := 24
+	padY := 24
+	width := avail.X
+	if width <= 0 {
+		width = 320
+	}
+	maxCharsPerLine := maxInt(1, (width-padX)/charW)
+	content := t.Text
+	if strings.TrimSpace(content) == "" {
+		content = t.Placeholder
+	}
+	lines := wrapLineCount(content, maxCharsPerLine)
+	height := padY + lines*lineH + 8
+	size := applyExplicitSize(explicitSize(t.Rect), image.Pt(width, maxInt(96, height)))
+	return types.MeasureResult{
+		Preferred: size,
+		Min:       image.Pt(minValueInt(size.X, 180), minValueInt(size.Y, 72)),
+	}
+}
 func (t *TextArea) SetBounds(r image.Rectangle) {
 	t.Rect = r
 }
@@ -517,7 +543,7 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 		}
 
 		for _, line := range wrapTextareaParagraph(paragraph, maxCharsPerLine) {
-			if currentY > t.Rect.Max.Y+lineH {
+			if currentY+lineH > t.Rect.Max.Y-padY/2 {
 				break
 			}
 

@@ -9,6 +9,9 @@ import (
 // Re-export Core API Types
 type ApplicationState = types.ApplicationState
 type Component = types.Component
+type ContentSizedComponent = types.ContentSizedComponent
+type MeasurableComponent = types.MeasurableComponent
+type MeasureResult = types.MeasureResult
 type Painter = types.Painter
 type UIRenderer = types.UIRenderer
 type ParticleSystem = types.ParticleSystem
@@ -28,6 +31,7 @@ type Paragraph = components.Paragraph
 type TextArea = components.TextArea
 type Modal = components.Modal
 type ImageView = components.ImageView
+type LabeledBox = components.LabeledBox
 
 // Re-export Layouts
 type FlexBox = layout.FlexBox

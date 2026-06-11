@@ -29,6 +29,38 @@ func (s *ScrollView) ID() string              { return s.CompID }
 func (s *ScrollView) GetID() string           { return s.CompID }
 func (s *ScrollView) Bounds() image.Rectangle { return s.Rect }
 func (s *ScrollView) Focusable() bool         { return false }
+func (s *ScrollView) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	if size := explicitSize(s.Rect); size.X > 0 && size.Y > 0 {
+		return types.MeasureResult{Preferred: size, Min: image.Pt(minValueInt(size.X, 120), minValueInt(size.Y, 120))}
+	}
+	if len(s.Children) > 0 {
+		child := types.MeasureComponent(s.Children[0], avail, state)
+		width := child.Preferred.X
+		height := child.Preferred.Y
+		if avail.X > 0 {
+			width = avail.X
+		}
+		if avail.Y > 0 {
+			height = minValueInt(child.Preferred.Y, avail.Y)
+		}
+		return types.MeasureResult{
+			Preferred: image.Pt(width, height),
+			Min:       image.Pt(minValueInt(width, 120), minValueInt(height, 120)),
+		}
+	}
+	width := avail.X
+	height := avail.Y
+	if width <= 0 {
+		width = 240
+	}
+	if height <= 0 {
+		height = 180
+	}
+	return types.MeasureResult{
+		Preferred: image.Pt(width, height),
+		Min:       image.Pt(minValueInt(width, 120), minValueInt(height, 120)),
+	}
+}
 
 func (s *ScrollView) SetBounds(r image.Rectangle) {
 	s.Rect = r
@@ -37,14 +69,22 @@ func (s *ScrollView) SetBounds(r image.Rectangle) {
 	}
 
 	if len(s.Children) > 0 {
-		// Calculate content height
-		s.ContentH = s.calculateContentHeight()
-
-		childWidth := s.Rect.Dx()
+		childWidth := s.Rect.Dx() - 15 // baseline gutter
+		if childWidth < 0 {
+			childWidth = 0
+		}
+		contentSize := types.MeasureContent(s.Children[0], image.Pt(childWidth, s.Rect.Dy()), nil)
+		s.ContentH = contentSize.Y
 		if s.ContentH > s.Rect.Dy() {
-			childWidth -= (s.ScrollbarW + 15) // Gutter space for premium aesthetics
-		} else {
-			childWidth -= 15 // Gutter space
+			childWidth = s.Rect.Dx() - (s.ScrollbarW + 15) // extra gutter when scrollbar is present
+			if childWidth < 0 {
+				childWidth = 0
+			}
+			contentSize = types.MeasureContent(s.Children[0], image.Pt(childWidth, s.Rect.Dy()), nil)
+			s.ContentH = contentSize.Y
+		}
+		if s.ContentH < s.Rect.Dy() {
+			s.ContentH = s.Rect.Dy()
 		}
 
 		childRect := image.Rect(
@@ -56,16 +96,12 @@ func (s *ScrollView) SetBounds(r image.Rectangle) {
 
 		s.Children[0].SetBounds(childRect)
 
-		// Re-evaluate content height from the child's layout results
-		s.ContentH = s.Children[0].Bounds().Dy()
+		// Final bounds can expand the scrollable extent, but must not shrink
+		// measured content back to a fixed viewport-sized container rect.
+		if boundsH := s.Children[0].Bounds().Dy(); boundsH > s.ContentH {
+			s.ContentH = boundsH
+		}
 	}
-}
-
-func (s *ScrollView) calculateContentHeight() int {
-	if len(s.Children) == 0 {
-		return 0
-	}
-	return s.Children[0].Bounds().Dy()
 }
 
 func (s *ScrollView) hasScrollbar() bool {
@@ -167,8 +203,8 @@ func (s *ScrollView) Draw(p types.Painter, state *types.ApplicationState) {
 		return
 	}
 
-	// Apply Clip and Offset for child rendering using the animated offset
-	p.SetClip(s.Rect)
+	// Apply scoped clip and offset for child rendering using the animated offset.
+	p.PushClip(s.Rect)
 	p.SetOffset(0, -float32(s.CurrentScrollY))
 
 	// Draw Children
@@ -176,8 +212,8 @@ func (s *ScrollView) Draw(p types.Painter, state *types.ApplicationState) {
 		child.Draw(p, state)
 	}
 
-	// Reset Clip and Offset
-	p.SetClip(image.Rectangle{})
+	// Reset clip and offset.
+	p.PopClip()
 	p.SetOffset(0, 0)
 
 	// Draw Scrollbar on top of clipped content

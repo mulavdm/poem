@@ -20,6 +20,26 @@ type ImageView struct {
 func (i *ImageView) ID() string              { return i.CompID }
 func (i *ImageView) GetID() string           { return i.CompID }
 func (i *ImageView) Bounds() image.Rectangle { return i.Rect }
+func (i *ImageView) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	width := avail.X
+	height := avail.Y
+	if width <= 0 {
+		width = 320
+	}
+	if height <= 0 {
+		height = 240
+	}
+	if i.ImageWidth > 0 && i.ImageHeight > 0 {
+		rect := containRect(image.Rect(0, 0, width, height), i.ImageWidth, i.ImageHeight)
+		width = rect.Dx()
+		height = rect.Dy()
+	}
+	size := applyExplicitSize(explicitSize(i.Rect), image.Pt(width, height))
+	return types.MeasureResult{
+		Preferred: size,
+		Min:       image.Pt(minValueInt(size.X, 120), minValueInt(size.Y, 120)),
+	}
+}
 func (i *ImageView) SetBounds(r image.Rectangle) {
 	i.Rect = r
 }

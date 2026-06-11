@@ -22,6 +22,10 @@ type Panel struct {
 func (p *Panel) ID() string              { return p.CompID }
 func (p *Panel) GetID() string           { return p.CompID }
 func (p *Panel) Bounds() image.Rectangle { return p.Rect }
+func (p *Panel) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	size := applyExplicitSize(explicitSize(p.Rect), avail)
+	return types.MeasureResult{Preferred: size, Min: size}
+}
 func (p *Panel) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.SetGlow(2.0) // Subtle ambient glow for panels
 	pnt.DrawRoundedRect(p.Rect, p.Rounding, p.BGColor)
@@ -74,6 +78,23 @@ type Button struct {
 func (b *Button) ID() string              { return b.CompID }
 func (b *Button) GetID() string           { return b.CompID }
 func (b *Button) Bounds() image.Rectangle { return b.Rect }
+func (b *Button) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	charW := 8
+	if state != nil && state.FontCharWidth > 0 {
+		charW = state.FontCharWidth
+	}
+	labelWidth := len([]rune(strings.TrimSpace(b.Label))) * charW
+	width := maxInt(140, labelWidth+24)
+	if avail.X > 0 {
+		width = clampInt(width, 90, avail.X)
+	}
+	height := 38
+	size := applyExplicitSize(explicitSize(b.Rect), image.Pt(width, height))
+	return types.MeasureResult{
+		Preferred: size,
+		Min:       image.Pt(minValueInt(size.X, 90), size.Y),
+	}
+}
 func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 	c := b.BaseColor
 	if state.HoveredID == b.CompID {
@@ -174,6 +195,14 @@ func (l *Label) GetID() string { return l.CompID }
 func (l *Label) Bounds() image.Rectangle {
 	return image.Rect(l.Pos.X, l.Pos.Y, l.Pos.X+len(l.Text)*10, l.Pos.Y+20)
 }
+func (l *Label) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	charW := 8
+	if state != nil && state.FontCharWidth > 0 {
+		charW = state.FontCharWidth
+	}
+	size := measurePlainText(l.Text, charW, 20)
+	return types.MeasureResult{Preferred: size, Min: size}
+}
 func (l *Label) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.DrawText(l.Text, l.Pos.X, l.Pos.Y, l.Color)
 }
@@ -205,6 +234,24 @@ func (dl *DynamicLabel) GetID() string { return dl.CompID }
 func (dl *DynamicLabel) Bounds() image.Rectangle {
 	return image.Rect(dl.Pos.X, dl.Pos.Y, dl.Pos.X+300, dl.Pos.Y+20)
 }
+func (dl *DynamicLabel) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	charW := 8
+	if state != nil && state.FontCharWidth > 0 {
+		charW = state.FontCharWidth
+	}
+	text := ""
+	if dl.GetText != nil && state != nil {
+		text = dl.GetText(state)
+	}
+	width := maxInt(120, len([]rune(text))*charW)
+	if width == 120 && avail.X > 0 {
+		width = min(width, avail.X)
+	}
+	return types.MeasureResult{
+		Preferred: image.Pt(width, 20),
+		Min:       image.Pt(minValueInt(width, 120), 20),
+	}
+}
 func (dl *DynamicLabel) Draw(pnt types.Painter, state *types.ApplicationState) {
 	if dl.GetText != nil {
 		pnt.DrawText(dl.GetText(state), dl.Pos.X, dl.Pos.Y, dl.Color)
@@ -233,6 +280,7 @@ type TextInput struct {
 	Rect        image.Rectangle
 	Text        string
 	Placeholder string
+	Masked      bool
 	BGColor     color.RGBA
 	TextColor   color.RGBA
 	Rounding    int
@@ -240,9 +288,29 @@ type TextInput struct {
 	OnSubmit    func(text string, state *types.ApplicationState)
 }
 
-func (t *TextInput) ID() string                  { return t.CompID }
-func (t *TextInput) GetID() string               { return t.CompID }
-func (t *TextInput) Bounds() image.Rectangle     { return t.Rect }
+func (t *TextInput) ID() string              { return t.CompID }
+func (t *TextInput) GetID() string           { return t.CompID }
+func (t *TextInput) Bounds() image.Rectangle { return t.Rect }
+func (t *TextInput) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	charW := 8
+	if state != nil && state.FontCharWidth > 0 {
+		charW = state.FontCharWidth
+	}
+	content := t.Text
+	if strings.TrimSpace(content) == "" {
+		content = t.Placeholder
+	}
+	width := maxInt(160, len([]rune(content))*charW+20)
+	if avail.X > 0 {
+		width = clampInt(width, 120, avail.X)
+	}
+	height := 34
+	size := applyExplicitSize(explicitSize(t.Rect), image.Pt(width, height))
+	return types.MeasureResult{
+		Preferred: size,
+		Min:       image.Pt(minValueInt(size.X, 120), size.Y),
+	}
+}
 func (t *TextInput) SetBounds(r image.Rectangle) { t.Rect = r }
 func (t *TextInput) HitTest(pt image.Point) string {
 	if pt.In(t.Rect) {
@@ -287,6 +355,9 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 
 	// Draw text or placeholder
 	disp := t.Text
+	if t.Masked && disp != "" {
+		disp = strings.Repeat("*", len([]rune(disp)))
+	}
 	col := t.TextColor
 	if disp == "" {
 		disp = t.Placeholder

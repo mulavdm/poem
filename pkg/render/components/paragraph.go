@@ -33,6 +33,25 @@ type Paragraph struct {
 func (p *Paragraph) ID() string              { return p.CompID }
 func (p *Paragraph) GetID() string           { return p.CompID }
 func (p *Paragraph) Bounds() image.Rectangle { return p.Rect }
+func (p *Paragraph) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	charW := defaultCharWidth(p.CharWidth)
+	if state != nil && p.CharWidth <= 0 && state.FontCharWidth > 0 {
+		charW = state.FontCharWidth
+	}
+	lineH := defaultLineHeight(p.LineHeight)
+	width := avail.X
+	if width <= 0 {
+		width = maxInt(240, len([]rune(p.Text))*charW)
+	}
+	maxCharsPerLine := maxInt(1, width/charW)
+	lines := wrapLineCount(p.Text, maxCharsPerLine)
+	height := lines*lineH + 8
+	size := applyExplicitSize(explicitSize(p.Rect), image.Pt(width, height))
+	return types.MeasureResult{
+		Preferred: size,
+		Min:       image.Pt(minValueInt(size.X, 120), minValueInt(size.Y, lineH)),
+	}
+}
 
 func (p *Paragraph) SetBounds(r image.Rectangle) {
 	p.Rect = r
