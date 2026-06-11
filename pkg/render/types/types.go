@@ -354,6 +354,85 @@ type Component interface {
 	Walk(fn func(Component))
 }
 
+// MeasureResult describes a component's preferred and minimum size without
+// introducing browser-style layout semantics.
+type MeasureResult struct {
+	Preferred image.Point
+	Min       image.Point
+}
+
+// MeasurableComponent is an optional contract for components that can report
+// preferred sizing more accurately than raw Bounds().
+type MeasurableComponent interface {
+	Measure(avail image.Point, state *ApplicationState) MeasureResult
+}
+
+// ContentSizedComponent is an optional companion to Measure for containers
+// whose assigned Bounds() may intentionally be smaller than their laid-out
+// content, such as a FlexBox inside a ScrollView.
+type ContentSizedComponent interface {
+	ContentSize(avail image.Point, state *ApplicationState) image.Point
+}
+
+func clampMeasurePoint(pt image.Point) image.Point {
+	if pt.X < 0 {
+		pt.X = 0
+	}
+	if pt.Y < 0 {
+		pt.Y = 0
+	}
+	return pt
+}
+
+// NormalizeMeasureResult ensures a measurement always has a usable preferred
+// size and that min sizes never exceed preferred sizes.
+func NormalizeMeasureResult(result MeasureResult, fallback image.Rectangle) MeasureResult {
+	result.Preferred = clampMeasurePoint(result.Preferred)
+	result.Min = clampMeasurePoint(result.Min)
+
+	if result.Preferred.X == 0 && fallback.Dx() > 0 {
+		result.Preferred.X = fallback.Dx()
+	}
+	if result.Preferred.Y == 0 && fallback.Dy() > 0 {
+		result.Preferred.Y = fallback.Dy()
+	}
+	if result.Min.X == 0 {
+		result.Min.X = result.Preferred.X
+	}
+	if result.Min.Y == 0 {
+		result.Min.Y = result.Preferred.Y
+	}
+	if result.Min.X > result.Preferred.X {
+		result.Min.X = result.Preferred.X
+	}
+	if result.Min.Y > result.Preferred.Y {
+		result.Min.Y = result.Preferred.Y
+	}
+	return result
+}
+
+// MeasureComponent returns a component measurement, falling back to Bounds()
+// when the component has not opted into the native measurement contract yet.
+func MeasureComponent(comp Component, avail image.Point, state *ApplicationState) MeasureResult {
+	if measurable, ok := comp.(MeasurableComponent); ok {
+		return NormalizeMeasureResult(measurable.Measure(clampMeasurePoint(avail), state), comp.Bounds())
+	}
+	bounds := comp.Bounds()
+	return NormalizeMeasureResult(MeasureResult{
+		Preferred: image.Pt(bounds.Dx(), bounds.Dy()),
+		Min:       image.Pt(bounds.Dx(), bounds.Dy()),
+	}, bounds)
+}
+
+// MeasureContent returns the full laid-out content size for components that
+// can distinguish content size from their assigned drawing bounds.
+func MeasureContent(comp Component, avail image.Point, state *ApplicationState) image.Point {
+	if contentSized, ok := comp.(ContentSizedComponent); ok {
+		return clampMeasurePoint(contentSized.ContentSize(clampMeasurePoint(avail), state))
+	}
+	return MeasureComponent(comp, avail, state).Preferred
+}
+
 // ScrollableComponent represents a component that responds to mouse wheel actions
 type ScrollableComponent interface {
 	Component
