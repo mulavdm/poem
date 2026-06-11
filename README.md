@@ -91,6 +91,27 @@ render.Run(render.AppConfig{
 
 The source-of-truth automation reference is [docs/AUTOMATION.md](./docs/AUTOMATION.md).
 
+## Layout Measurement
+
+POEM's layout model is intentionally lighter than browser-grade CSS flexbox.
+
+Today:
+
+- parent layouts still place children explicitly
+- leaf components can now opt into a native `Measure(...)` contract
+- `FlexBox` prefers measured sizes when available and falls back to legacy `Bounds()` sizing otherwise
+- containers can optionally expose `ContentSize(...)` when their scrollable content is larger than their assigned draw bounds
+
+This means downstream apps should not assume "declare children and forget it" browser behavior yet. For stable layouts:
+
+- use explicit pane rects for major dashboard regions
+- let leaf controls report preferred size through `Measure(...)`
+- wrap overflow regions in `ScrollView`; it uses `ContentSize(...)` where available so fixed viewport bounds do not erase scrollable extent
+- avoid using oversized placeholder `Bounds()` as a proxy for wrapped text size
+- cap long status text or labels explicitly when the UI has tight horizontal budgets
+
+See [GUIDE.md](./GUIDE.md) for the downstream migration pattern.
+
 ## Sidecar Resolution
 
 At runtime, POEM resolves `poem_cpp_sidecar.exe` in this order:

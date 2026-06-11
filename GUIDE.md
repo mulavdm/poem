@@ -39,6 +39,51 @@ Full details live in [docs/AUTOMATION.md](./docs/AUTOMATION.md).
 
 ---
 
+## Layout Measurement Quickstart
+
+POEM `FlexBox` is not browser-grade intrinsic flexbox. It is a native layout helper where children still contribute preferred sizing information and the parent places them.
+
+The preferred path now is:
+
+1. use explicit rects for major panes or dashboard regions
+2. let leaf controls provide preferred size through `Measure(avail, state)`
+3. let `FlexBox` consume measured size before falling back to raw `Bounds()`
+4. let scrollable containers use `ContentSize(avail, state)` when assigned bounds are smaller than laid-out content
+
+### Native measurement contract
+
+Components can optionally implement:
+
+```go
+Measure(avail image.Point, state *render.ApplicationState) render.MeasureResult
+```
+
+Where `MeasureResult` provides:
+
+- `Preferred image.Point`
+- `Min image.Point`
+
+This is a POEM-native sizing contract, not a CSS model. It does not currently introduce concepts like percentages, flex-basis, or browser intrinsic content negotiation.
+
+Scrollable containers can also consume:
+
+```go
+ContentSize(avail image.Point, state *render.ApplicationState) image.Point
+```
+
+Use this when a component's assigned `Bounds()` describes the visible box, but its laid-out content is taller or wider. `render.ScrollView` uses this distinction so fixed viewport bounds do not accidentally erase scrollable content.
+
+### Downstream migration checklist
+
+- prefer explicit container rects for major panes
+- rely on `Measure(...)` for buttons, labels, inputs, text blocks, image views, and scroll viewports
+- rely on `ScrollView` for intentional overflow instead of allowing children to draw through sibling regions
+- avoid stale oversized `Bounds()` values as a stand-in for wrapped or clipped content
+- cap long status text and chips explicitly when sharing a header row
+- preserve explicit component rects when the layout is intentionally fixed
+
+---
+
 ## 🏗️ 1. Core Architecture & Reactive Loop
 
 POEM uses an elegant, process-isolated **re-evaluation loop** driven over local IPC. Instead of manually updating widgets, you write a **Page Builder function**.
@@ -466,4 +511,3 @@ As a downstream developer, **you do not need to perform any scaling math, factor
 * **Pure Logical Layouts**: When declaring widgets in `BuildPagesFn` (e.g. `image.Rect(100, 100, 300, 400)`), you define them strictly in **logical units**. POEM's layout flexboxes and margins run in this logical space.
 * **Auto-Adjusted Views**: Behind the scenes, the presentation engine scales elements to match the screen's system density, preventing them from appearing tiny on high-resolution screens.
 * **Integrated Clipping & Interaction**: Scissor clips inside `ScrollView` and mouse coordinates (`MouseMove`, `MouseDown`, `MouseWheel`) are automatically converted between physical screen pixels and your logical layout space. Custom hover cues, clicks, and scrolling operate cleanly out-of-the-box on any screen size.
-
