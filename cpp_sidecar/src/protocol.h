@@ -16,6 +16,8 @@ enum class MessageType : std::uint16_t {
     EventBatch = 101,
     NativeDebugRequest = 201,
     NativeDebugResponse = 202,
+    NativeDialogRequest = 203,
+    NativeDialogResponse = 204,
 };
 
 enum class DrawCommandType : std::uint8_t {
@@ -162,12 +164,26 @@ struct NativeDebugResponse {
     std::vector<std::uint8_t> frameRgba;
 };
 
+struct NativeDialogRequest {
+    std::string kind;
+    std::string title;
+    std::string initialDir;
+};
+
+struct NativeDialogResponse {
+    std::string error;
+    bool canceled{};
+    std::string path;
+};
+
 Envelope DecodeEnvelope(const std::vector<std::uint8_t>& payload);
 InitEngine DecodeInitEngine(const std::vector<std::uint8_t>& body);
 RenderFrame DecodeRenderFrame(const std::vector<std::uint8_t>& body);
 PlaySound DecodePlaySound(const std::vector<std::uint8_t>& body);
 NativeDebugRequest DecodeNativeDebugRequest(const std::vector<std::uint8_t>& body);
+NativeDialogRequest DecodeNativeDialogRequest(const std::vector<std::uint8_t>& body);
 std::vector<std::uint8_t> EncodeEventBatch(const EventBatch& batch);
 std::vector<std::uint8_t> EncodeNativeDebugResponse(const NativeDebugResponse& response);
+std::vector<std::uint8_t> EncodeNativeDialogResponse(const NativeDialogResponse& response);
 
 } // namespace poem::protocol

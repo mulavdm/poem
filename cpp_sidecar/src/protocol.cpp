@@ -178,6 +178,15 @@ NativeDebugRequest DecodeNativeDebugRequest(const std::vector<std::uint8_t>& bod
     return out;
 }
 
+NativeDialogRequest DecodeNativeDialogRequest(const std::vector<std::uint8_t>& body) {
+    Reader r(body);
+    NativeDialogRequest out;
+    out.kind = r.ReadString();
+    out.title = r.ReadString();
+    out.initialDir = r.ReadString();
+    return out;
+}
+
 std::vector<std::uint8_t> EncodeEventBatch(const EventBatch& batch) {
     Writer w;
     w.Write<std::uint32_t>(static_cast<std::uint32_t>(batch.events.size()));
@@ -218,6 +227,14 @@ std::vector<std::uint8_t> EncodeNativeDebugResponse(const NativeDebugResponse& r
     w.Write<std::int32_t>(response.frameHeight);
     w.WriteBytes(response.frameRgba);
     return w.Finish(MessageType::NativeDebugResponse);
+}
+
+std::vector<std::uint8_t> EncodeNativeDialogResponse(const NativeDialogResponse& response) {
+    Writer w;
+    w.WriteString(response.error);
+    w.Write<std::uint8_t>(response.canceled ? 1 : 0);
+    w.WriteString(response.path);
+    return w.Finish(MessageType::NativeDialogResponse);
 }
 
 } // namespace poem::protocol

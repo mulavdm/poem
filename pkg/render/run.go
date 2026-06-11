@@ -36,19 +36,22 @@ type AppConfig struct {
 
 // Package-level orchestrator variables
 var (
-	globalState       *types.ApplicationState
-	globalBuildPages  func(state *types.ApplicationState)
-	pipeHandle        uintptr
-	pipeWriteMutex    sync.Mutex
-	stateMutex        sync.Mutex // Protects globalState, component layouts, and painter from concurrent races
-	globalFontPath    string
-	globalFontSize    float64
-	globalPainter     *ProtocolPainter
-	globalRenderConn  io.Writer
-	globalLastFrame   protocol.RenderFrame
-	nativeDebugReqMu  sync.Mutex
-	nativeDebugMu     sync.Mutex
-	nativeDebugRespCh chan protocol.NativeDebugResponse
+	globalState        *types.ApplicationState
+	globalBuildPages   func(state *types.ApplicationState)
+	pipeHandle         uintptr
+	pipeWriteMutex     sync.Mutex
+	stateMutex         sync.Mutex // Protects globalState, component layouts, and painter from concurrent races
+	globalFontPath     string
+	globalFontSize     float64
+	globalPainter      *ProtocolPainter
+	globalRenderConn   io.Writer
+	globalLastFrame    protocol.RenderFrame
+	nativeDebugReqMu   sync.Mutex
+	nativeDebugMu      sync.Mutex
+	nativeDebugRespCh  chan protocol.NativeDebugResponse
+	nativeDialogReqMu  sync.Mutex
+	nativeDialogMu     sync.Mutex
+	nativeDialogRespCh chan protocol.NativeDialogResponse
 )
 
 const (
@@ -306,10 +309,42 @@ func Run(config AppConfig) {
 				default:
 				}
 			}
+		case protocol.MessageNativeDialogResponse:
+			resp, err := protocol.DecodeNativeDialogResponse(payload)
+			if err != nil {
+				fmt.Printf("IPC native dialog decode error: %v\n", err)
+				continue
+			}
+			nativeDialogMu.Lock()
+			ch := nativeDialogRespCh
+			nativeDialogMu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- resp:
+				default:
+				}
+			}
 		default:
 			fmt.Printf("IPC unexpected message type: %d\n", msgType)
 		}
 	}
+}
+
+type DirectoryDialogOptions struct {
+	Title      string
+	InitialDir string
+}
+
+func OpenDirectoryDialog(opts DirectoryDialogOptions) (string, bool, error) {
+	resp, err := requestNativeDialog(protocol.NativeDialogRequest{
+		Kind:       "directory",
+		Title:      opts.Title,
+		InitialDir: opts.InitialDir,
+	})
+	if err != nil {
+		return "", false, err
+	}
+	return resp.Path, resp.Canceled, nil
 }
 
 func requestNativeDebug(captureFrame bool, capturePresentedFrame bool, captureDesktopFrame bool) (protocol.NativeDebugResponse, error) {
@@ -363,6 +398,52 @@ func requestNativeDebugWithOptions(req protocol.NativeDebugRequest) (protocol.Na
 	case <-time.After(5 * time.Second):
 		clearResponseCh()
 		return protocol.NativeDebugResponse{}, fmt.Errorf("native debug request timed out")
+	}
+}
+
+func requestNativeDialog(req protocol.NativeDialogRequest) (protocol.NativeDialogResponse, error) {
+	if globalRenderConn == nil {
+		return protocol.NativeDialogResponse{}, fmt.Errorf("render connection not initialized")
+	}
+
+	nativeDialogReqMu.Lock()
+	defer nativeDialogReqMu.Unlock()
+
+	nativeDialogMu.Lock()
+	respCh := make(chan protocol.NativeDialogResponse, 1)
+	nativeDialogRespCh = respCh
+	nativeDialogMu.Unlock()
+
+	payload, err := protocol.EncodeNativeDialogRequest(req)
+	if err != nil {
+		nativeDialogMu.Lock()
+		nativeDialogRespCh = nil
+		nativeDialogMu.Unlock()
+		return protocol.NativeDialogResponse{}, err
+	}
+	if err := writeMessage(globalRenderConn, payload); err != nil {
+		nativeDialogMu.Lock()
+		nativeDialogRespCh = nil
+		nativeDialogMu.Unlock()
+		return protocol.NativeDialogResponse{}, err
+	}
+
+	clearResponseCh := func() {
+		nativeDialogMu.Lock()
+		nativeDialogRespCh = nil
+		nativeDialogMu.Unlock()
+	}
+
+	select {
+	case resp := <-respCh:
+		clearResponseCh()
+		if resp.Error != "" {
+			return protocol.NativeDialogResponse{}, fmt.Errorf("%s", resp.Error)
+		}
+		return resp, nil
+	case <-time.After(2 * time.Minute):
+		clearResponseCh()
+		return protocol.NativeDialogResponse{}, fmt.Errorf("native dialog request timed out")
 	}
 }
 

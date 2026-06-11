@@ -88,3 +88,35 @@ func TestNativeDebugRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 }
+
+func TestNativeDialogRoundTrip(t *testing.T) {
+	reqPayload, err := EncodeNativeDialogRequest(NativeDialogRequest{
+		Kind:       "directory",
+		Title:      "Choose Workspace",
+		InitialDir: `D:\Projects`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := DecodeNativeDialogRequest(reqPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Kind != "directory" || req.Title != "Choose Workspace" || req.InitialDir != `D:\Projects` {
+		t.Fatalf("unexpected dialog request: %+v", req)
+	}
+
+	respPayload, err := EncodeNativeDialogResponse(NativeDialogResponse{
+		Path: `D:\Projects\GenEngine`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := DecodeNativeDialogResponse(respPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Canceled || resp.Path != `D:\Projects\GenEngine` || resp.Error != "" {
+		t.Fatalf("unexpected dialog response: %+v", resp)
+	}
+}

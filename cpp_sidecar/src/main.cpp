@@ -5,6 +5,8 @@
 
 #include <shellscalingapi.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <shobjidl.h>
 #include <windows.h>
 #include <windowsx.h>
 
@@ -178,6 +180,90 @@ std::wstring Utf8ToWide(const std::string& input) {
     std::wstring out(count, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, input.data(), static_cast<int>(input.size()), out.data(), count);
     return out;
+}
+
+std::string WideToUtf8(const std::wstring& input) {
+    if (input.empty()) return "";
+    int count = WideCharToMultiByte(CP_UTF8, 0, input.data(), static_cast<int>(input.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(count, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, input.data(), static_cast<int>(input.size()), out.data(), count, nullptr, nullptr);
+    return out;
+}
+
+poem::protocol::NativeDialogResponse OpenNativeDialog(HWND hwnd, const poem::protocol::NativeDialogRequest& request) {
+    poem::protocol::NativeDialogResponse response;
+    if (request.kind != "directory") {
+        response.error = "unsupported native dialog kind";
+        return response;
+    }
+
+    HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    bool uninitialize = SUCCEEDED(coHr);
+    if (FAILED(coHr) && coHr != RPC_E_CHANGED_MODE) {
+        response.error = "failed to initialize COM for native dialog";
+        return response;
+    }
+
+    IFileOpenDialog* dialog = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (FAILED(hr) || dialog == nullptr) {
+        if (uninitialize) CoUninitialize();
+        response.error = "failed to create directory picker";
+        return response;
+    }
+
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options))) {
+        dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    }
+    if (!request.title.empty()) {
+        std::wstring title = Utf8ToWide(request.title);
+        dialog->SetTitle(title.c_str());
+    }
+    if (!request.initialDir.empty()) {
+        std::wstring initialDir = Utf8ToWide(request.initialDir);
+        IShellItem* folder = nullptr;
+        if (SUCCEEDED(SHCreateItemFromParsingName(initialDir.c_str(), nullptr, IID_PPV_ARGS(&folder))) && folder != nullptr) {
+            dialog->SetFolder(folder);
+            folder->Release();
+        }
+    }
+
+    hr = dialog->Show(hwnd);
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        response.canceled = true;
+        dialog->Release();
+        if (uninitialize) CoUninitialize();
+        return response;
+    }
+    if (FAILED(hr)) {
+        response.error = "directory picker failed";
+        dialog->Release();
+        if (uninitialize) CoUninitialize();
+        return response;
+    }
+
+    IShellItem* item = nullptr;
+    hr = dialog->GetResult(&item);
+    if (FAILED(hr) || item == nullptr) {
+        response.error = "directory picker did not return a folder";
+        dialog->Release();
+        if (uninitialize) CoUninitialize();
+        return response;
+    }
+
+    PWSTR path = nullptr;
+    hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+    if (FAILED(hr) || path == nullptr) {
+        response.error = "failed to resolve selected folder path";
+    } else {
+        response.path = WideToUtf8(path);
+        CoTaskMemFree(path);
+    }
+    item->Release();
+    dialog->Release();
+    if (uninitialize) CoUninitialize();
+    return response;
 }
 
 struct StartupMonitorInfo {
@@ -643,6 +729,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     auto request = poem::protocol::DecodeNativeDebugRequest(env.body);
                     auto response = BuildNativeDebugResponse(app, request);
                     auto payload = poem::protocol::EncodeNativeDebugResponse(response);
+                    poem::ipc::WriteMessage(app.toGo, payload);
+                } else if (env.type == poem::protocol::MessageType::NativeDialogRequest) {
+                    auto request = poem::protocol::DecodeNativeDialogRequest(env.body);
+                    auto response = OpenNativeDialog(app.hwnd, request);
+                    auto payload = poem::protocol::EncodeNativeDialogResponse(response);
                     poem::ipc::WriteMessage(app.toGo, payload);
                 }
             } catch (...) {

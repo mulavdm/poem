@@ -15,4 +15,4 @@ add_executable(poem_cpp_sidecar WIN32
 
 target_include_directories(poem_cpp_sidecar PRIVATE src)
 target_compile_definitions(poem_cpp_sidecar PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(poem_cpp_sidecar PRIVATE d3d11 dxgi d3dcompiler winmm user32 gdi32 shcore)
+target_link_libraries(poem_cpp_sidecar PRIVATE d3d11 dxgi d3dcompiler winmm user32 gdi32 shcore shell32 ole32 uuid)

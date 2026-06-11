@@ -238,6 +238,66 @@ func DecodeNativeDebugResponse(payload []byte) (NativeDebugResponse, error) {
 	return out, nil
 }
 
+func EncodeNativeDialogRequest(msg NativeDialogRequest) ([]byte, error) {
+	var body bytes.Buffer
+	writeString(&body, msg.Kind)
+	writeString(&body, msg.Title)
+	writeString(&body, msg.InitialDir)
+	return wrapEnvelope(MessageNativeDialogRequest, body.Bytes()), nil
+}
+
+func DecodeNativeDialogRequest(payload []byte) (NativeDialogRequest, error) {
+	msgType, body, err := DecodeEnvelope(payload)
+	if err != nil {
+		return NativeDialogRequest{}, err
+	}
+	if msgType != MessageNativeDialogRequest {
+		return NativeDialogRequest{}, fmt.Errorf("unexpected message type %d", msgType)
+	}
+	r := bytes.NewReader(body)
+	out := NativeDialogRequest{}
+	if out.Kind, err = readString(r); err != nil {
+		return NativeDialogRequest{}, err
+	}
+	if out.Title, err = readString(r); err != nil {
+		return NativeDialogRequest{}, err
+	}
+	if out.InitialDir, err = readString(r); err != nil {
+		return NativeDialogRequest{}, err
+	}
+	return out, nil
+}
+
+func EncodeNativeDialogResponse(msg NativeDialogResponse) ([]byte, error) {
+	var body bytes.Buffer
+	writeString(&body, msg.Error)
+	writeBool(&body, msg.Canceled)
+	writeString(&body, msg.Path)
+	return wrapEnvelope(MessageNativeDialogResponse, body.Bytes()), nil
+}
+
+func DecodeNativeDialogResponse(payload []byte) (NativeDialogResponse, error) {
+	msgType, body, err := DecodeEnvelope(payload)
+	if err != nil {
+		return NativeDialogResponse{}, err
+	}
+	if msgType != MessageNativeDialogResponse {
+		return NativeDialogResponse{}, fmt.Errorf("unexpected message type %d", msgType)
+	}
+	r := bytes.NewReader(body)
+	out := NativeDialogResponse{}
+	if out.Error, err = readString(r); err != nil {
+		return NativeDialogResponse{}, err
+	}
+	if out.Canceled, err = readBool(r); err != nil {
+		return NativeDialogResponse{}, err
+	}
+	if out.Path, err = readString(r); err != nil {
+		return NativeDialogResponse{}, err
+	}
+	return out, nil
+}
+
 func DecodeEnvelope(payload []byte) (MessageType, []byte, error) {
 	if len(payload) < 8 {
 		return 0, nil, fmt.Errorf("payload too short: %d", len(payload))

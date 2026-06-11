@@ -8,12 +8,14 @@ const (
 type MessageType uint16
 
 const (
-	MessageInitEngine          MessageType = 1
-	MessageRenderFrame         MessageType = 2
-	MessagePlaySound           MessageType = 3
-	MessageEventBatch          MessageType = 101
-	MessageNativeDebugRequest  MessageType = 201
-	MessageNativeDebugResponse MessageType = 202
+	MessageInitEngine           MessageType = 1
+	MessageRenderFrame          MessageType = 2
+	MessagePlaySound            MessageType = 3
+	MessageEventBatch           MessageType = 101
+	MessageNativeDebugRequest   MessageType = 201
+	MessageNativeDebugResponse  MessageType = 202
+	MessageNativeDialogRequest  MessageType = 203
+	MessageNativeDialogResponse MessageType = 204
 )
 
 type DrawCommandType byte
@@ -159,4 +161,16 @@ type NativeDebugResponse struct {
 	FrameWidth  int32
 	FrameHeight int32
 	FrameRGBA   []byte
+}
+
+type NativeDialogRequest struct {
+	Kind       string
+	Title      string
+	InitialDir string
+}
+
+type NativeDialogResponse struct {
+	Error    string
+	Canceled bool
+	Path     string
 }
