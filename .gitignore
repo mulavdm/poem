@@ -1,5 +1,6 @@
 # Binaries for programs and plugins
 *.exe
+!pkg/render/assets/windows_amd64/poem_cpp_sidecar.exe
 *.exe~
 *.dll
 *.so

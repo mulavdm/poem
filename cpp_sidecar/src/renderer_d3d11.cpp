@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <vector>
 
 #ifdef DrawText
@@ -1057,7 +1058,9 @@ void RendererD3D11::Render(const protocol::RenderFrame& frame) {
         context_->Draw(range.count, range.start);
     }
 
-    swapchain_->Present(1, 0);
+    const char* vsyncEnv = std::getenv("POEM_VSYNC");
+    const UINT syncInterval = (vsyncEnv != nullptr && std::strcmp(vsyncEnv, "1") == 0) ? 1 : 0;
+    swapchain_->Present(syncInterval, 0);
 }
 
 } // namespace poem
