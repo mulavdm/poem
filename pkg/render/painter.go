@@ -271,8 +271,8 @@ func (f *ProtocolPainter) SetOffset(x, y float32) {
 	})
 }
 
-func (f *ProtocolPainter) SetClip(r image.Rectangle) {
-	if r.Empty() {
+func (f *ProtocolPainter) setClipScreen(rScreen image.Rectangle) {
+	if rScreen.Empty() {
 		f.clipEn = false
 		f.commands = append(f.commands, DrawCmdData{
 			Type: protocol.DrawCommandTypeSetClip,
@@ -280,48 +280,69 @@ func (f *ProtocolPainter) SetClip(r image.Rectangle) {
 		})
 	} else {
 		f.clipEn = true
-		f.clipX = r.Min.X
-		f.clipY = r.Min.Y
-		f.clipW = r.Dx()
-		f.clipH = r.Dy()
+		f.clipX = rScreen.Min.X
+		f.clipY = rScreen.Min.Y
+		f.clipW = rScreen.Dx()
+		f.clipH = rScreen.Dy()
 		f.commands = append(f.commands, DrawCmdData{
 			Type: protocol.DrawCommandTypeSetClip,
-			X1:   r.Min.X,
-			Y1:   r.Min.Y,
-			W:    r.Dx(),
-			H:    r.Dy(),
+			X1:   rScreen.Min.X,
+			Y1:   rScreen.Min.Y,
+			W:    rScreen.Dx(),
+			H:    rScreen.Dy(),
 			Flag: true,
 		})
 	}
 }
 
+func (f *ProtocolPainter) SetClip(r image.Rectangle) {
+	if r.Empty() {
+		f.setClipScreen(image.Rectangle{})
+		return
+	}
+	rScreen := image.Rect(
+		r.Min.X+int(f.offsetX),
+		r.Min.Y+int(f.offsetY),
+		r.Max.X+int(f.offsetX),
+		r.Max.Y+int(f.offsetY),
+	)
+	f.setClipScreen(rScreen)
+}
+
 func (f *ProtocolPainter) PushClip(r image.Rectangle) {
 	if r.Empty() {
 		f.clipStack = append(f.clipStack, image.Rectangle{})
-		f.SetClip(image.Rectangle{})
+		f.setClipScreen(image.Rectangle{})
 		return
 	}
+
+	rScreen := image.Rect(
+		r.Min.X+int(f.offsetX),
+		r.Min.Y+int(f.offsetY),
+		r.Max.X+int(f.offsetX),
+		r.Max.Y+int(f.offsetY),
+	)
 
 	if f.clipEn {
 		current := image.Rect(f.clipX, f.clipY, f.clipX+f.clipW, f.clipY+f.clipH)
 		f.clipStack = append(f.clipStack, current)
-		f.SetClip(current.Intersect(r))
+		f.setClipScreen(current.Intersect(rScreen))
 		return
 	}
 
 	f.clipStack = append(f.clipStack, image.Rectangle{})
-	f.SetClip(r)
+	f.setClipScreen(rScreen)
 }
 
 func (f *ProtocolPainter) PopClip() {
 	if len(f.clipStack) == 0 {
-		f.SetClip(image.Rectangle{})
+		f.setClipScreen(image.Rectangle{})
 		return
 	}
 
 	prev := f.clipStack[len(f.clipStack)-1]
 	f.clipStack = f.clipStack[:len(f.clipStack)-1]
-	f.SetClip(prev)
+	f.setClipScreen(prev)
 }
 
 func (f *ProtocolPainter) Flush() {

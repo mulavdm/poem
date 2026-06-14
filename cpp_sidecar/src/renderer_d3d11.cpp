@@ -908,10 +908,10 @@ void RendererD3D11::BuildGeometry(const protocol::RenderFrame& frame, std::vecto
         case protocol::DrawCommandType::SetClip:
             clipEnabled = cmd.flag;
             if (clipEnabled) {
-                clipRect.left = static_cast<LONG>(cmd.x1 * scaleX + offsetX);
-                clipRect.top = static_cast<LONG>(cmd.y1 * scaleY + offsetY);
-                clipRect.right = static_cast<LONG>((cmd.x1 + cmd.w) * scaleX + offsetX);
-                clipRect.bottom = static_cast<LONG>((cmd.y1 + cmd.h) * scaleY + offsetY);
+                clipRect.left = static_cast<LONG>(cmd.x1 * scaleX);
+                clipRect.top = static_cast<LONG>(cmd.y1 * scaleY);
+                clipRect.right = static_cast<LONG>((cmd.x1 + cmd.w) * scaleX);
+                clipRect.bottom = static_cast<LONG>((cmd.y1 + cmd.h) * scaleY);
             }
             continue;
         default:

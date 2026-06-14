@@ -1306,10 +1306,10 @@ func renderFrameToImage(frame protocol.RenderFrame) *image.RGBA {
 		case protocol.DrawCommandTypeSetClip:
 			if cmd.Flag {
 				currentClip = image.Rect(
-					int(cmd.X1)+offsetX,
-					int(cmd.Y1)+offsetY,
-					int(cmd.X1+cmd.W)+offsetX,
-					int(cmd.Y1+cmd.H)+offsetY,
+					int(cmd.X1),
+					int(cmd.Y1),
+					int(cmd.X1+cmd.W),
+					int(cmd.Y1+cmd.H),
 				)
 				clipEnabled = true
 			} else {
