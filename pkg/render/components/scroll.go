@@ -236,6 +236,7 @@ func (s *ScrollView) Draw(p types.Painter, state *types.ApplicationState) {
 		isHovered := mPt.In(thumb) || s.dragging
 		if isHovered {
 			thumbColor = color.RGBA{0, 255, 150, 150}
+			state.CursorID = state.HandCursor
 		}
 
 		p.DrawRoundedRect(thumb, 4, thumbColor)

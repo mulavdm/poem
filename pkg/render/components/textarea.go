@@ -497,6 +497,9 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 		pnt.SetGlow(6.0)
 		pnt.DrawRoundedRect(image.Rect(t.Rect.Min.X-2, t.Rect.Min.Y-2, t.Rect.Max.X+2, t.Rect.Max.Y+2), t.Rounding+2, color.RGBA{139, 92, 246, 200})
 		pnt.SetGlow(0)
+	}
+
+	if state.HoveredID == t.CompID {
 		state.CursorID = state.IBeamCursor
 	}
 
