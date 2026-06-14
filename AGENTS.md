@@ -6,6 +6,29 @@ This document contains project-specific architectural rules, debugging knowledge
 
 Treat this file as the repo-level source of truth for agent behavior and guardrails inside `POEM`. Use the root `README.md` for the high-level project overview, `GUIDE.md` for downstream UI authoring, `ARCHITECTURE.md` for deeper runtime notes, and `docs/AUTOMATION.md` for the automation transport and inspection model.
 
+## Universal Engineering Principles
+
+- **Strict Scope Control**: Keep changes strictly scoped to the user's request. Do not execute gratuitous refactoring or rewrite unrelated code while fixing a specific issue.
+- **Contextual Blending**: Before writing any code, read all relevant files. Your changes must blend in with the surrounding codebase's existing patterns.
+- **Safe Operations**: Preserve user changes and avoid destructive git or filesystem operations unless explicitly requested.
+- **Anti-Indirection**: Prefer straightforward modules, simple functions, plain data structures, and native types over heavy indirection or framework-heavy abstractions.
+- **Minimal Dependencies**: Start with the standard library of the language in use. Avoid tiny helper dependencies for trivial code (no micro-packages). Reject dependencies that force the repo toward an unwanted framework shape.
+- **Clear Data Ownership**: Keep data flow, ownership, lifecycle, and side effects explicit and easy to follow.
+- **Immutability**: Treat shared state and blackboards as immutable once published. Produce new data rather than mutating in place.
+- **Measure Everything**: Always implement profiling, benchmarking, and maintain zero/low-allocation routing in hot paths. Measure before merging.
+- **Security by Design**: Incorporate defensive engineering, red-team testing, or attack vector simulations for any newly added feature.
+- **Robust Lifecycles**: Do not block routing threads. Actively manage child sidecars—poll for health, use timeouts, and gracefully clean up orphaned background processes on crashes.
+- **Strict Locking Discipline**: Use language-appropriate read-write locks correctly—prefer read locks for reads, and isolate write locks strictly to mutation operations.
+- **Atomic Updates**: When APIs, configuration schemas, or behaviors change, update the relevant documentation (`README.md`, architecture docs) in the exact same commit. Documentation is part of the code.
+- **Truthful & Living Documentation**: Treat architecture documents as living specifications. Remove stale references to deprecated features or deleted projects. Do not turn brainstorms or speculative plans into present-tense guarantees.
+- **Proximity of Information**: Keep implementation details near the code or project it describes. Do not stuff specific technical workflows into global workspace documents.
+- **Root Versus Project Scope**: Keep workspace-level documents strictly generic. Project-specific architecture, workflow, and implementation guidance belongs exclusively in the relevant project directory.
+- **Targeted Validation**: Always run the most relevant formatter, linter, and targeted tests for the specific module you are changing. Clearly report any verification that could not be run.
+- **Human Accountability**: A pull request is a long-term commitment. AI must act purely as an assistant. Do not generate invasive subsystems the human cannot explain or maintain.
+- **No Autonomous Overreach**: Agents must not unilaterally commit, push, or open Pull Requests on the user's behalf without explicit direction.
+- **Professional Interfaces**: Maintain a professional, accessible, and vanilla visual theme. Avoid over-the-top styling (like "cyberpunk" or heavy neon aesthetics). Prioritize clean typography and functionality.
+
+
 ## Architecture & Principles
 
 1. **Go UI Semantics, Native Presentation Boundary**: Layout, page rebuilds, focus, hit-testing, automation semantics, and frame generation live in Go under `pkg/render`. Windowing, D3D11 presentation, DPI handling, and desktop-native capture hooks live behind the Windows C++ sidecar in `cpp_sidecar/`.
