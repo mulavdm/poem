@@ -296,6 +296,10 @@ func Run(config AppConfig) {
 			}
 			stateMutex.Lock()
 			processEventBatch(batch, pipeConnGoToSidecar, painter)
+			if globalState.NeedsRepaint {
+				triggerRepaintFrame(pipeConnGoToSidecar, painter)
+				globalState.NeedsRepaint = false
+			}
 			stateMutex.Unlock()
 		case protocol.MessageNativeDebugResponse:
 			resp, err := protocol.DecodeNativeDebugResponse(payload)
