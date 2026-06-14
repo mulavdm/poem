@@ -97,6 +97,7 @@ type ApplicationState struct {
 	PhysicalWindowHeight int
 	LastPaintTime        time.Time
 	RenderDt             float64
+	NeedsRepaint         bool
 
 	// Live Telemetry Stream History Slices
 	FPSHistory  []float32

@@ -261,8 +261,11 @@ func Run(config AppConfig) {
 			lastFrame = now
 			globalState.FrameTime = time.Since(start)
 
-			// Trigger automatic repaint batch to synchronize rendering loop updates
-			triggerRepaintFrame(pipeConnGoToSidecar, painter)
+			shouldRepaint := globalState.NeedsRepaint || globalState.ParticlesEnabled || globalState.IsTransitioning
+			if shouldRepaint {
+				triggerRepaintFrame(pipeConnGoToSidecar, painter)
+				globalState.NeedsRepaint = false
+			}
 			stateMutex.Unlock()
 		}
 	}()
@@ -453,22 +456,20 @@ func writeMessage(conn io.Writer, payload []byte) error {
 	defer pipeWriteMutex.Unlock()
 
 	length := uint32(len(payload))
-	lenBuf := make([]byte, 4)
-	binary.LittleEndian.PutUint32(lenBuf, length)
-	if _, err := conn.Write(lenBuf); err != nil {
-		return err
-	}
-	_, err := conn.Write(payload)
+	buf := make([]byte, 4+length)
+	binary.LittleEndian.PutUint32(buf[0:4], length)
+	copy(buf[4:], payload)
+	_, err := conn.Write(buf)
 	return err
 }
 
 // Read helper
 func readMessage(conn io.Reader) ([]byte, error) {
-	lenBuf := make([]byte, 4)
-	if _, err := io.ReadFull(conn, lenBuf); err != nil {
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
 		return nil, err
 	}
-	length := binary.LittleEndian.Uint32(lenBuf)
+	length := binary.LittleEndian.Uint32(lenBuf[:])
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(conn, payload); err != nil {
 		return nil, err
@@ -821,21 +822,6 @@ func triggerRepaintFrame(conn io.Writer, painter *ProtocolPainter) {
 	types.RenderPipeline(painter, globalState)
 	renderDuration := time.Since(renderStart)
 
-	// Update dynamic hover-based cursor type automatically on every frame
-	globalState.CursorID = globalState.ArrowCursor
-	pt := image.Point{globalState.MouseX, globalState.MouseY}
-	if hoveredID := libFindHoveredComponent(pt); hoveredID != "" {
-		if comp := libFindComponent(hoveredID); comp != nil {
-			if _, ok := comp.(*components.TextArea); ok {
-				globalState.CursorID = globalState.IBeamCursor
-			} else if _, ok := comp.(*components.TextInput); ok {
-				globalState.CursorID = globalState.IBeamCursor
-			} else if comp.Focusable() {
-				globalState.CursorID = globalState.HandCursor
-			}
-		}
-	}
-
 	// Map cursor IDs to protocol cursor values.
 	var cursorVal byte = 0 // Arrow
 	switch globalState.CursorID {
@@ -1127,7 +1113,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 	}
 	globalPerfTracker.recordEventBatch(len(batch.Events), time.Since(batchStart), resizeEvents, mouseEvents, keyboardEvents)
 	if stateChanged {
-		triggerRepaintFrame(conn, painter)
+		globalState.NeedsRepaint = true
 	}
 }
 

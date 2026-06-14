@@ -61,10 +61,13 @@ std::vector<std::uint8_t> ReadMessage(PipeConnection& conn) {
 
 void WriteMessage(PipeConnection& conn, const std::vector<std::uint8_t>& payload) {
     const auto size = static_cast<std::uint32_t>(payload.size());
-    WriteExact(conn.handle, &size, sizeof(size));
-    if (!payload.empty()) {
-        WriteExact(conn.handle, payload.data(), size);
+    thread_local std::vector<std::uint8_t> buffer;
+    buffer.resize(sizeof(size) + size);
+    std::memcpy(buffer.data(), &size, sizeof(size));
+    if (size > 0) {
+        std::memcpy(buffer.data() + sizeof(size), payload.data(), size);
     }
+    WriteExact(conn.handle, buffer.data(), static_cast<std::uint32_t>(buffer.size()));
 }
 
 } // namespace poem::ipc
