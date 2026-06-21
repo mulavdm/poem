@@ -182,31 +182,44 @@ func fitButtonLabel(label string, width, charW int) string {
 	return string(runes[:maxChars-3]) + "..."
 }
 
+const (
+	defaultFontHeight   = 20
+	defaultFontBaseline = 15
+)
+
 // Label is a simple text element
 type Label struct {
 	CompID string
 	Pos    image.Point
 	Text   string
 	Color  color.RGBA
+
+	rect   image.Rectangle
 }
 
 func (l *Label) ID() string    { return l.CompID }
 func (l *Label) GetID() string { return l.CompID }
 func (l *Label) Bounds() image.Rectangle {
-	return image.Rect(l.Pos.X, l.Pos.Y, l.Pos.X+len(l.Text)*10, l.Pos.Y+20)
+	if !l.rect.Empty() {
+		return l.rect
+	}
+	return image.Rect(l.Pos.X, l.Pos.Y, l.Pos.X+len(l.Text)*10, l.Pos.Y+defaultFontHeight)
 }
 func (l *Label) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
 	charW := 8
 	if state != nil && state.FontCharWidth > 0 {
 		charW = state.FontCharWidth
 	}
-	size := measurePlainText(l.Text, charW, 20)
+	size := measurePlainText(l.Text, charW, defaultFontHeight)
 	return types.MeasureResult{Preferred: size, Min: size}
 }
 func (l *Label) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.DrawText(l.Text, l.Pos.X, l.Pos.Y, l.Color)
 }
-func (l *Label) SetBounds(r image.Rectangle) { l.Pos = r.Min }
+func (l *Label) SetBounds(r image.Rectangle) {
+	l.rect = r
+	l.Pos = image.Point{X: r.Min.X, Y: r.Min.Y + (r.Dy()-defaultFontHeight)/2 + defaultFontBaseline}
+}
 func (l *Label) HitTest(pt image.Point) string {
 	if pt.In(l.Bounds()) {
 		return l.CompID
@@ -227,12 +240,17 @@ type DynamicLabel struct {
 	Pos     image.Point
 	GetText func(state *types.ApplicationState) string
 	Color   color.RGBA
+
+	rect    image.Rectangle
 }
 
 func (dl *DynamicLabel) ID() string    { return dl.CompID }
 func (dl *DynamicLabel) GetID() string { return dl.CompID }
 func (dl *DynamicLabel) Bounds() image.Rectangle {
-	return image.Rect(dl.Pos.X, dl.Pos.Y, dl.Pos.X+300, dl.Pos.Y+20)
+	if !dl.rect.Empty() {
+		return dl.rect
+	}
+	return image.Rect(dl.Pos.X, dl.Pos.Y, dl.Pos.X+300, dl.Pos.Y+defaultFontHeight)
 }
 func (dl *DynamicLabel) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
 	charW := 8
@@ -248,8 +266,8 @@ func (dl *DynamicLabel) Measure(avail image.Point, state *types.ApplicationState
 		width = min(width, avail.X)
 	}
 	return types.MeasureResult{
-		Preferred: image.Pt(width, 20),
-		Min:       image.Pt(minValueInt(width, 120), 20),
+		Preferred: image.Pt(width, defaultFontHeight),
+		Min:       image.Pt(minValueInt(width, 120), defaultFontHeight),
 	}
 }
 func (dl *DynamicLabel) Draw(pnt types.Painter, state *types.ApplicationState) {
@@ -257,7 +275,10 @@ func (dl *DynamicLabel) Draw(pnt types.Painter, state *types.ApplicationState) {
 		pnt.DrawText(dl.GetText(state), dl.Pos.X, dl.Pos.Y, dl.Color)
 	}
 }
-func (dl *DynamicLabel) SetBounds(r image.Rectangle) { dl.Pos = r.Min }
+func (dl *DynamicLabel) SetBounds(r image.Rectangle) {
+	dl.rect = r
+	dl.Pos = image.Point{X: r.Min.X, Y: r.Min.Y + (r.Dy()-defaultFontHeight)/2 + defaultFontBaseline}
+}
 func (dl *DynamicLabel) HitTest(pt image.Point) string {
 	if pt.In(dl.Bounds()) {
 		return dl.CompID
@@ -365,7 +386,8 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 	}
 
 	pnt.PushClip(t.Rect)
-	pnt.DrawText(disp, t.Rect.Min.X+10, t.Rect.Min.Y+20, col)
+	textY := t.Rect.Min.Y + (t.Rect.Dy()-defaultFontHeight)/2 + defaultFontBaseline
+	pnt.DrawText(disp, t.Rect.Min.X+10, textY, col)
 	pnt.PopClip()
 
 	// Draw cursor if focused
@@ -377,7 +399,8 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 				charW = 8
 			}
 			cursorX := t.Rect.Min.X + 10 + (t.CursorIndex * charW)
-			pnt.FillRect(image.Rect(cursorX, t.Rect.Min.Y+8, cursorX+2, t.Rect.Min.Y+28), t.TextColor)
+			cursorTop := t.Rect.Min.Y + (t.Rect.Dy()-defaultFontHeight)/2
+			pnt.FillRect(image.Rect(cursorX, cursorTop, cursorX+2, cursorTop+defaultFontHeight), t.TextColor)
 		}
 	}
 }

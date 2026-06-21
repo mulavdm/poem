@@ -27,6 +27,7 @@ Treat this file as the repo-level source of truth for agent behavior and guardra
 - **Human Accountability**: A pull request is a long-term commitment. AI must act purely as an assistant. Do not generate invasive subsystems the human cannot explain or maintain.
 - **No Autonomous Overreach**: Agents must not unilaterally commit, push, or open Pull Requests on the user's behalf without explicit direction.
 - **Professional Interfaces**: Maintain a professional, accessible, and vanilla visual theme. Avoid over-the-top styling (like "cyberpunk" or heavy neon aesthetics). Prioritize clean typography and functionality.
+- **Systematic Layout Design**: Never use ad-hoc layout bypasses or hardcoded Y/X coordinate offsets to fix visual text or container clipping. Position and baseline issues must be resolved systematically within the rendering engine's layout components (like FlexBox or Grid) or component-level metric calculations, and parent container dimensions must be properly sized to fit their contents.
 
 
 ## Architecture & Principles

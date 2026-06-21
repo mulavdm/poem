@@ -86,7 +86,10 @@ func (l *LabeledBox) Draw(p types.Painter, state *types.ApplicationState) {
 	}
 	offset := l.TitleOffset
 	if offset == 0 {
-		offset = lineH - 4
+		offset = (lineH-defaultFontHeight)/2 + defaultFontBaseline
+		if offset < 0 {
+			offset = defaultFontBaseline
+		}
 	}
 	p.DrawText(l.Title, l.Rect.Min.X, l.Rect.Min.Y+offset, col)
 	if l.Child != nil {

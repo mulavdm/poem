@@ -20,8 +20,9 @@ type ProtocolPainter struct {
 	clipY     int
 	clipW     int
 	clipH     int
-	clipEn    bool
-	clipStack []image.Rectangle
+	clipEn           bool
+	clipStack        []image.Rectangle
+	clipEnabledStack []bool
 }
 
 type DrawCmdData struct {
@@ -58,8 +59,9 @@ const (
 
 func NewProtocolPainter() *ProtocolPainter {
 	return &ProtocolPainter{
-		commands:  make([]DrawCmdData, 0, 256),
-		clipStack: make([]image.Rectangle, 0, 8),
+		commands:         make([]DrawCmdData, 0, 256),
+		clipStack:        make([]image.Rectangle, 0, 8),
+		clipEnabledStack: make([]bool, 0, 8),
 	}
 }
 
@@ -78,6 +80,7 @@ func (f *ProtocolPainter) Reset() {
 	f.clipH = 0
 	f.clipEn = false
 	f.clipStack = f.clipStack[:0]
+	f.clipEnabledStack = f.clipEnabledStack[:0]
 }
 
 func (f *ProtocolPainter) DrawRoundedRect(r image.Rectangle, radius int, col color.RGBA) {
@@ -271,15 +274,14 @@ func (f *ProtocolPainter) SetOffset(x, y float32) {
 	})
 }
 
-func (f *ProtocolPainter) setClipScreen(rScreen image.Rectangle) {
-	if rScreen.Empty() {
-		f.clipEn = false
+func (f *ProtocolPainter) setClipScreen(rScreen image.Rectangle, enabled bool) {
+	f.clipEn = enabled
+	if !enabled {
 		f.commands = append(f.commands, DrawCmdData{
 			Type: protocol.DrawCommandTypeSetClip,
 			Flag: false,
 		})
 	} else {
-		f.clipEn = true
 		f.clipX = rScreen.Min.X
 		f.clipY = rScreen.Min.Y
 		f.clipW = rScreen.Dx()
@@ -297,7 +299,7 @@ func (f *ProtocolPainter) setClipScreen(rScreen image.Rectangle) {
 
 func (f *ProtocolPainter) SetClip(r image.Rectangle) {
 	if r.Empty() {
-		f.setClipScreen(image.Rectangle{})
+		f.setClipScreen(image.Rectangle{}, false)
 		return
 	}
 	rScreen := image.Rect(
@@ -306,13 +308,15 @@ func (f *ProtocolPainter) SetClip(r image.Rectangle) {
 		r.Max.X+int(f.offsetX),
 		r.Max.Y+int(f.offsetY),
 	)
-	f.setClipScreen(rScreen)
+	f.setClipScreen(rScreen, true)
 }
 
 func (f *ProtocolPainter) PushClip(r image.Rectangle) {
+	f.clipStack = append(f.clipStack, image.Rect(f.clipX, f.clipY, f.clipX+f.clipW, f.clipY+f.clipH))
+	f.clipEnabledStack = append(f.clipEnabledStack, f.clipEn)
+
 	if r.Empty() {
-		f.clipStack = append(f.clipStack, image.Rectangle{})
-		f.setClipScreen(image.Rectangle{})
+		f.setClipScreen(image.Rectangle{}, true)
 		return
 	}
 
@@ -325,24 +329,25 @@ func (f *ProtocolPainter) PushClip(r image.Rectangle) {
 
 	if f.clipEn {
 		current := image.Rect(f.clipX, f.clipY, f.clipX+f.clipW, f.clipY+f.clipH)
-		f.clipStack = append(f.clipStack, current)
-		f.setClipScreen(current.Intersect(rScreen))
-		return
+		f.setClipScreen(current.Intersect(rScreen), true)
+	} else {
+		f.setClipScreen(rScreen, true)
 	}
-
-	f.clipStack = append(f.clipStack, image.Rectangle{})
-	f.setClipScreen(rScreen)
 }
 
 func (f *ProtocolPainter) PopClip() {
 	if len(f.clipStack) == 0 {
-		f.setClipScreen(image.Rectangle{})
+		f.setClipScreen(image.Rectangle{}, false)
 		return
 	}
 
-	prev := f.clipStack[len(f.clipStack)-1]
+	prevRect := f.clipStack[len(f.clipStack)-1]
 	f.clipStack = f.clipStack[:len(f.clipStack)-1]
-	f.setClipScreen(prev)
+
+	prevEnabled := f.clipEnabledStack[len(f.clipEnabledStack)-1]
+	f.clipEnabledStack = f.clipEnabledStack[:len(f.clipEnabledStack)-1]
+
+	f.setClipScreen(prevRect, prevEnabled)
 }
 
 func (f *ProtocolPainter) Flush() {

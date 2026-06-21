@@ -109,6 +109,7 @@ This means downstream apps should not assume "declare children and forget it" br
 - wrap overflow regions in `ScrollView`; it uses `ContentSize(...)` where available so fixed viewport bounds do not erase scrollable extent
 - avoid using oversized placeholder `Bounds()` as a proxy for wrapped text size
 - cap long status text or labels explicitly when the UI has tight horizontal budgets
+- **Systematic Layout Rule**: Never use hardcoded visual offsets or ad-hoc coordinate bypasses to fix visual text or container clipping. Position and baseline issues must be resolved systematically within the rendering engine's layout components (like FlexBox or Grid) or component-level metric calculations, and parent container dimensions must be properly sized to fit their contents.
 
 See [GUIDE.md](./GUIDE.md) for the downstream migration pattern.
 

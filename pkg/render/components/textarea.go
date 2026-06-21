@@ -87,7 +87,7 @@ func (t *TextArea) OnMouseDown(pt image.Point, state *types.ApplicationState) bo
 	}
 
 	padX := 12
-	padY := 12
+	padY := 18
 
 	bearingX := state.FontCharBearingX
 	clickX := pt.X - t.Rect.Min.X - padX - bearingX
@@ -484,7 +484,7 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 	}
 
 	padX := 12
-	padY := 12
+	padY := 18
 
 	maxWidth := t.Rect.Dx() - 2*padX
 	if maxWidth <= charW {
