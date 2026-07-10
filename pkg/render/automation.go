@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,12 +27,16 @@ import (
 
 	"go_native_gpu_gui/internal/win32"
 	"go_native_gpu_gui/pkg/render/components"
+	"go_native_gpu_gui/pkg/render/events"
 	"go_native_gpu_gui/pkg/render/layout"
 	"go_native_gpu_gui/pkg/render/protocol"
+	"go_native_gpu_gui/pkg/render/semantics"
 	"go_native_gpu_gui/pkg/render/types"
 )
 
 var nativeDebugRequest = requestNativeDebugWithOptions
+
+const maxAutomationRequestBody = 1 << 20
 
 type AutomationConfig struct {
 	Enabled    bool
@@ -44,14 +49,27 @@ type AutomationConfig struct {
 }
 
 type AutomationNode struct {
-	ID        string           `json:"id"`
-	Type      string           `json:"type"`
-	Bounds    AutomationBounds `json:"bounds"`
-	Text      string           `json:"text,omitempty"`
-	Visible   bool             `json:"visible"`
-	Focusable bool             `json:"focusable"`
-	Focused   bool             `json:"focused"`
-	Children  []AutomationNode `json:"children,omitempty"`
+	ID             string           `json:"id"`
+	Type           string           `json:"type"`
+	Bounds         AutomationBounds `json:"bounds"`
+	Text           string           `json:"text,omitempty"`
+	Visible        bool             `json:"visible"`
+	Focusable      bool             `json:"focusable"`
+	Focused        bool             `json:"focused"`
+	Role           string           `json:"role,omitempty"`
+	Name           string           `json:"name,omitempty"`
+	Value          string           `json:"value,omitempty"`
+	Description    string           `json:"description,omitempty"`
+	Disabled       bool             `json:"disabled,omitempty"`
+	Selected       bool             `json:"selected,omitempty"`
+	Checked        bool             `json:"checked,omitempty"`
+	Expanded       bool             `json:"expanded,omitempty"`
+	ReadOnly       bool             `json:"read_only,omitempty"`
+	Invalid        bool             `json:"invalid,omitempty"`
+	Actions        []string         `json:"actions,omitempty"`
+	SelectionStart int              `json:"selection_start"`
+	SelectionEnd   int              `json:"selection_end"`
+	Children       []AutomationNode `json:"children,omitempty"`
 }
 
 type AutomationBounds struct {
@@ -62,11 +80,23 @@ type AutomationBounds struct {
 }
 
 type AutomationRequest struct {
-	Command string `json:"command"`
-	ID      string `json:"id,omitempty"`
-	Value   string `json:"value,omitempty"`
-	Path    string `json:"path,omitempty"`
-	Key     string `json:"key,omitempty"`
+	Command  string              `json:"command"`
+	ID       string              `json:"id,omitempty"`
+	Selector *AutomationSelector `json:"selector,omitempty"`
+	Value    string              `json:"value,omitempty"`
+	Path     string              `json:"path,omitempty"`
+	Key      string              `json:"key,omitempty"`
+	Start    int                 `json:"start,omitempty"`
+	End      int                 `json:"end,omitempty"`
+}
+
+// AutomationSelector addresses exactly one node in the platform-neutral
+// semantic tree. State names are validated and support both true and false so
+// callers can distinguish enabled from disabled controls.
+type AutomationSelector struct {
+	Role   string          `json:"role,omitempty"`
+	Name   string          `json:"name,omitempty"`
+	States map[string]bool `json:"states,omitempty"`
 }
 
 type AutomationResponse struct {
@@ -75,6 +105,7 @@ type AutomationResponse struct {
 	CurrentPage          string           `json:"current_page,omitempty"`
 	FocusedID            string           `json:"focused_id,omitempty"`
 	HoveredID            string           `json:"hovered_id,omitempty"`
+	TargetID             string           `json:"target_id,omitempty"`
 	WindowWidth          int              `json:"window_width,omitempty"`
 	WindowHeight         int              `json:"window_height,omitempty"`
 	PhysicalWindowWidth  int              `json:"physical_window_width,omitempty"`
@@ -138,14 +169,15 @@ type PerfCondition struct {
 }
 
 type PerfMeasureActionRequest struct {
-	Command        string        `json:"command"`
-	ID             string        `json:"id,omitempty"`
-	Value          string        `json:"value,omitempty"`
-	Path           string        `json:"path,omitempty"`
-	Key            string        `json:"key,omitempty"`
-	TimeoutMS      int           `json:"timeout_ms,omitempty"`
-	PollIntervalMS int           `json:"poll_interval_ms,omitempty"`
-	Condition      PerfCondition `json:"condition"`
+	Command        string              `json:"command"`
+	ID             string              `json:"id,omitempty"`
+	Value          string              `json:"value,omitempty"`
+	Path           string              `json:"path,omitempty"`
+	Key            string              `json:"key,omitempty"`
+	Selector       *AutomationSelector `json:"selector,omitempty"`
+	TimeoutMS      int                 `json:"timeout_ms,omitempty"`
+	PollIntervalMS int                 `json:"poll_interval_ms,omitempty"`
+	Condition      PerfCondition       `json:"condition"`
 }
 
 type PerfMeasureActionResponse struct {
@@ -322,6 +354,18 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 	mux.HandleFunc("/set-text", func(w http.ResponseWriter, r *http.Request) {
 		writeAutomationHTTPCommand(w, r, cfg, "set-text")
 	})
+	mux.HandleFunc("/select-text", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "select-text")
+	})
+	mux.HandleFunc("/composition-start", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "composition-start")
+	})
+	mux.HandleFunc("/composition-update", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "composition-update")
+	})
+	mux.HandleFunc("/composition-end", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "composition-end")
+	})
 	mux.HandleFunc("/press-key", func(w http.ResponseWriter, r *http.Request) {
 		writeAutomationHTTPCommand(w, r, cfg, "press-key")
 	})
@@ -444,7 +488,7 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 			MaximizeWindow:    false,
 		}
 		if r.ContentLength != 0 {
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			if err := decodeAutomationJSON(w, r, &req); err != nil {
 				writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
 				return
 			}
@@ -478,7 +522,7 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 			FallbackToSelf:    true,
 		}
 		if r.ContentLength != 0 {
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			if err := decodeAutomationJSON(w, r, &req); err != nil {
 				writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
 				return
 			}
@@ -528,7 +572,7 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 		defer r.Body.Close()
 
 		var req PerfMeasureActionRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := decodeAutomationJSON(w, r, &req); err != nil {
 			writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
 			return
 		}
@@ -547,7 +591,7 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 		defer r.Body.Close()
 
 		var req PerfMeasureNativeActionRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := decodeAutomationJSON(w, r, &req); err != nil {
 			writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
 			return
 		}
@@ -613,7 +657,7 @@ func writeAutomationHTTPCommand(w http.ResponseWriter, r *http.Request, cfg Auto
 
 	var req AutomationRequest
 	if r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := decodeAutomationJSON(w, r, &req); err != nil {
 			writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
 			return
 		}
@@ -625,6 +669,11 @@ func writeAutomationHTTPCommand(w http.ResponseWriter, r *http.Request, cfg Auto
 		status = http.StatusBadRequest
 	}
 	writeHTTPAutomationJSON(w, status, resp)
+}
+
+func decodeAutomationJSON(w http.ResponseWriter, r *http.Request, target any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxAutomationRequestBody)
+	return json.NewDecoder(r.Body).Decode(target)
 }
 
 func writeHTTPAutomationMethodNotAllowed(w http.ResponseWriter) {
@@ -666,6 +715,9 @@ func automationActionDetails(req AutomationRequest, resp AutomationResponse) str
 	if req.Key != "" {
 		details = append(details, "key="+req.Key)
 	}
+	if req.Selector != nil {
+		details = append(details, "selector="+automationSelectorSummary(*req.Selector))
+	}
 	if !resp.OK && resp.Error != "" {
 		details = append(details, "error="+resp.Error)
 	}
@@ -686,11 +738,12 @@ func measureAutomationAction(req PerfMeasureActionRequest, cfg AutomationConfig)
 	startFrameCount := startPerf.Frames.FrameCount
 	start := time.Now()
 	actionResp := executeAutomationRequest(AutomationRequest{
-		Command: req.Command,
-		ID:      req.ID,
-		Value:   req.Value,
-		Path:    req.Path,
-		Key:     req.Key,
+		Command:  req.Command,
+		ID:       req.ID,
+		Selector: req.Selector,
+		Value:    req.Value,
+		Path:     req.Path,
+		Key:      req.Key,
 	}, cfg)
 	if !actionResp.OK {
 		return PerfMeasureActionResponse{
@@ -936,23 +989,55 @@ func handleAutomationRequest(req AutomationRequest, cfg AutomationConfig) Automa
 	case "get-state":
 		return baseAutomationResponse(nil, nil)
 	case "click":
-		if err := automationClickComponent(req.ID); err != nil {
+		target, err := resolveAutomationTarget(req)
+		if err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		if err := automationClickComponent(target); err != nil {
 			return AutomationResponse{OK: false, Error: err.Error()}
 		}
 		automationRepaint()
-		return baseAutomationResponse(nil, nil)
+		return automationTargetResponse(target)
 	case "focus":
-		if err := automationFocusComponent(req.ID); err != nil {
+		target, err := resolveAutomationTarget(req)
+		if err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		if err := automationFocusComponent(target); err != nil {
 			return AutomationResponse{OK: false, Error: err.Error()}
 		}
 		automationRepaint()
-		return baseAutomationResponse(nil, nil)
+		return automationTargetResponse(target)
 	case "set-text":
-		if err := automationSetText(req.ID, req.Value); err != nil {
+		target, err := resolveAutomationTarget(req)
+		if err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		if err := automationSetText(target, req.Value); err != nil {
 			return AutomationResponse{OK: false, Error: err.Error()}
 		}
 		automationRepaint()
-		return baseAutomationResponse(nil, nil)
+		return automationTargetResponse(target)
+	case "select-text":
+		target, err := resolveAutomationTarget(req)
+		if err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		if err := automationSelectText(target, req.Start, req.End); err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		automationRepaint()
+		return automationTargetResponse(target)
+	case "composition-start", "composition-update", "composition-end":
+		target, err := resolveAutomationTarget(req)
+		if err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		if err := automationComposition(target, strings.TrimPrefix(strings.ToLower(strings.TrimSpace(req.Command)), "composition-"), req.Value); err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		automationRepaint()
+		return automationTargetResponse(target)
 	case "press-key":
 		if err := automationPressKey(req.Key); err != nil {
 			return AutomationResponse{OK: false, Error: err.Error()}
@@ -998,6 +1083,135 @@ func baseAutomationResponse(nodes, flat []AutomationNode) AutomationResponse {
 	return resp
 }
 
+func automationTargetResponse(target string) AutomationResponse {
+	resp := baseAutomationResponse(nil, nil)
+	resp.TargetID = target
+	return resp
+}
+
+func resolveAutomationTarget(req AutomationRequest) (string, error) {
+	id := strings.TrimSpace(req.ID)
+	if id != "" && req.Selector != nil {
+		return "", fmt.Errorf("automation target must use either id or selector, not both")
+	}
+	if id != "" {
+		if len(id) > 1024 {
+			return "", fmt.Errorf("automation id exceeds 1024 bytes")
+		}
+		return id, nil
+	}
+	if req.Selector == nil {
+		return "", fmt.Errorf("automation target requires id or selector")
+	}
+	selector := *req.Selector
+	selector.Role = strings.ToLower(strings.TrimSpace(selector.Role))
+	selector.Name = strings.TrimSpace(selector.Name)
+	if len(selector.Role) > 128 || len(selector.Name) > 1024 {
+		return "", fmt.Errorf("automation selector text exceeds limit")
+	}
+	if selector.Role == "" && selector.Name == "" && len(selector.States) == 0 {
+		return "", fmt.Errorf("automation selector is empty")
+	}
+	if len(selector.States) > 16 {
+		return "", fmt.Errorf("automation selector has too many states")
+	}
+	for name := range selector.States {
+		if _, ok := semanticStateValue(semantics.State{}, name); !ok {
+			return "", fmt.Errorf("unknown automation state %q", name)
+		}
+	}
+	tree := types.BuildSemanticsTree(globalState)
+	if err := tree.Validate(); err != nil {
+		return "", fmt.Errorf("semantic tree is invalid: %w", err)
+	}
+	matches := make([]string, 0, 2)
+	var visit func(semantics.Node)
+	visit = func(node semantics.Node) {
+		if semanticNodeMatchesSelector(node, selector) {
+			matches = append(matches, node.ID)
+		}
+		for _, child := range node.Children {
+			visit(child)
+		}
+	}
+	visit(tree.Root)
+	if len(matches) == 0 {
+		return "", fmt.Errorf("automation selector %s matched no semantic nodes", automationSelectorSummary(selector))
+	}
+	if len(matches) > 1 {
+		shown := matches
+		if len(shown) > 5 {
+			shown = shown[:5]
+		}
+		return "", fmt.Errorf("automation selector %s is ambiguous; matched %d nodes: %s", automationSelectorSummary(selector), len(matches), strings.Join(shown, ", "))
+	}
+	return matches[0], nil
+}
+
+func semanticNodeMatchesSelector(node semantics.Node, selector AutomationSelector) bool {
+	if selector.Role != "" && strings.ToLower(string(node.Role)) != selector.Role {
+		return false
+	}
+	if selector.Name != "" && !strings.EqualFold(node.Name, selector.Name) {
+		return false
+	}
+	for name, want := range selector.States {
+		got, _ := semanticStateValue(node.State, name)
+		if got != want {
+			return false
+		}
+	}
+	return true
+}
+
+func semanticStateValue(state semantics.State, name string) (bool, bool) {
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), "-", "_")) {
+	case "disabled":
+		return state.Disabled, true
+	case "enabled":
+		return !state.Disabled, true
+	case "focused":
+		return state.Focused, true
+	case "selected":
+		return state.Selected, true
+	case "checked":
+		return state.Checked, true
+	case "expanded":
+		return state.Expanded, true
+	case "read_only", "readonly":
+		return state.ReadOnly, true
+	case "required":
+		return state.Required, true
+	case "invalid":
+		return state.Invalid, true
+	case "password":
+		return state.Password, true
+	case "offscreen":
+		return state.Offscreen, true
+	default:
+		return false, false
+	}
+}
+
+func automationSelectorSummary(selector AutomationSelector) string {
+	parts := make([]string, 0, 3)
+	if role := strings.TrimSpace(selector.Role); role != "" {
+		parts = append(parts, "role="+role)
+	}
+	if name := strings.TrimSpace(selector.Name); name != "" {
+		parts = append(parts, "name="+strconv.Quote(name))
+	}
+	stateNames := make([]string, 0, len(selector.States))
+	for name := range selector.States {
+		stateNames = append(stateNames, name)
+	}
+	sort.Strings(stateNames)
+	for _, name := range stateNames {
+		parts = append(parts, fmt.Sprintf("%s=%t", name, selector.States[name]))
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
 func buildAutomationSnapshot() ([]AutomationNode, []AutomationNode) {
 	nodes := make([]AutomationNode, 0)
 	flat := make([]AutomationNode, 0)
@@ -1010,6 +1224,13 @@ func buildAutomationSnapshot() ([]AutomationNode, []AutomationNode) {
 		node := buildAutomationNode(comp)
 		nodes = append(nodes, node)
 		flattenAutomationNode(node, &flat)
+	}
+	if globalState.Overlays != nil {
+		for _, overlay := range globalState.Overlays.Snapshot() {
+			node := buildAutomationNode(overlay.Component)
+			nodes = append(nodes, node)
+			flattenAutomationNode(node, &flat)
+		}
 	}
 	return nodes, flat
 }
@@ -1025,22 +1246,47 @@ func buildAutomationNode(comp types.Component) AutomationNode {
 		Focusable: comp.Focusable(),
 		Focused:   globalState != nil && globalState.FocusedID == comp.ID(),
 	}
-	switch c := comp.(type) {
-	case *layout.FlexBox:
-		node.Children = make([]AutomationNode, 0, len(c.Children))
-		for _, child := range c.Children {
-			node.Children = append(node.Children, buildAutomationNode(child))
+	if semantic, ok := comp.(types.SemanticComponent); ok {
+		info := semantic.Semantics(globalState)
+		node.Role, node.Name, node.Value, node.Description = string(info.Role), info.Name, info.Value, info.Description
+		node.Disabled, node.Selected, node.Checked = info.State.Disabled, info.State.Selected, info.State.Checked
+		node.Expanded, node.ReadOnly, node.Invalid = info.State.Expanded, info.State.ReadOnly, info.State.Invalid
+		if info.Text != nil {
+			node.SelectionStart, node.SelectionEnd = info.Text.SelectionStart, info.Text.SelectionEnd
 		}
-	case *components.ScrollView:
-		node.Children = make([]AutomationNode, 0, len(c.Children))
-		for _, child := range c.Children {
-			node.Children = append(node.Children, buildAutomationNode(child))
+		for _, action := range info.Actions {
+			node.Actions = append(node.Actions, string(action))
 		}
-	case *components.Modal:
-		node.Children = make([]AutomationNode, 0, len(c.Children))
-		for _, child := range c.Children {
-			node.Children = append(node.Children, buildAutomationNode(child))
+		for _, child := range info.Children {
+			node.Children = append(node.Children, automationNodeFromSemantic(child))
 		}
+	}
+	if container, ok := comp.(types.ChildComponent); ok {
+		for _, child := range container.ChildComponents() {
+			if child != nil {
+				node.Children = append(node.Children, buildAutomationNode(child))
+			}
+		}
+	}
+	return node
+}
+
+func automationNodeFromSemantic(info semantics.Node) AutomationNode {
+	node := AutomationNode{ID: info.ID, Type: "SemanticNode", Role: string(info.Role), Name: info.Name, Value: info.Value, Description: info.Description,
+		Bounds: AutomationBounds{X: info.Bounds.Min.X, Y: info.Bounds.Min.Y, W: info.Bounds.Dx(), H: info.Bounds.Dy()}, Visible: true,
+		Focused: info.State.Focused, Disabled: info.State.Disabled, Selected: info.State.Selected, Checked: info.State.Checked,
+		Expanded: info.State.Expanded, ReadOnly: info.State.ReadOnly, Invalid: info.State.Invalid}
+	if info.Text != nil {
+		node.SelectionStart, node.SelectionEnd = info.Text.SelectionStart, info.Text.SelectionEnd
+	}
+	for _, action := range info.Actions {
+		node.Actions = append(node.Actions, string(action))
+		if action == semantics.ActionFocus {
+			node.Focusable = true
+		}
+	}
+	for _, child := range info.Children {
+		node.Children = append(node.Children, automationNodeFromSemantic(child))
 	}
 	return node
 }
@@ -1074,6 +1320,40 @@ func componentTypeName(comp types.Component) string {
 		return "Paragraph"
 	case *components.ImageView:
 		return "ImageView"
+	case *components.Checkbox:
+		return "Checkbox"
+	case *components.Switch:
+		return "Switch"
+	case *components.Radio:
+		return "Radio"
+	case *components.Slider:
+		return "Slider"
+	case *components.ProgressBar:
+		return "ProgressBar"
+	case *components.Tabs:
+		return "Tabs"
+	case *components.Select:
+		return "Select"
+	case *components.Badge:
+		return "Badge"
+	case *components.VirtualList:
+		return "VirtualList"
+	case *components.DataTable:
+		return "DataTable"
+	case *components.Spinner:
+		return "Spinner"
+	case *components.Skeleton:
+		return "Skeleton"
+	case *components.Tooltip:
+		return "Tooltip"
+	case *components.Toast:
+		return "Toast"
+	case *components.Toolbar:
+		return "Toolbar"
+	case *components.Menu:
+		return "Menu"
+	case *components.Popover:
+		return "Popover"
 	case *layout.FlexBox:
 		return "FlexBox"
 	default:
@@ -1088,6 +1368,9 @@ func componentText(comp types.Component) string {
 	case *components.Label:
 		return c.Text
 	case *components.TextInput:
+		if c.Masked {
+			return ""
+		}
 		if globalState != nil && globalState.TextInputValues != nil {
 			if val, ok := globalState.TextInputValues[c.CompID]; ok {
 				return val
@@ -1109,12 +1392,44 @@ func componentText(comp types.Component) string {
 }
 
 func automationClickComponent(id string) error {
+	globalState.DismissFocusLossOverlaysForTarget(id)
 	comp := libFindComponent(id)
 	if comp == nil {
-		return fmt.Errorf("component %q not found", id)
+		action := semantics.ActionInvoke
+		if node, ok := types.BuildSemanticsTree(globalState).Find(id); ok {
+			for _, advertised := range node.Actions {
+				if advertised == semantics.ActionInvoke {
+					action = semantics.ActionInvoke
+					break
+				}
+				if advertised == semantics.ActionSelect {
+					action = semantics.ActionSelect
+				} else if advertised == semantics.ActionExpand && action == semantics.ActionInvoke {
+					action = semantics.ActionExpand
+				} else if advertised == semantics.ActionCollapse && action == semantics.ActionInvoke {
+					action = semantics.ActionCollapse
+				}
+			}
+		}
+		for _, root := range interactionRoots() {
+			handled := false
+			root.Walk(func(candidate types.Component) {
+				if handled {
+					return
+				}
+				if semantic, ok := candidate.(types.SemanticActionComponent); ok {
+					handled = semantic.PerformSemanticAction(id, action, "", globalState)
+				}
+			})
+			if handled {
+				return nil
+			}
+		}
+		return fmt.Errorf("component or semantic target %q not found", id)
 	}
 	bounds := comp.Bounds()
 	pt := image.Pt(bounds.Min.X+bounds.Dx()/2, bounds.Min.Y+bounds.Dy()/2)
+	globalState.DismissFocusLossOverlaysForPointer(id, pt)
 	globalState.MouseX = pt.X
 	globalState.MouseY = pt.Y
 	globalState.HoveredID = id
@@ -1128,12 +1443,24 @@ func automationClickComponent(id string) error {
 
 func automationFocusComponent(id string) error {
 	comp := libFindComponent(id)
-	if comp == nil {
-		return fmt.Errorf("component %q not found", id)
+	if comp == nil || comp.ID() != id {
+		if node, ok := types.BuildSemanticsTree(globalState).Find(id); ok {
+			for _, action := range node.Actions {
+				if action == semantics.ActionFocus && performSemanticAction(id, semantics.ActionFocus, "") {
+					return nil
+				}
+			}
+			return fmt.Errorf("semantic target %q is not focusable", id)
+		}
+		if comp != nil {
+			return fmt.Errorf("semantic target %q not found", id)
+		}
+		return fmt.Errorf("component or semantic target %q not found", id)
 	}
 	if !comp.Focusable() {
 		return fmt.Errorf("component %q is not focusable", id)
 	}
+	globalState.DismissFocusLossOverlaysForTarget(id)
 	globalState.FocusedID = id
 	return nil
 }
@@ -1152,6 +1479,7 @@ func automationSetText(id, value string) error {
 		c.CursorIndex = len([]rune(value))
 		globalState.TextInputValues[id] = value
 		globalState.TextInputValues[id+"_cursor"] = strconv.Itoa(c.CursorIndex)
+		c.SetSelection(c.CursorIndex, c.CursorIndex, globalState)
 		globalState.FocusedID = id
 		return nil
 	case *components.TextArea:
@@ -1166,13 +1494,67 @@ func automationSetText(id, value string) error {
 	}
 }
 
+func automationSelectText(id string, start, end int) error {
+	comp := libFindComponent(id)
+	input, ok := comp.(interface {
+		SetSelection(int, int, *types.ApplicationState)
+	})
+	if !ok {
+		return fmt.Errorf("component %q is not a text input", id)
+	}
+	length := len([]rune(componentText(comp)))
+	if start < 0 || end < 0 || start > length || end > length {
+		return fmt.Errorf("selection %d:%d is outside text length %d", start, end, length)
+	}
+	input.SetSelection(start, end, globalState)
+	globalState.FocusedID = id
+	return nil
+}
+
+func automationComposition(id, phase, value string) error {
+	comp := libFindComponent(id)
+	target, ok := comp.(types.TextCompositionComponent)
+	if !ok {
+		return fmt.Errorf("component %q does not support text composition", id)
+	}
+	globalState.FocusedID = id
+	handled := false
+	switch phase {
+	case "start":
+		handled = target.StartComposition(globalState)
+	case "update":
+		handled = target.UpdateComposition(value, globalState)
+	case "end":
+		handled = target.EndComposition(value, globalState)
+	default:
+		return fmt.Errorf("unsupported composition phase %q", phase)
+	}
+	if !handled {
+		return fmt.Errorf("component %q rejected composition %s", id, phase)
+	}
+	return nil
+}
+
 func automationPressKey(key string) error {
 	normalized := strings.ToLower(strings.TrimSpace(key))
 	if normalized == "" {
 		return fmt.Errorf("missing key")
 	}
-	if normalized == "tab" {
-		globalState.CycleFocus(false)
+	shortcut, shortcutErr := events.ParseShortcut(key)
+	if shortcutErr == nil {
+		if globalState.DispatchShortcut(shortcut.String()) {
+			return nil
+		}
+		keyRunes := []rune(shortcut.Key)
+		if shortcut.Modifiers.Alt && len(keyRunes) == 1 && activateMnemonic(keyRunes[0]) {
+			return nil
+		}
+		if shortcut.Modifiers.Control || shortcut.Modifiers.Alt || shortcut.Modifiers.Meta {
+			return fmt.Errorf("shortcut %q is not registered", shortcut.String())
+		}
+	}
+	if normalized == "tab" || normalized == "shift+tab" {
+		globalState.CycleFocus(normalized == "shift+tab")
 		return nil
 	}
 	if globalState.FocusedID == "" {
@@ -1187,6 +1569,26 @@ func automationPressKey(key string) error {
 		code = 32
 	case "backspace":
 		code = 8
+	case "escape", "esc":
+		code = 0x1B
+	case "left", "arrowleft":
+		code = 0x25
+	case "up", "arrowup":
+		code = 0x26
+	case "right", "arrowright":
+		code = 0x27
+	case "down", "arrowdown":
+		code = 0x28
+	case "home":
+		code = 0x24
+	case "end":
+		code = 0x23
+	case "pageup", "page up":
+		code = 0x21
+	case "pagedown", "page down":
+		code = 0x22
+	case "delete":
+		code = 0x2E
 	default:
 		runes := []rune(key)
 		if len(runes) != 1 {
@@ -1195,11 +1597,9 @@ func automationPressKey(key string) error {
 		ch = runes[0]
 	}
 
-	if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
-		for _, comp := range comps {
-			if comp.OnKey(code, ch, globalState) {
-				return nil
-			}
+	for _, comp := range interactionRoots() {
+		if comp.OnKey(code, ch, globalState) {
+			return nil
 		}
 	}
 	return nil

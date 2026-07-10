@@ -121,29 +121,36 @@ func BuildAllPages(state *render.ApplicationState) {
 }
 
 func BuildPage(state *render.ApplicationState, name string, content []render.Component) []render.Component {
+	bg := render.NewPanel("bg_" + name)
+	bg.Rect = image.Rect(0, 0, render.Width, render.Height)
+
+	sidebar := render.NewPanel("sidebar_bg_" + name)
+	sidebar.Rect = image.Rect(0, 0, 70, render.Height)
+	sidebar.Raised = true
+
+	header := render.NewPanel("header_bg_" + name)
+	header.Rect = image.Rect(70, 0, render.Width, 60)
+	header.Raised = true
+
+	footer := render.NewPanel("footer_bg_" + name)
+	footer.Rect = image.Rect(70, render.Height-40, render.Width, render.Height)
+
 	comps := []render.Component{
-		// Backdrop
-		&render.Panel{CompID: "bg_blur_" + name, Rect: image.Rect(0, 0, render.Width, render.Height), BGColor: color.RGBA{10, 10, 15, 255}},
-
-		// Background Particles
-		&render.ParticleComponent{CompID: "vfx_particles_" + name, System: state.Particles},
-
-		// Sidebar Background
-		&render.Panel{CompID: "sidebar_bg_" + name, Rect: image.Rect(0, 0, 70, render.Height), BGColor: color.RGBA{15, 15, 25, 255}},
+		bg,
+		sidebar,
 		BuildSidebar(state),
-
-		// Header Background
-		&render.Panel{CompID: "header_bg_" + name, Rect: image.Rect(70, 0, render.Width, 60), BGColor: color.RGBA{20, 25, 40, 220}},
+		header,
 		BuildHeader(state),
-
-		// Footer Background
-		&render.Panel{CompID: "footer_bg_" + name, Rect: image.Rect(70, render.Height-40, render.Width, render.Height), BGColor: color.RGBA{10, 10, 20, 255}},
+		footer,
 		BuildFooter(state),
 	}
 	return append(comps, content...)
 }
 
 func BuildSidebar(state *render.ApplicationState) render.Component {
+	home := navButton(state, "nav_home", "H", render.PageDashboard)
+	analytics := navButton(state, "nav_analytics", "A", render.PageAnalytics)
+	settings := navButton(state, "nav_settings", "S", render.PageSettings)
 	return &render.FlexBox{
 		CompID:         "sidebar_layout",
 		Rect:           image.Rect(0, 0, 70, render.Height),
@@ -153,33 +160,35 @@ func BuildSidebar(state *render.ApplicationState) render.Component {
 		Padding:        15,
 		Gap:            20,
 		Children: []render.Component{
-			&render.Button{
-				CompID: "nav_home", Rect: image.Rect(0, 0, 40, 40), Label: "H",
-				BaseColor:  getPageColor(state, render.PageDashboard),
-				HoverColor: color.RGBA{0, 150, 255, 255}, Rounding: 8,
-				OnClick: func(s *render.ApplicationState) { s.NavigateTo(render.PageDashboard) },
-			},
-			&render.Button{
-				CompID: "nav_analytics", Rect: image.Rect(0, 0, 40, 40), Label: "A",
-				BaseColor:  getPageColor(state, render.PageAnalytics),
-				HoverColor: color.RGBA{0, 150, 255, 255}, Rounding: 8,
-				OnClick: func(s *render.ApplicationState) { s.NavigateTo(render.PageAnalytics) },
-			},
-			&render.Button{
-				CompID: "nav_settings", Rect: image.Rect(0, 0, 40, 40), Label: "S",
-				BaseColor:  getPageColor(state, render.PageSettings),
-				HoverColor: color.RGBA{0, 150, 255, 255}, Rounding: 8,
-				OnClick: func(s *render.ApplicationState) { s.NavigateTo(render.PageSettings) },
-			},
+			home,
+			analytics,
+			settings,
 		},
 	}
 }
 
-func getPageColor(state *render.ApplicationState, page string) color.RGBA {
-	if state.CurrentPage == page {
-		return color.RGBA{0, 120, 255, 255} // Active
-	}
-	return color.RGBA{40, 50, 70, 255} // Normal
+func navButton(state *render.ApplicationState, id, label, page string) *render.Button {
+	button := render.NewButton(id, label, func(s *render.ApplicationState) { s.NavigateTo(page) })
+	button.Rect = image.Rect(0, 0, 40, 40)
+	button.Variant = render.VariantSubtle
+	button.Selected = state.CurrentPage == page
+	button.AccessibleName = page
+	return button
+}
+
+func themedPanel(id string, rect image.Rectangle, raised bool) *render.Panel {
+	panel := render.NewPanel(id)
+	panel.Rect = rect
+	panel.Raised = raised
+	return panel
+}
+
+func themedLabel(id string, pos image.Point, text string, role render.TextRole, typography render.TypographyRole) *render.Label {
+	label := render.NewLabel(id, text)
+	label.Pos = pos
+	label.Role = role
+	label.Typography = typography
+	return label
 }
 
 func BuildHeader(state *render.ApplicationState) render.Component {
@@ -191,12 +200,12 @@ func BuildHeader(state *render.ApplicationState) render.Component {
 		JustifyContent: render.JustifySpaceBetween,
 		Padding:        20,
 		Children: []render.Component{
-			&render.Label{CompID: "title", Pos: image.Point{0, 0}, Text: fmt.Sprintf("P.O.E.M. // %s", state.CurrentPage), Color: color.RGBA{255, 255, 255, 255}},
+			themedLabel("title", image.Point{0, 0}, fmt.Sprintf("POEM // %s", state.CurrentPage), render.TextDefault, render.TypographyTitle),
 			&render.DynamicLabel{
 				CompID:  "status_tag",
 				Pos:     image.Point{0, 0},
-				Color:   color.RGBA{0, 255, 180, 255},
-				GetText: func(s *render.ApplicationState) string { return "[ STATUS: POETIC ]" },
+				Role:    render.TextAccent,
+				GetText: func(s *render.ApplicationState) string { return "Status: Ready" },
 			},
 		},
 	}
@@ -213,7 +222,7 @@ func BuildFooter(state *render.ApplicationState) render.Component {
 			&render.DynamicLabel{
 				CompID: "foot_perf",
 				Pos:    image.Point{0, 0},
-				Color:  color.RGBA{0, 255, 150, 255},
+				Role:   render.TextMuted,
 				GetText: func(s *render.ApplicationState) string {
 					return fmt.Sprintf("FRAME: %.2fms | FPS: %.1f", float64(s.FrameTime.Microseconds())/1000.0, s.CurrentFPS)
 				},
@@ -221,7 +230,7 @@ func BuildFooter(state *render.ApplicationState) render.Component {
 			&render.DynamicLabel{
 				CompID: "foot_status",
 				Pos:    image.Point{0, 0},
-				Color:  color.RGBA{100, 120, 150, 255},
+				Role:   render.TextMuted,
 				GetText: func(s *render.ApplicationState) string {
 					hover := "NONE"
 					if s.HoveredID != "" {
@@ -235,101 +244,98 @@ func BuildFooter(state *render.ApplicationState) render.Component {
 }
 
 func BuildDashboard(state *render.ApplicationState) []render.Component {
+	configPanel := themedPanel("config_panel", image.Rect(90, 80, 400, 560), true)
+	telemetryPanel := themedPanel("telemetry_panel", image.Rect(420, 80, render.Width-20, 560), true)
+	nodeInput := render.NewTextInput("inp_node", "Enter node name...")
+	nodeInput.Rect = image.Rect(110, 315, 380, 351)
+	reboot := render.NewButton("btn_reboot", "Reboot Core Engine", func(s *render.ApplicationState) {
+		s.StatusText = "Core engine reboot requested."
+	})
+	reboot.Rect = image.Rect(110, 370, 380, 414)
+	reboot.Variant = render.VariantDestructive
+	volume := render.NewSlider("sld_vol", 0, 100, state.Volume, func(value float32, s *render.ApplicationState) {
+		s.Volume = value
+	})
+	volume.Rect = image.Rect(110, 480, 380, 506)
+	actionA := render.NewButton("btn_a", "Action A", func(s *render.ApplicationState) { s.StatusText = "Action A invoked." })
+	actionA.Rect = image.Rect(0, 0, 140, 44)
+	actionA.Variant = render.VariantSecondary
+	actionB := render.NewButton("btn_b", "Action B", func(s *render.ApplicationState) { s.StatusText = "Action B invoked." })
+	actionB.Rect = image.Rect(0, 0, 140, 44)
+	actionB.Variant = render.VariantSecondary
+	actionC := render.NewButton("btn_c", "Action C", func(s *render.ApplicationState) { s.StatusText = "Action C invoked." })
+	actionC.Rect = image.Rect(0, 0, 140, 44)
+	actionC.Variant = render.VariantSecondary
 	return []render.Component{
-		// 3. LEFT WIDGET: "System Configuration"
-		&render.GlassPanel{Panel: render.Panel{CompID: "config_panel", Rect: image.Rect(90, 80, 400, 560), BGColor: color.RGBA{30, 35, 55, 255}, Rounding: 15}, Opacity: 180},
-		&render.Label{CompID: "cfg_title", Pos: image.Point{110, 115}, Text: "SYSTEM PARAMETERS", Color: color.RGBA{150, 160, 180, 255}},
-
-		&render.Label{CompID: "lbl_core", Pos: image.Point{110, 160}, Text: "CPU CORE ASSIGNMENT:", Color: color.RGBA{200, 200, 200, 255}},
-		&render.Panel{CompID: "inp_core", Rect: image.Rect(110, 175, 380, 205), BGColor: color.RGBA{10, 10, 20, 255}, Rounding: 5},
+		configPanel,
+		themedLabel("cfg_title", image.Point{110, 115}, "System Parameters", render.TextMuted, render.TypographyLabel),
+		themedLabel("lbl_core", image.Point{110, 160}, "CPU Core Assignment", render.TextDefault, render.TypographyLabel),
+		themedPanel("inp_core", image.Rect(110, 175, 380, 207), false),
 		&render.DynamicLabel{
 			CompID: "val_core",
 			Pos:    image.Point{120, 195},
-			Color:  color.RGBA{0, 150, 255, 255},
+			Role:   render.TextAccent,
 			GetText: func(s *render.ApplicationState) string {
 				return fmt.Sprintf("0x%08X (%d CORES)", s.CoreMask, runtime.NumCPU())
 			},
 		},
 
-		&render.Label{CompID: "lbl_freq", Pos: image.Point{110, 230}, Text: "OSCILLATION FREQUENCY:", Color: color.RGBA{200, 200, 200, 255}},
-		&render.Panel{CompID: "inp_freq", Rect: image.Rect(110, 245, 380, 275), BGColor: color.RGBA{10, 10, 20, 255}, Rounding: 5},
+		themedLabel("lbl_freq", image.Point{110, 230}, "Frame Frequency", render.TextDefault, render.TypographyLabel),
+		themedPanel("inp_freq", image.Rect(110, 245, 380, 277), false),
 		&render.DynamicLabel{
 			CompID: "val_freq",
 			Pos:    image.Point{120, 265},
-			Color:  color.RGBA{0, 255, 150, 255},
+			Role:   render.TextSuccess,
 			GetText: func(s *render.ApplicationState) string {
-				return fmt.Sprintf("%.2f Hz (REALTIME)", s.CurrentFPS)
+				return fmt.Sprintf("%.2f FPS", s.CurrentFPS)
 			},
 		},
 
-		&render.Label{CompID: "lbl_node", Pos: image.Point{110, 300}, Text: "NODE IDENTITY:", Color: color.RGBA{200, 200, 200, 255}},
-		&render.TextInput{
-			CompID:      "inp_node",
-			Rect:        image.Rect(110, 315, 380, 345),
-			Placeholder: "ENTER NODE NAME...",
-			BGColor:     color.RGBA{10, 10, 20, 255},
-			TextColor:   color.RGBA{255, 255, 255, 255},
-			Rounding:    5,
-		},
-
-		&render.Button{
-			CompID:     "btn_reboot",
-			Rect:       image.Rect(110, 370, 380, 420),
-			Label:      "REBOOT CORE ENGINE",
-			BaseColor:  color.RGBA{180, 60, 60, 255},
-			HoverColor: color.RGBA{220, 80, 80, 255},
-			Rounding:   10,
-		},
+		themedLabel("lbl_node", image.Point{110, 300}, "Node Identity", render.TextDefault, render.TypographyLabel),
+		nodeInput,
+		reboot,
 
 		// Volume Slider
-		&render.Label{CompID: "lbl_vol", Pos: image.Point{110, 460}, Text: "MASTER VOLUME:", Color: color.RGBA{200, 200, 200, 255}},
-		&render.Slider{
-			CompID:     "sld_vol",
-			Rect:       image.Rect(110, 480, 380, 505),
-			Min:        0,
-			Max:        100,
-			Value:      state.Volume,
-			TrackColor: color.RGBA{10, 10, 20, 255},
-			ThumbColor: color.RGBA{0, 150, 255, 255},
-		},
+		themedLabel("lbl_vol", image.Point{110, 460}, "Master Volume", render.TextDefault, render.TypographyLabel),
+		volume,
 
 		// 4. RIGHT WIDGET: "Interaction Telemetry"
-		&render.GlassPanel{Panel: render.Panel{CompID: "telemetry_panel", Rect: image.Rect(420, 80, render.Width-20, 560), BGColor: color.RGBA{30, 35, 55, 255}, Rounding: 15}, Opacity: 180},
-		&render.Label{CompID: "tel_title", Pos: image.Point{440, 115}, Text: "LIVE TELEMETRY STREAM", Color: color.RGBA{150, 160, 180, 255}},
+		telemetryPanel,
+		themedLabel("tel_title", image.Point{440, 115}, "Live Telemetry", render.TextMuted, render.TypographyLabel),
 
 		&render.DynamicLabel{
 			CompID: "tel_clicks",
 			Pos:    image.Point{440, 160},
-			Color:  color.RGBA{255, 255, 255, 255},
+			Role:   render.TextDefault,
 			GetText: func(s *render.ApplicationState) string {
-				return fmt.Sprintf("> TOTAL INTERACTIONS: %d", s.ClickCount)
+				return fmt.Sprintf("Total interactions: %d", s.ClickCount)
 			},
 		},
 		&render.DynamicLabel{
 			CompID: "tel_mouse",
 			Pos:    image.Point{440, 190},
-			Color:  color.RGBA{255, 255, 255, 255},
+			Role:   render.TextDefault,
 			GetText: func(s *render.ApplicationState) string {
-				return fmt.Sprintf("> POINTER COORDINATES: [%d, %d]", s.MouseX, s.MouseY)
+				return fmt.Sprintf("Pointer coordinates: [%d, %d]", s.MouseX, s.MouseY)
 			},
 		},
 		&render.DynamicLabel{
 			CompID: "tel_hover",
 			Pos:    image.Point{440, 220},
-			Color:  color.RGBA{255, 255, 100, 255},
+			Role:   render.TextWarning,
 			GetText: func(s *render.ApplicationState) string {
 				if s.HoveredID == "" {
-					return "> CURRENT TARGET: NONE"
+					return "Current target: none"
 				}
-				return fmt.Sprintf("> CURRENT TARGET: %s", s.HoveredID)
+				return fmt.Sprintf("Current target: %s", s.HoveredID)
 			},
 		},
 		&render.DynamicLabel{
 			CompID: "tel_slider",
 			Pos:    image.Point{440, 250},
-			Color:  color.RGBA{255, 100, 255, 255},
+			Role:   render.TextAccent,
 			GetText: func(s *render.ApplicationState) string {
-				return fmt.Sprintf("> MASTER VOLUME: %.1f%%", s.Volume)
+				return fmt.Sprintf("Master volume: %.1f%%", s.Volume)
 			},
 		},
 
@@ -341,61 +347,61 @@ func BuildDashboard(state *render.ApplicationState) []render.Component {
 			JustifyContent: render.JustifySpaceBetween,
 			AlignItems:     render.AlignCenter,
 			Children: []render.Component{
-				&render.Button{CompID: "btn_a", Rect: image.Rect(0, 0, 140, 50), Label: "ACTION A", BaseColor: color.RGBA{60, 80, 120, 255}, HoverColor: color.RGBA{80, 110, 180, 255}, Rounding: 5},
-				&render.Button{CompID: "btn_b", Rect: image.Rect(0, 0, 140, 50), Label: "ACTION B", BaseColor: color.RGBA{60, 80, 120, 255}, HoverColor: color.RGBA{80, 110, 180, 255}, Rounding: 5},
-				&render.Button{CompID: "btn_c", Rect: image.Rect(0, 0, 140, 50), Label: "ACTION C", BaseColor: color.RGBA{60, 80, 120, 255}, HoverColor: color.RGBA{80, 110, 180, 255}, Rounding: 5},
+				actionA,
+				actionB,
+				actionC,
 			},
 		},
 	}
 }
 
 func BuildSettings(state *render.ApplicationState) []render.Component {
+	settingsPanel := themedPanel("settings_panel", image.Rect(90, 80, render.Width-20, render.Height-100), true)
+	themeButton := render.NewButton("btn_theme", "Switch Color Theme", func(s *render.ApplicationState) {
+		s.StatusText = "Theme switching is demonstrated in the POEM gallery."
+	})
+	themeButton.Rect = image.Rect(110, 180, 460, 224)
+	themeButton.Variant = render.VariantSecondary
+	effectsButton := render.NewButton("btn_blur", "Toggle Optional Glass Effect", func(s *render.ApplicationState) {
+		s.GlassEnabled = !s.GlassEnabled
+	})
+	effectsButton.Rect = image.Rect(110, 240, 460, 284)
+	effectsButton.Variant = render.VariantSubtle
+	audioButton := render.NewButton("btn_audio", func() string {
+		if state.AudioEnabled {
+			return "Mute Optional Audio"
+		}
+		return "Enable Optional Audio"
+	}(), func(s *render.ApplicationState) {
+		s.AudioEnabled = !s.AudioEnabled
+		if s.AudioEnabled {
+			s.StatusText = "Optional audio feedback enabled."
+			s.PlaySuccess()
+		} else {
+			s.StatusText = "Optional audio feedback muted."
+		}
+	})
+	audioButton.Rect = image.Rect(110, 300, 460, 344)
+	audioButton.Variant = render.VariantSubtle
 	return []render.Component{
-		&render.GlassPanel{Panel: render.Panel{CompID: "settings_panel", Rect: image.Rect(90, 80, render.Width-20, render.Height-100), BGColor: color.RGBA{30, 35, 55, 255}, Rounding: 15}, Opacity: 180},
-		&render.Label{CompID: "set_title", Pos: image.Point{110, 115}, Text: "SYSTEM SETTINGS", Color: color.RGBA{150, 160, 180, 255}},
+		settingsPanel,
+		themedLabel("set_title", image.Point{110, 115}, "System Settings", render.TextMuted, render.TypographyLabel),
 
 		// UI Preferences
-		&render.Label{CompID: "lbl_ui", Pos: image.Point{110, 160}, Text: "INTERFACE PREFERENCES", Color: color.RGBA{200, 200, 200, 255}},
-		&render.Button{
-			CompID: "btn_theme", Rect: image.Rect(110, 180, 460, 230), Label: "SWITCH COLOR THEME",
-			BaseColor: color.RGBA{60, 80, 120, 255}, HoverColor: color.RGBA{80, 110, 180, 255}, Rounding: 5,
-		},
-		&render.Button{
-			CompID: "btn_blur", Rect: image.Rect(110, 240, 460, 290), Label: "TOGGLE GLASS BLUR",
-			BaseColor: color.RGBA{60, 80, 120, 255}, HoverColor: color.RGBA{80, 110, 180, 255}, Rounding: 5,
-			OnClick: func(s *render.ApplicationState) {
-				s.GlassEnabled = !s.GlassEnabled
-			},
-		},
-		&render.Button{
-			CompID: "btn_audio", Rect: image.Rect(110, 300, 460, 350),
-			Label: func() string {
-				if state.AudioEnabled {
-					return "MUTE AUDIO FEEDBACK"
-				}
-				return "UNMUTE AUDIO FEEDBACK"
-			}(),
-			BaseColor: color.RGBA{60, 80, 120, 255}, HoverColor: color.RGBA{80, 110, 180, 255}, Rounding: 5,
-			OnClick: func(s *render.ApplicationState) {
-				s.AudioEnabled = !s.AudioEnabled
-				if s.AudioEnabled {
-					s.StatusText = "Acoustic Audio Feedback Enabled // OK"
-					s.PlaySuccess()
-				} else {
-					s.StatusText = "Acoustic Audio Feedback Muted // OK"
-				}
-			},
-		},
+		themedLabel("lbl_ui", image.Point{110, 160}, "Interface Preferences", render.TextDefault, render.TypographyLabel),
+		themeButton,
+		effectsButton,
+		audioButton,
 
 		// Engine Information
-		&render.Label{CompID: "lbl_engine_info", Pos: image.Point{110, 350}, Text: "ENGINE INFORMATION", Color: color.RGBA{200, 200, 200, 255}},
-		&render.Panel{CompID: "engine_info_box", Rect: image.Rect(110, 365, 460, 650), BGColor: color.RGBA{15, 20, 30, 255}, Rounding: 8},
-		&render.Label{CompID: "engine_v", Pos: image.Point{125, 395}, Text: "P.O.E.M. v0.4.2 // ENGINE MATRIX", Color: color.RGBA{0, 255, 150, 255}},
-		&render.Label{CompID: "engine_arch", Pos: image.Point{125, 435}, Text: fmt.Sprintf("ARCH: %s // OS: %s", runtime.GOARCH, runtime.GOOS), Color: color.RGBA{150, 160, 180, 255}},
-		&render.Label{CompID: "engine_compiler", Pos: image.Point{125, 475}, Text: fmt.Sprintf("COMPILER: %s", runtime.Version()), Color: color.RGBA{150, 160, 180, 255}},
+		themedLabel("lbl_engine_info", image.Point{110, 350}, "Engine Information", render.TextDefault, render.TypographyLabel),
+		themedPanel("engine_info_box", image.Rect(110, 365, 460, 650), false),
+		themedLabel("engine_v", image.Point{125, 395}, "POEM 2.0 Native Framework", render.TextSuccess, render.TypographyBody),
+		themedLabel("engine_arch", image.Point{125, 435}, fmt.Sprintf("ARCH: %s // OS: %s", runtime.GOARCH, runtime.GOOS), render.TextMuted, render.TypographyBody),
+		themedLabel("engine_compiler", image.Point{125, 475}, fmt.Sprintf("COMPILER: %s", runtime.Version()), render.TextMuted, render.TypographyBody),
 
 		// Diagnostics Scroll View
-		&render.Label{CompID: "lbl_diag_panel", Pos: image.Point{500, 130}, Text: "DIAGNOSTIC MATRIX & ACTIVE CONSOLE", Color: color.RGBA{200, 200, 200, 255}},
+		themedLabel("lbl_diag_panel", image.Point{500, 130}, "Diagnostics & Active Console", render.TextDefault, render.TypographyLabel),
 		&render.ScrollView{
 			CompID:         "diagnostics_scroll",
 			Rect:           image.Rect(500, 150, render.Width-40, 650),
@@ -411,7 +417,7 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 						&render.Label{CompID: "diag_hdr_1", Pos: image.Point{0, 0}, Text: "--- DYNAMIC DIAGNOSTIC NODE ENTRIES ---", Color: color.RGBA{100, 120, 150, 255}},
 
 						&render.Label{CompID: "diag_lbl_1", Pos: image.Point{0, 0}, Text: "[01] PIPELINE PARITY: PASSING", Color: color.RGBA{0, 255, 150, 255}},
-						&render.Label{CompID: "diag_lbl_2", Pos: image.Point{0, 0}, Text: "[02] WGPU BACKEND IPC BRIDGE: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_2", Pos: image.Point{0, 0}, Text: "[02] D3D11 SIDECAR IPC BRIDGE: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
 
 						&render.FlexBox{
 							CompID:    "diag_row_btn_1",
@@ -420,13 +426,14 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 							Gap:       10,
 							Children: []render.Component{
 								&render.Label{CompID: "diag_lbl_3", Pos: image.Point{0, 0}, Text: "[03] COSMIC DENSITY TRIGGER:", Color: color.RGBA{200, 200, 200, 255}},
-								&render.Button{
-									CompID: "diag_btn_trigger", Rect: image.Rect(0, 0, 120, 30), Label: "PING PULSE",
-									BaseColor: color.RGBA{0, 120, 255, 255}, HoverColor: color.RGBA{0, 160, 255, 255}, Rounding: 4,
-									OnClick: func(s *render.ApplicationState) {
+								func() render.Component {
+									button := render.NewButton("diag_btn_trigger", "Ping Pulse", func(s *render.ApplicationState) {
 										s.StatusText = "Pulse Ping Signal Dispatched: [0xFF09]"
-									},
-								},
+									})
+									button.Rect = image.Rect(0, 0, 120, 30)
+									button.Variant = render.VariantSecondary
+									return button
+								}(),
 							},
 						},
 
@@ -439,11 +446,11 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 							Gap:       10,
 							Children: []render.Component{
 								&render.Label{CompID: "diag_lbl_5", Pos: image.Point{0, 0}, Text: "[05] SCROLL DYNAMIC METRIC:", Color: color.RGBA{200, 200, 200, 255}},
-								&render.Slider{
-									CompID: "diag_slider_scroll", Rect: image.Rect(0, 0, 120, 20),
-									Min: 0, Max: 100, Value: 50,
-									TrackColor: color.RGBA{10, 10, 20, 255}, ThumbColor: color.RGBA{0, 255, 150, 255},
-								},
+								func() render.Component {
+									slider := render.NewSlider("diag_slider_scroll", 0, 100, 50, nil)
+									slider.Rect = image.Rect(0, 0, 120, 24)
+									return slider
+								}(),
 							},
 						},
 
@@ -457,15 +464,15 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 							Gap:       10,
 							Children: []render.Component{
 								&render.Label{CompID: "diag_lbl_8", Pos: image.Point{0, 0}, Text: "[08] CONSOLE INPUT CMD:", Color: color.RGBA{200, 200, 200, 255}},
-								&render.TextInput{
-									CompID: "diag_input_scroll", Rect: image.Rect(0, 0, 130, 30),
-									Placeholder: "EXECUTE...", BGColor: color.RGBA{10, 10, 20, 255},
-									TextColor: color.RGBA{255, 255, 255, 255}, Rounding: 4,
-									OnSubmit: func(text string, s *render.ApplicationState) {
+								func() render.Component {
+									input := render.NewTextInput("diag_input_scroll", "Execute...")
+									input.Rect = image.Rect(0, 0, 130, 30)
+									input.OnSubmit = func(text string, s *render.ApplicationState) {
 										s.StatusText = fmt.Sprintf("Console Command Executed: '%s' // OK", text)
 										s.PlaySuccess()
-									},
-								},
+									}
+									return input
+								}(),
 							},
 						},
 
@@ -483,16 +490,16 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 						&render.Label{CompID: "diag_lbl_20", Pos: image.Point{0, 0}, Text: "[20] MULTI-PAGE DESCRIPTOR MAP: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
 						&render.Label{CompID: "diag_lbl_21", Pos: image.Point{0, 0}, Text: "[21] IPC DYNAMIC REPAINT TICK: PASS", Color: color.RGBA{0, 255, 150, 255}},
 						&render.Label{CompID: "diag_lbl_22", Pos: image.Point{0, 0}, Text: "[22] MEMORY LEAK CHECK: COMPLETING", Color: color.RGBA{150, 160, 180, 255}},
-						&render.Label{CompID: "diag_lbl_23", Pos: image.Point{0, 0}, Text: "[23] WGPU HARDWARE DRIVER STATE: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_23", Pos: image.Point{0, 0}, Text: "[23] D3D11 PRESENTATION STATE: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
 						&render.Label{CompID: "diag_lbl_24", Pos: image.Point{0, 0}, Text: "[24] DOUBLE BUFFER FLIP RATE: VSYNC", Color: color.RGBA{0, 255, 150, 255}},
 						&render.Label{CompID: "diag_lbl_25", Pos: image.Point{0, 0}, Text: "[25] TELEMETRY TIMEOUT HANDLER: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
 						&render.Label{CompID: "diag_lbl_26", Pos: image.Point{0, 0}, Text: "[26] STAGGERED LERP EXP DECAY: CALIBRATED", Color: color.RGBA{0, 255, 150, 255}},
 						&render.Label{CompID: "diag_lbl_27", Pos: image.Point{0, 0}, Text: "[27] DIRECT-GRIP SCROLL SNAPPING: OK", Color: color.RGBA{0, 255, 150, 255}},
 						&render.Label{CompID: "diag_lbl_28", Pos: image.Point{0, 0}, Text: "[28] SUB-IMAGE TEXT RASTERIZE: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
-						&render.Label{CompID: "diag_lbl_29", Pos: image.Point{0, 0}, Text: "[29] PLEXUS VFX PARTICLE MASS: 100", Color: color.RGBA{150, 160, 180, 255}},
+						&render.Label{CompID: "diag_lbl_29", Pos: image.Point{0, 0}, Text: "[29] OPTIONAL EFFECTS: AVAILABLE", Color: color.RGBA{150, 160, 180, 255}},
 						&render.Label{CompID: "diag_lbl_30", Pos: image.Point{0, 0}, Text: "[30] COGNITIVE AGENT MATRIX: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
-						&render.Label{CompID: "diag_lbl_31", Pos: image.Point{0, 0}, Text: "[31] DYNAMIC GLASSMORPHISM: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
-						&render.Label{CompID: "diag_lbl_32", Pos: image.Point{0, 0}, Text: "[32] WGPU HARDWARE COMPOSITING: ACTIVE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_31", Pos: image.Point{0, 0}, Text: "[31] THEME TOKEN RESOLUTION: ONLINE", Color: color.RGBA{0, 255, 150, 255}},
+						&render.Label{CompID: "diag_lbl_32", Pos: image.Point{0, 0}, Text: "[32] D3D11 HARDWARE COMPOSITING: ACTIVE", Color: color.RGBA{0, 255, 150, 255}},
 						&render.Label{CompID: "diag_lbl_33", Pos: image.Point{0, 0}, Text: "[33] UNIFIED CONTROLLER LOOP: RUNNING", Color: color.RGBA{0, 255, 150, 255}},
 						&render.Label{CompID: "diag_lbl_34", Pos: image.Point{0, 0}, Text: "[34] DECAY SPEED CONSTANT: 0.07", Color: color.RGBA{150, 160, 180, 255}},
 						&render.Label{CompID: "diag_lbl_35", Pos: image.Point{0, 0}, Text: "[35] SYSTEM OVERALL STATUS: EXCELLENT", Color: color.RGBA{0, 255, 150, 255}},
@@ -504,23 +511,24 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 							Padding:   0,
 							Gap:       10,
 							Children: []render.Component{
-								&render.Button{
-									CompID: "diag_btn_test_bottom", Rect: image.Rect(0, 0, 150, 30), Label: "BOTTOM TRIGGER",
-									BaseColor: color.RGBA{0, 150, 255, 255}, HoverColor: color.RGBA{0, 180, 255, 255}, Rounding: 4,
-									OnClick: func(s *render.ApplicationState) {
+								func() render.Component {
+									button := render.NewButton("diag_btn_test_bottom", "Bottom Trigger", func(s *render.ApplicationState) {
 										s.StatusText = "Bottom Trigger Activated! Auto-Glide Centering works perfectly!"
 										s.PlaySuccess()
-									},
-								},
-								&render.TextInput{
-									CompID: "diag_input_test_bottom", Rect: image.Rect(0, 0, 150, 30),
-									Placeholder: "BOTTOM INPUT...", BGColor: color.RGBA{10, 10, 20, 255},
-									TextColor: color.RGBA{255, 255, 255, 255}, Rounding: 4,
-									OnSubmit: func(text string, s *render.ApplicationState) {
+									})
+									button.Rect = image.Rect(0, 0, 150, 30)
+									button.Variant = render.VariantPrimary
+									return button
+								}(),
+								func() render.Component {
+									input := render.NewTextInput("diag_input_test_bottom", "Bottom input...")
+									input.Rect = image.Rect(0, 0, 150, 30)
+									input.OnSubmit = func(text string, s *render.ApplicationState) {
 										s.StatusText = fmt.Sprintf("Bottom Input Received: '%s'", text)
 										s.PlaySuccess()
-									},
-								},
+									}
+									return input
+								}(),
 							},
 						},
 					},
@@ -532,73 +540,73 @@ func BuildSettings(state *render.ApplicationState) []render.Component {
 
 func BuildAnalytics(state *render.ApplicationState) []render.Component {
 	return []render.Component{
-		&render.GlassPanel{Panel: render.Panel{CompID: "analytics_panel", Rect: image.Rect(90, 80, render.Width-20, render.Height-100), BGColor: color.RGBA{30, 35, 55, 255}, Rounding: 15}, Opacity: 180},
-		&render.Label{CompID: "ana_title", Pos: image.Point{110, 115}, Text: "PERFORMANCE ANALYTICS", Color: color.RGBA{150, 160, 180, 255}},
+		themedPanel("analytics_panel", image.Rect(90, 80, render.Width-20, render.Height-100), true),
+		themedLabel("ana_title", image.Point{110, 115}, "Performance Analytics", render.TextMuted, render.TypographyLabel),
 
 		// Memory Metrics
-		&render.Label{CompID: "lbl_mem", Pos: image.Point{110, 160}, Text: "MEMORY ALLOCATION", Color: color.RGBA{200, 200, 200, 255}},
+		themedLabel("lbl_mem", image.Point{110, 160}, "Memory Allocation", render.TextDefault, render.TypographyLabel),
 		&render.DynamicLabel{
 			CompID: "val_mem_alloc",
 			Pos:    image.Point{120, 195},
-			Color:  color.RGBA{0, 255, 150, 255},
+			Role:   render.TextSuccess,
 			GetText: func(s *render.ApplicationState) string {
 				var m runtime.MemStats
 				runtime.ReadMemStats(&m)
-				return fmt.Sprintf("HEAP ALLOC: %.2f MB", float64(m.Alloc)/1024/1024)
+				return fmt.Sprintf("Heap alloc: %.2f MB", float64(m.Alloc)/1024/1024)
 			},
 		},
 		&render.DynamicLabel{
 			CompID: "val_mem_sys",
 			Pos:    image.Point{120, 225},
-			Color:  color.RGBA{0, 255, 150, 255},
+			Role:   render.TextSuccess,
 			GetText: func(s *render.ApplicationState) string {
 				var m runtime.MemStats
 				runtime.ReadMemStats(&m)
-				return fmt.Sprintf("SYSTEM TOTAL: %.2f MB", float64(m.Sys)/1024/1024)
+				return fmt.Sprintf("System total: %.2f MB", float64(m.Sys)/1024/1024)
 			},
 		},
 		&render.DynamicLabel{
 			CompID: "val_mem_gc",
 			Pos:    image.Point{120, 255},
-			Color:  color.RGBA{255, 150, 0, 255},
+			Role:   render.TextWarning,
 			GetText: func(s *render.ApplicationState) string {
 				var m runtime.MemStats
 				runtime.ReadMemStats(&m)
-				return fmt.Sprintf("GC COLLECTIONS: %d", m.NumGC)
+				return fmt.Sprintf("GC collections: %d", m.NumGC)
 			},
 		},
 
 		// Threading Metrics
-		&render.Label{CompID: "lbl_threads", Pos: image.Point{110, 320}, Text: "CONCURRENCY MONITOR", Color: color.RGBA{200, 200, 200, 255}},
+		themedLabel("lbl_threads", image.Point{110, 320}, "Concurrency Monitor", render.TextDefault, render.TypographyLabel),
 		&render.DynamicLabel{
 			CompID: "val_goroutines",
 			Pos:    image.Point{120, 355},
-			Color:  color.RGBA{0, 150, 255, 255},
+			Role:   render.TextAccent,
 			GetText: func(s *render.ApplicationState) string {
-				return fmt.Sprintf("ACTIVE GOROUTINES: %d", runtime.NumGoroutine())
+				return fmt.Sprintf("Active goroutines: %d", runtime.NumGoroutine())
 			},
 		},
 		&render.DynamicLabel{
 			CompID: "val_cgo",
 			Pos:    image.Point{120, 385},
-			Color:  color.RGBA{0, 150, 255, 255},
+			Role:   render.TextAccent,
 			GetText: func(s *render.ApplicationState) string {
-				return fmt.Sprintf("CGO CALLS: %d", runtime.NumCgoCall())
+				return fmt.Sprintf("CGO calls: %d", runtime.NumCgoCall())
 			},
 		},
 
 		// Simulated Chart Area
-		&render.Label{CompID: "lbl_chart", Pos: image.Point{500, 160}, Text: "REALTIME HEAP MONITOR", Color: color.RGBA{200, 200, 200, 255}},
+		themedLabel("lbl_chart", image.Point{500, 160}, "Realtime Heap Monitor", render.TextDefault, render.TypographyLabel),
 		&render.LineChart{
 			CompID:    "mem_load_chart",
 			Rect:      image.Rect(500, 180, render.Width-40, 410),
-			BGColor:   color.RGBA{10, 10, 20, 255},
-			LineColor: color.RGBA{0, 255, 150, 255},
+			BGColor:   color.RGBA{21, 24, 29, 255},
+			LineColor: color.RGBA{91, 141, 239, 255},
 			Data:      state.HeapHistory,
-			Title:     "REALTIME HEAP GRAPH (MB)",
+			Title:     "Realtime Heap Graph (MB)",
 			Rounding:  10,
 		},
-		&render.Label{CompID: "lbl_raycaster_demo", Pos: image.Point{500, 440}, Text: "GPU SPECIAL PATH DIAGNOSTIC", Color: color.RGBA{200, 200, 200, 255}},
+		themedLabel("lbl_raycaster_demo", image.Point{500, 440}, "GPU Special Path Diagnostic", render.TextDefault, render.TypographyLabel),
 		&RaycasterDemo{
 			CompID: "raycaster_demo",
 			Rect:   image.Rect(500, 460, render.Width-40, 650),

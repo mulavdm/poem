@@ -1,5 +1,11 @@
 # POEM Automation Reference
 
+POEM 2.0 component snapshots additionally expose platform-neutral semantic
+`role`, `name`, `value`, `description`, state flags, and supported `actions`.
+Stable IDs remain supported and are the preferred selector when known.
+Interaction commands may instead provide a semantic selector. Selectors must
+resolve to exactly one node; zero matches and ambiguous matches are errors.
+
 This document is the source of truth for POEM's automation and inspection system.
 
 It is written for both:
@@ -93,12 +99,30 @@ All endpoints bind only to localhost when HTTP automation is enabled.
 
 - `POST /click`
   - body: `{"id":"component_id"}`
+  - semantic alternative: `{"selector":{"role":"button","name":"Publish","states":{"enabled":true}}}`
 - `POST /focus`
   - body: `{"id":"component_id"}`
 - `POST /set-text`
+- `POST /select-text` with `{ "id": "field", "start": 0, "end": 4 }`
+- `POST /composition-start`, `/composition-update`, and `/composition-end`
   - body: `{"id":"component_id","value":"new text"}`
 - `POST /press-key`
   - body: `{"key":"Enter"}`
+  - named keys include `Tab`, `Shift+Tab`, `Enter`, `Space`, `Backspace`, `Delete`,
+    `Escape`, the four arrow keys, `Home`, `End`, `Page Up`, and `Page Down`
+
+`click`, `focus`, `set-text`, `select-text`, and composition commands accept
+either `id` or `selector`, never both. Selector `role` and accessible `name`
+use exact case-insensitive matching. The `states` map accepts `enabled`,
+`disabled`, `focused`, `selected`, `checked`, `expanded`, `read_only`,
+`required`, `invalid`, `password`, and `offscreen`, with either `true` or
+`false` values. Successful targeted commands return the resolved stable ID as
+`target_id`. This keeps semantic scripts readable without sacrificing stable
+ID diagnostics.
+
+HTTP JSON request bodies are capped at 1 MiB. Selector text, state counts, and
+IDs have tighter limits; unknown states, empty selectors, dangling semantic
+trees, and ambiguous matches fail without performing an action.
 
 ### Frame capture endpoints
 

@@ -20,8 +20,8 @@ type GridLength struct {
 }
 
 // GridLength helpers
-func NewPixel(val float32) GridLength { return GridLength{Type: Pixel, Value: val} }
-func NewAuto() GridLength            { return GridLength{Type: Auto} }
+func NewPixel(val float32) GridLength   { return GridLength{Type: Pixel, Value: val} }
+func NewAuto() GridLength               { return GridLength{Type: Auto} }
 func NewStar(weight float32) GridLength { return GridLength{Type: Star, Value: weight} }
 
 type GridAlignment int
@@ -173,6 +173,16 @@ func (g *Grid) Walk(fn func(types.Component)) {
 			child.Child.Walk(fn)
 		}
 	}
+}
+
+func (g *Grid) ChildComponents() []types.Component {
+	children := make([]types.Component, 0, len(g.Children))
+	for _, child := range g.Children {
+		if child.Child != nil {
+			children = append(children, child.Child)
+		}
+	}
+	return children
 }
 
 func (g *Grid) measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {

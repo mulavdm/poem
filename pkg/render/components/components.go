@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"go_native_gpu_gui/pkg/render/semantics"
+	"go_native_gpu_gui/pkg/render/theme"
 	"go_native_gpu_gui/pkg/render/types"
 )
 
@@ -17,7 +19,12 @@ type Panel struct {
 	Rect     image.Rectangle
 	BGColor  color.RGBA
 	Rounding int
+	UseTheme bool
+	Raised   bool
+	Style    *StyleOverride
 }
+
+func NewPanel(id string) *Panel { return &Panel{CompID: id, UseTheme: true} }
 
 func (p *Panel) ID() string              { return p.CompID }
 func (p *Panel) GetID() string           { return p.CompID }
@@ -27,9 +34,33 @@ func (p *Panel) Measure(avail image.Point, state *types.ApplicationState) types.
 	return types.MeasureResult{Preferred: size, Min: size}
 }
 func (p *Panel) Draw(pnt types.Painter, state *types.ApplicationState) {
-	pnt.SetGlow(2.0) // Subtle ambient glow for panels
-	pnt.DrawRoundedRect(p.Rect, p.Rounding, p.BGColor)
-	pnt.SetGlow(0)
+	background := p.BGColor
+	radius := p.Rounding
+	if themed(p.UseTheme, state) {
+		current := activeTheme(state)
+		background = current.Colors.Surface
+		if p.Raised {
+			background = current.Colors.SurfaceRaised
+		}
+		if radius == 0 {
+			radius = current.Radii.Large
+		}
+		if p.Style != nil {
+			if p.Style.Background != nil {
+				background = *p.Style.Background
+			}
+			if p.Style.Radius != nil {
+				radius = *p.Style.Radius
+			}
+		}
+	}
+	if p.Style != nil && p.Style.Border != nil {
+		pnt.DrawRoundedRect(p.Rect, radius, *p.Style.Border)
+		inner := image.Rect(p.Rect.Min.X+1, p.Rect.Min.Y+1, p.Rect.Max.X-1, p.Rect.Max.Y-1)
+		pnt.DrawRoundedRect(inner, maxInt(0, radius-1), background)
+		return
+	}
+	pnt.DrawRoundedRect(p.Rect, radius, background)
 }
 func (p *Panel) SetBounds(r image.Rectangle) { p.Rect = r }
 func (p *Panel) HitTest(pt image.Point) string {
@@ -46,6 +77,10 @@ func (p *Panel) OnMouseMove(pt image.Point, state *types.ApplicationState) bool 
 func (p *Panel) Focusable() bool               { return false }
 func (p *Panel) Walk(fn func(types.Component)) { fn(p) }
 
+func (p *Panel) Semantics(state *types.ApplicationState) semantics.Node {
+	return semantics.Node{ID: p.CompID, Role: semantics.RoleGroup, Bounds: p.Rect}
+}
+
 // GlassPanel is a premium panel with real-time blur background
 type GlassPanel struct {
 	Panel
@@ -54,10 +89,19 @@ type GlassPanel struct {
 
 func (p *GlassPanel) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.SetGlass(state.GlassEnabled)
-	pnt.SetShadow(0, 4, 15) // Deep shadow for depth
+	current := activeTheme(state)
+	shadow := current.Elevation.Medium
+	pnt.SetShadow(float32(shadow.OffsetX), float32(shadow.OffsetY), float32(shadow.Blur))
 	col := p.BGColor
+	radius := p.Rounding
+	if themed(p.UseTheme, state) {
+		col = current.Colors.SurfaceRaised
+		if radius == 0 {
+			radius = current.Radii.Large
+		}
+	}
 	col.A = p.Opacity
-	pnt.DrawRoundedRect(p.Rect, p.Rounding, col)
+	pnt.DrawRoundedRect(p.Rect, radius, col)
 	pnt.SetShadow(0, 0, 0) // Reset shadow
 	pnt.SetGlass(false)
 }
@@ -66,13 +110,28 @@ func (p *GlassPanel) Walk(fn func(types.Component)) { fn(p) }
 
 // Button is an interactive element with hover states
 type Button struct {
-	CompID     string
-	Rect       image.Rectangle
-	Label      string
-	BaseColor  color.RGBA
-	HoverColor color.RGBA
-	Rounding   int
-	OnClick    func(state *types.ApplicationState)
+	CompID         string
+	Rect           image.Rectangle
+	Label          string
+	BaseColor      color.RGBA
+	HoverColor     color.RGBA
+	Rounding       int
+	OnClick        func(state *types.ApplicationState)
+	UseTheme       bool
+	Variant        theme.Variant
+	Size           ControlSize
+	Disabled       bool
+	Loading        bool
+	Selected       bool
+	Invalid        bool
+	AccessibleName string
+	Mnemonic       rune
+	Relations      semantics.Relationships
+	Style          *StyleOverride
+}
+
+func NewButton(id, label string, onClick func(*types.ApplicationState)) *Button {
+	return &Button{CompID: id, Label: label, OnClick: onClick, UseTheme: true, Size: ControlMedium}
 }
 
 func (b *Button) ID() string              { return b.CompID }
@@ -89,6 +148,9 @@ func (b *Button) Measure(avail image.Point, state *types.ApplicationState) types
 		width = clampInt(width, 90, avail.X)
 	}
 	height := 38
+	if themed(b.UseTheme, state) {
+		height = controlHeight(activeTheme(state), b.Size)
+	}
 	size := applyExplicitSize(explicitSize(b.Rect), image.Pt(width, height))
 	return types.MeasureResult{
 		Preferred: size,
@@ -96,6 +158,33 @@ func (b *Button) Measure(avail image.Point, state *types.ApplicationState) types
 	}
 }
 func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
+	if themed(b.UseTheme, state) {
+		hovered := state != nil && state.HoveredID == b.CompID
+		pressed := state != nil && state.ActiveID == b.CompID
+		visual := buttonVisual(activeTheme(state), b.Variant, hovered, pressed, b.Disabled, b.Selected, b.Style)
+		if b.Invalid {
+			visual.border = activeTheme(state).Colors.Danger
+		}
+		drawControlSurface(pnt, b.Rect, visual, state != nil && state.FocusedID == b.CompID)
+		if hovered && !b.Disabled {
+			state.CursorID = state.HandCursor
+		}
+		label := b.Label
+		if b.Loading {
+			label = "Working..."
+		}
+		charW := state.FontCharWidth
+		if charW <= 0 {
+			charW = 8
+		}
+		label = fitButtonLabel(label, b.Rect.Dx(), charW)
+		tx := b.Rect.Min.X + maxInt(10, (b.Rect.Dx()-len([]rune(label))*charW)/2)
+		ty := b.Rect.Min.Y + (b.Rect.Dy() / 2) + 5
+		pnt.PushClip(b.Rect)
+		pnt.DrawText(label, tx, ty, visual.foreground)
+		pnt.PopClip()
+		return
+	}
 	c := b.BaseColor
 	if state.HoveredID == b.CompID {
 		c = b.HoverColor
@@ -141,7 +230,7 @@ func (b *Button) HitTest(pt image.Point) string {
 	return ""
 }
 func (b *Button) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
-	if state.FocusedID == b.CompID && (key == 13 || key == 32) { // Enter or Space
+	if !b.Disabled && !b.Loading && state.FocusedID == b.CompID && (key == 13 || key == 32) { // Enter or Space
 		if b.OnClick != nil {
 			b.OnClick(state)
 			return true
@@ -150,17 +239,49 @@ func (b *Button) OnKey(key uint32, char rune, state *types.ApplicationState) boo
 	return false
 }
 func (b *Button) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
-	if b.OnClick != nil {
-		b.OnClick(state)
-		return true
+	if b.Disabled || b.Loading {
+		return false
 	}
-	return false
+	state.ActiveID = b.CompID
+	return true
 }
-func (b *Button) OnMouseUp(pt image.Point, state *types.ApplicationState) bool   { return false }
+func (b *Button) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
+	wasActive := state.ActiveID == b.CompID
+	if wasActive && pt.In(b.Rect) && b.OnClick != nil && !b.Disabled && !b.Loading {
+		b.OnClick(state)
+	}
+	return wasActive
+}
 func (b *Button) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
 
-func (b *Button) Focusable() bool               { return true }
+func (b *Button) Focusable() bool               { return !b.Disabled }
 func (b *Button) Walk(fn func(types.Component)) { fn(b) }
+
+func (b *Button) MnemonicKey() rune { return b.Mnemonic }
+func (b *Button) ActivateMnemonic(state *types.ApplicationState) bool {
+	if b.Disabled || b.Loading || b.Mnemonic == 0 {
+		return false
+	}
+	state.FocusedID = b.CompID
+	if b.OnClick != nil {
+		b.OnClick(state)
+	}
+	return true
+}
+
+func (b *Button) Semantics(state *types.ApplicationState) semantics.Node {
+	name := b.AccessibleName
+	if name == "" {
+		name = b.Label
+	}
+	accessKey := ""
+	if b.Mnemonic != 0 {
+		accessKey = "Alt+" + strings.ToUpper(string(b.Mnemonic))
+	}
+	return semantics.Node{ID: b.CompID, Role: semantics.RoleButton, Name: name, AccessKey: accessKey, Bounds: b.Rect,
+		State: semantics.State{Disabled: b.Disabled, Focused: state != nil && state.FocusedID == b.CompID,
+			Selected: b.Selected, Invalid: b.Invalid}, Relations: b.Relations, Actions: []semantics.Action{semantics.ActionFocus, semantics.ActionInvoke}}
+}
 
 func fitButtonLabel(label string, width, charW int) string {
 	if strings.TrimSpace(label) == "" || width <= 0 || charW <= 0 {
@@ -189,13 +310,21 @@ const (
 
 // Label is a simple text element
 type Label struct {
-	CompID string
-	Pos    image.Point
-	Text   string
-	Color  color.RGBA
+	CompID         string
+	Pos            image.Point
+	Text           string
+	Color          color.RGBA
+	UseTheme       bool
+	Role           TextRole
+	AccessibleName string
+	Typography     TypographyRole
 
-	rect   image.Rectangle
+	rect       image.Rectangle
+	lineHeight int
+	baseline   int
 }
+
+func NewLabel(id, text string) *Label { return &Label{CompID: id, Text: text, UseTheme: true} }
 
 func (l *Label) ID() string    { return l.CompID }
 func (l *Label) GetID() string { return l.CompID }
@@ -210,15 +339,35 @@ func (l *Label) Measure(avail image.Point, state *types.ApplicationState) types.
 	if state != nil && state.FontCharWidth > 0 {
 		charW = state.FontCharWidth
 	}
-	size := measurePlainText(l.Text, charW, defaultFontHeight)
+	lineHeight := defaultFontHeight
+	if themed(l.UseTheme, state) {
+		style := typographyStyle(activeTheme(state), l.Typography)
+		scale := style.Size / activeTheme(state).Typography.Body.Size
+		charW = int(float32(charW) * scale)
+		lineHeight = int(style.LineHeight)
+		l.baseline = int(float32(defaultFontBaseline) * scale)
+	}
+	l.lineHeight = lineHeight
+	size := measurePlainText(l.Text, charW, lineHeight)
 	return types.MeasureResult{Preferred: size, Min: size}
 }
 func (l *Label) Draw(pnt types.Painter, state *types.ApplicationState) {
-	pnt.DrawText(l.Text, l.Pos.X, l.Pos.Y, l.Color)
+	col := l.Color
+	if themed(l.UseTheme, state) {
+		col = textRoleColor(activeTheme(state), l.Role)
+	}
+	drawTypography(pnt, l.Text, l.Pos.X, l.Pos.Y, col, activeTheme(state), l.Typography)
 }
 func (l *Label) SetBounds(r image.Rectangle) {
 	l.rect = r
-	l.Pos = image.Point{X: r.Min.X, Y: r.Min.Y + (r.Dy()-defaultFontHeight)/2 + defaultFontBaseline}
+	lineHeight, baseline := l.lineHeight, l.baseline
+	if lineHeight <= 0 {
+		lineHeight = defaultFontHeight
+	}
+	if baseline <= 0 {
+		baseline = defaultFontBaseline
+	}
+	l.Pos = image.Point{X: r.Min.X, Y: r.Min.Y + (r.Dy()-lineHeight)/2 + baseline}
 }
 func (l *Label) HitTest(pt image.Point) string {
 	if pt.In(l.Bounds()) {
@@ -234,14 +383,28 @@ func (l *Label) OnMouseMove(pt image.Point, state *types.ApplicationState) bool 
 func (l *Label) Focusable() bool               { return false }
 func (l *Label) Walk(fn func(types.Component)) { fn(l) }
 
+func (l *Label) Semantics(state *types.ApplicationState) semantics.Node {
+	name := l.AccessibleName
+	if name == "" {
+		name = l.Text
+	}
+	return semantics.Node{ID: l.CompID, Role: semantics.RoleText, Name: name, Value: l.Text, Bounds: l.Bounds()}
+}
+
 // DynamicLabel is a label that fetches its text from a function
 type DynamicLabel struct {
-	CompID  string
-	Pos     image.Point
-	GetText func(state *types.ApplicationState) string
-	Color   color.RGBA
+	CompID         string
+	Pos            image.Point
+	GetText        func(state *types.ApplicationState) string
+	Color          color.RGBA
+	UseTheme       bool
+	Role           TextRole
+	AccessibleName string
+	Typography     TypographyRole
 
-	rect    image.Rectangle
+	rect       image.Rectangle
+	lineHeight int
+	baseline   int
 }
 
 func (dl *DynamicLabel) ID() string    { return dl.CompID }
@@ -257,6 +420,15 @@ func (dl *DynamicLabel) Measure(avail image.Point, state *types.ApplicationState
 	if state != nil && state.FontCharWidth > 0 {
 		charW = state.FontCharWidth
 	}
+	lineHeight := defaultFontHeight
+	if themed(dl.UseTheme, state) {
+		style := typographyStyle(activeTheme(state), dl.Typography)
+		scale := style.Size / activeTheme(state).Typography.Body.Size
+		charW = int(float32(charW) * scale)
+		lineHeight = int(style.LineHeight)
+		dl.baseline = int(float32(defaultFontBaseline) * scale)
+	}
+	dl.lineHeight = lineHeight
 	text := ""
 	if dl.GetText != nil && state != nil {
 		text = dl.GetText(state)
@@ -266,18 +438,29 @@ func (dl *DynamicLabel) Measure(avail image.Point, state *types.ApplicationState
 		width = min(width, avail.X)
 	}
 	return types.MeasureResult{
-		Preferred: image.Pt(width, defaultFontHeight),
-		Min:       image.Pt(minValueInt(width, 120), defaultFontHeight),
+		Preferred: image.Pt(width, lineHeight),
+		Min:       image.Pt(minValueInt(width, 120), lineHeight),
 	}
 }
 func (dl *DynamicLabel) Draw(pnt types.Painter, state *types.ApplicationState) {
 	if dl.GetText != nil {
-		pnt.DrawText(dl.GetText(state), dl.Pos.X, dl.Pos.Y, dl.Color)
+		col := dl.Color
+		if themed(dl.UseTheme, state) {
+			col = textRoleColor(activeTheme(state), dl.Role)
+		}
+		drawTypography(pnt, dl.GetText(state), dl.Pos.X, dl.Pos.Y, col, activeTheme(state), dl.Typography)
 	}
 }
 func (dl *DynamicLabel) SetBounds(r image.Rectangle) {
 	dl.rect = r
-	dl.Pos = image.Point{X: r.Min.X, Y: r.Min.Y + (r.Dy()-defaultFontHeight)/2 + defaultFontBaseline}
+	lineHeight, baseline := dl.lineHeight, dl.baseline
+	if lineHeight <= 0 {
+		lineHeight = defaultFontHeight
+	}
+	if baseline <= 0 {
+		baseline = defaultFontBaseline
+	}
+	dl.Pos = image.Point{X: r.Min.X, Y: r.Min.Y + (r.Dy()-lineHeight)/2 + baseline}
 }
 func (dl *DynamicLabel) HitTest(pt image.Point) string {
 	if pt.In(dl.Bounds()) {
@@ -295,18 +478,42 @@ func (dl *DynamicLabel) OnMouseMove(pt image.Point, state *types.ApplicationStat
 func (dl *DynamicLabel) Focusable() bool               { return false }
 func (dl *DynamicLabel) Walk(fn func(types.Component)) { fn(dl) }
 
+func (dl *DynamicLabel) Semantics(state *types.ApplicationState) semantics.Node {
+	value := ""
+	if dl.GetText != nil {
+		value = dl.GetText(state)
+	}
+	name := dl.AccessibleName
+	if name == "" {
+		name = value
+	}
+	return semantics.Node{ID: dl.CompID, Role: semantics.RoleText, Name: name, Value: value, Bounds: dl.Bounds()}
+}
+
 // TextInput is an editable text field
 type TextInput struct {
-	CompID      string
-	Rect        image.Rectangle
-	Text        string
-	Placeholder string
-	Masked      bool
-	BGColor     color.RGBA
-	TextColor   color.RGBA
-	Rounding    int
-	CursorIndex int
-	OnSubmit    func(text string, state *types.ApplicationState)
+	CompID         string
+	Rect           image.Rectangle
+	Text           string
+	Placeholder    string
+	Masked         bool
+	BGColor        color.RGBA
+	TextColor      color.RGBA
+	Rounding       int
+	CursorIndex    int
+	OnSubmit       func(text string, state *types.ApplicationState)
+	OnChange       func(text string, state *types.ApplicationState)
+	UseTheme       bool
+	Disabled       bool
+	ReadOnly       bool
+	Invalid        bool
+	Required       bool
+	AccessibleName string
+	Style          *StyleOverride
+}
+
+func NewTextInput(id, placeholder string) *TextInput {
+	return &TextInput{CompID: id, Placeholder: placeholder, UseTheme: true}
 }
 
 func (t *TextInput) ID() string              { return t.CompID }
@@ -321,7 +528,11 @@ func (t *TextInput) Measure(avail image.Point, state *types.ApplicationState) ty
 	if strings.TrimSpace(content) == "" {
 		content = t.Placeholder
 	}
-	width := maxInt(160, len([]rune(content))*charW+20)
+	contentWidth := len([]rune(content)) * charW
+	if state != nil {
+		contentWidth = inputTextWidth(state, content)
+	}
+	width := maxInt(160, contentWidth+20)
 	if avail.X > 0 {
 		width = clampInt(width, 120, avail.X)
 	}
@@ -360,15 +571,33 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 		t.CursorIndex = len(runes)
 	}
 
-	// Draw glowing focus outline ring if focused
-	if state.FocusedID == t.CompID {
+	if themed(t.UseTheme, state) {
+		current := activeTheme(state)
+		visual := controlVisual{background: current.Colors.SurfaceSunken, foreground: current.Colors.Text,
+			border: current.Colors.Border, focus: current.Colors.Focus, radius: current.Radii.Medium}
+		if state.HoveredID == t.CompID {
+			visual.border = current.Colors.BorderStrong
+		}
+		if t.Invalid {
+			visual.border = current.Colors.Danger
+		}
+		if t.Disabled {
+			visual.background, visual.foreground = current.Colors.Surface, current.Colors.TextDisabled
+		}
+		applyStyleOverride(&visual, t.Style, state.HoveredID == t.CompID, false)
+		drawControlSurface(pnt, t.Rect, visual, state.FocusedID == t.CompID && !t.Disabled)
+		t.TextColor = visual.foreground
+		t.BGColor = visual.background
+	} else if state.FocusedID == t.CompID {
+		// Draw legacy glowing focus outline ring if focused
 		pnt.SetGlow(6.0)
 		pnt.DrawRoundedRect(image.Rect(t.Rect.Min.X-2, t.Rect.Min.Y-2, t.Rect.Max.X+2, t.Rect.Max.Y+2), t.Rounding+2, color.RGBA{0, 150, 255, 200})
 		pnt.SetGlow(0)
 	}
 
-	// Draw background box
-	pnt.DrawRoundedRect(t.Rect, t.Rounding, t.BGColor)
+	if !themed(t.UseTheme, state) {
+		pnt.DrawRoundedRect(t.Rect, t.Rounding, t.BGColor)
+	}
 
 	if state.HoveredID == t.CompID {
 		state.CursorID = state.IBeamCursor
@@ -376,6 +605,11 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 
 	// Draw text or placeholder
 	disp := t.Text
+	compositionStart, compositionEnd := 0, 0
+	compositionActive := false
+	if composed, startWidth, endWidth, active := t.compositionDisplay(state); active {
+		disp, compositionStart, compositionEnd, compositionActive = composed, startWidth, endWidth, true
+	}
 	if t.Masked && disp != "" {
 		disp = strings.Repeat("*", len([]rune(disp)))
 	}
@@ -387,18 +621,36 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 
 	pnt.PushClip(t.Rect)
 	textY := t.Rect.Min.Y + (t.Rect.Dy()-defaultFontHeight)/2 + defaultFontBaseline
+	if state.FocusedID == t.CompID && t.Text != "" && !compositionActive {
+		selection := t.editingSelection(state, len([]rune(t.Text)))
+		start, end := selectionBounds(selection)
+		if start != end {
+			textRunes := []rune(t.Text)
+			selectionStartX := inputTextWidth(state, string(textRunes[:start]))
+			selectionEndX := inputTextWidth(state, string(textRunes[:end]))
+			selectionTop := t.Rect.Min.Y + (t.Rect.Dy()-defaultFontHeight)/2
+			pnt.FillRect(image.Rect(t.Rect.Min.X+10+selectionStartX, selectionTop, t.Rect.Min.X+10+selectionEndX, selectionTop+defaultFontHeight), activeTheme(state).Colors.Selection)
+		}
+	}
 	pnt.DrawText(disp, t.Rect.Min.X+10, textY, col)
+	if compositionActive {
+		underlineY := t.Rect.Min.Y + (t.Rect.Dy()+defaultFontHeight)/2
+		pnt.DrawLine(t.Rect.Min.X+10+compositionStart, underlineY, t.Rect.Min.X+10+compositionEnd, underlineY, activeTheme(state).Colors.Accent)
+	}
 	pnt.PopClip()
 
 	// Draw cursor if focused
 	if state.FocusedID == t.CompID {
 		// Simple blinking logic based on time
 		if (time.Since(state.StartTime).Milliseconds()/500)%2 == 0 {
-			charW := state.FontCharWidth
-			if charW <= 0 {
-				charW = 8
+			cursorX := 0
+			if compositionActive {
+				cursorX = t.Rect.Min.X + 10 + compositionEnd
+			} else {
+				textRunes := []rune(t.Text)
+				cursor := clampTextIndex(t.CursorIndex, len(textRunes))
+				cursorX = t.Rect.Min.X + 10 + inputTextWidth(state, string(textRunes[:cursor]))
 			}
-			cursorX := t.Rect.Min.X + 10 + (t.CursorIndex * charW)
 			cursorTop := t.Rect.Min.Y + (t.Rect.Dy()-defaultFontHeight)/2
 			pnt.FillRect(image.Rect(cursorX, cursorTop, cursorX+2, cursorTop+defaultFontHeight), t.TextColor)
 		}
@@ -406,111 +658,35 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 }
 
 func (t *TextInput) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
-	if state.FocusedID != t.CompID {
+	if state.FocusedID != t.CompID || t.Disabled {
 		return false
 	}
-
-	const VK_BACK = 0x08
-	const VK_RETURN = 0x0D
-	const VK_LEFT = 0x25
-	const VK_RIGHT = 0x27
-	const VK_HOME = 0x24
-	const VK_END = 0x23
-
-	rawRunes := []rune(t.Text)
-	if t.CursorIndex < 0 || t.CursorIndex > len(rawRunes) {
-		t.CursorIndex = len(rawRunes)
-	}
-
-	if key == VK_RETURN {
-		if t.OnSubmit != nil {
-			t.OnSubmit(t.Text, state)
-			return true
+	before := t.Text
+	defer func() {
+		if t.Text != before && t.OnChange != nil {
+			t.OnChange(t.Text, state)
 		}
-		return false
-	}
+	}()
 
-	if key == VK_LEFT {
-		if t.CursorIndex > 0 {
-			t.CursorIndex--
-		}
-		if state.TextInputValues != nil {
-			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
-		}
-		return true
-	}
-
-	if key == VK_RIGHT {
-		if t.CursorIndex < len(rawRunes) {
-			t.CursorIndex++
-		}
-		if state.TextInputValues != nil {
-			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
-		}
-		return true
-	}
-
-	if key == VK_HOME {
-		t.CursorIndex = 0
-		if state.TextInputValues != nil {
-			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
-		}
-		return true
-	}
-
-	if key == VK_END {
-		t.CursorIndex = len(rawRunes)
-		if state.TextInputValues != nil {
-			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
-		}
-		return true
-	}
-
-	if key == VK_BACK {
-		if t.CursorIndex > 0 {
-			rawRunes = append(rawRunes[:t.CursorIndex-1], rawRunes[t.CursorIndex:]...)
-			t.Text = string(rawRunes)
-			t.CursorIndex--
-		}
-		if state.TextInputValues != nil {
-			state.TextInputValues[t.CompID] = t.Text
-			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
-		}
-		return true
-	}
-
-	if char >= 32 && char != 127 {
-		rawRunes = append(rawRunes[:t.CursorIndex], append([]rune{char}, rawRunes[t.CursorIndex:]...)...)
-		t.Text = string(rawRunes)
-		t.CursorIndex++
-		if state.TextInputValues != nil {
-			state.TextInputValues[t.CompID] = t.Text
-			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
-		}
-		return true
-	}
-
-	return false
+	return t.handleEditingKey(key, char, state)
 }
 
 func (t *TextInput) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
+	if t.Disabled {
+		return false
+	}
 	state.FocusedID = t.CompID
 
-	charW := state.FontCharWidth
-	if charW <= 0 {
-		charW = 8
-	}
-
 	clickX := pt.X - t.Rect.Min.X - 10
-	cursor := (clickX + charW/2) / charW
 	runes := []rune(t.Text)
-	if cursor < 0 {
-		cursor = 0
-	}
-	if cursor > len(runes) {
-		cursor = len(runes)
-	}
+	cursor := inputTextIndexAtX(state, t.Text, clickX)
 	t.CursorIndex = cursor
+	selection := textInputSelection{Anchor: cursor, Caret: cursor}
+	if modifierPressed(state, 0x10) {
+		selection.Anchor = t.editingSelection(state, len(runes)).Anchor
+	}
+	t.setEditingSelection(state, selection, len(runes))
+	state.ActiveID = t.CompID
 
 	if state.TextInputValues != nil {
 		state.TextInputValues[t.CompID] = t.Text
@@ -518,26 +694,77 @@ func (t *TextInput) OnMouseDown(pt image.Point, state *types.ApplicationState) b
 	}
 	return true
 }
-func (t *TextInput) OnMouseUp(pt image.Point, state *types.ApplicationState) bool   { return false }
-func (t *TextInput) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
+func (t *TextInput) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
+	return state.ActiveID == t.CompID
+}
+func (t *TextInput) OnMouseMove(pt image.Point, state *types.ApplicationState) bool {
+	if state.ActiveID != t.CompID {
+		return false
+	}
+	caret := inputTextIndexAtX(state, t.Text, pt.X-t.Rect.Min.X-10)
+	selection := t.editingSelection(state, len([]rune(t.Text)))
+	selection.Caret = caret
+	t.setEditingSelection(state, selection, len([]rune(t.Text)))
+	return true
+}
 
-func (t *TextInput) Focusable() bool               { return true }
+func (t *TextInput) Focusable() bool               { return !t.Disabled }
 func (t *TextInput) Walk(fn func(types.Component)) { fn(t) }
+
+func (t *TextInput) Semantics(state *types.ApplicationState) semantics.Node {
+	name := t.AccessibleName
+	if name == "" {
+		name = t.Placeholder
+	}
+	value := t.Text
+	var textValue *semantics.TextValue
+	actions := []semantics.Action{semantics.ActionFocus, semantics.ActionSetValue}
+	if t.Masked {
+		value = ""
+	} else {
+		start, end := t.Selection(state)
+		textValue = &semantics.TextValue{SelectionStart: start, SelectionEnd: end}
+		actions = append(actions, semantics.ActionSetSelection)
+	}
+	return semantics.Node{ID: t.CompID, Role: semantics.RoleTextField, Name: name, Value: value, Bounds: t.Rect,
+		State: semantics.State{Disabled: t.Disabled, Focused: state != nil && state.FocusedID == t.CompID,
+			ReadOnly: t.ReadOnly, Required: t.Required, Invalid: t.Invalid, Password: t.Masked},
+		Text: textValue, Actions: actions}
+}
 
 // Slider is a range input element
 type Slider struct {
-	CompID     string
-	Rect       image.Rectangle
-	Min, Max   float32
-	Value      float32
-	TrackColor color.RGBA
-	ThumbColor color.RGBA
+	CompID         string
+	Rect           image.Rectangle
+	Min, Max       float32
+	Value          float32
+	TrackColor     color.RGBA
+	ThumbColor     color.RGBA
+	UseTheme       bool
+	Disabled       bool
+	Invalid        bool
+	AccessibleName string
+	Controlled     bool
+	OnChange       func(float32, *types.ApplicationState)
+}
+
+func NewSlider(id string, min, max, value float32, onChange func(float32, *types.ApplicationState)) *Slider {
+	return &Slider{CompID: id, Min: min, Max: max, Value: value, OnChange: onChange, Controlled: onChange != nil, UseTheme: true}
 }
 
 func (s *Slider) ID() string                  { return s.CompID }
 func (s *Slider) GetID() string               { return s.CompID }
 func (s *Slider) Bounds() image.Rectangle     { return s.Rect }
 func (s *Slider) SetBounds(r image.Rectangle) { s.Rect = r }
+func (s *Slider) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	t := activeTheme(state)
+	width := avail.X
+	if width <= 0 {
+		width = 240
+	}
+	size := applyExplicitSize(explicitSize(s.Rect), image.Pt(width, t.Controls.Medium))
+	return types.MeasureResult{Preferred: size, Min: image.Pt(minValueInt(size.X, 120), t.Controls.Small)}
+}
 func (s *Slider) HitTest(pt image.Point) string {
 	if pt.In(s.Rect) {
 		return s.CompID
@@ -548,7 +775,7 @@ func (s *Slider) Draw(pnt types.Painter, state *types.ApplicationState) {
 	// Restore state if present
 	if s.CompID == "sld_vol" {
 		s.Value = state.Volume
-	} else if state.SliderValues != nil {
+	} else if !s.Controlled && state.SliderValues != nil {
 		if val, ok := state.SliderValues[s.CompID]; ok {
 			s.Value = val
 		} else {
@@ -556,8 +783,13 @@ func (s *Slider) Draw(pnt types.Painter, state *types.ApplicationState) {
 		}
 	}
 
-	// Draw glowing focus outline ring if focused
-	if state.FocusedID == s.CompID {
+	current := activeTheme(state)
+	useTheme := themed(s.UseTheme, state)
+	if useTheme && state.FocusedID == s.CompID && !s.Disabled {
+		focus := image.Rect(s.Rect.Min.X-2, s.Rect.Min.Y-2, s.Rect.Max.X+2, s.Rect.Max.Y+2)
+		pnt.DrawRoundedRect(focus, current.Radii.Medium, current.Colors.Focus)
+		pnt.DrawRoundedRect(s.Rect, current.Radii.Medium, current.Colors.Background)
+	} else if state.FocusedID == s.CompID {
 		pnt.SetGlow(6.0)
 		pnt.DrawRoundedRect(image.Rect(s.Rect.Min.X-2, s.Rect.Min.Y-2, s.Rect.Max.X+2, s.Rect.Max.Y+2), 4, color.RGBA{0, 150, 255, 200})
 		pnt.SetGlow(0)
@@ -567,26 +799,66 @@ func (s *Slider) Draw(pnt types.Painter, state *types.ApplicationState) {
 		state.CursorID = state.HandCursor
 	}
 
-	// Draw track
+	// Draw track and filled range.
 	trackH := 4
 	trackRect := image.Rect(s.Rect.Min.X, s.Rect.Min.Y+s.Rect.Dy()/2-trackH/2, s.Rect.Max.X, s.Rect.Min.Y+s.Rect.Dy()/2+trackH/2)
-	pnt.FillRect(trackRect, s.TrackColor)
+	trackColor := s.TrackColor
+	if useTheme {
+		trackColor = current.Colors.BorderStrong
+		if s.Disabled {
+			trackColor = current.Colors.Border
+		}
+	}
+	trackRadius := roundedRadius(trackRect, current.Radii.Pill)
+	pnt.DrawRoundedRect(trackRect, trackRadius, trackColor)
 
-	// Draw thumb
-	thumbW := 12
-	percent := (s.Value - s.Min) / (s.Max - s.Min)
-	thumbX := s.Rect.Min.X + int(percent*float32(s.Rect.Dx()-thumbW))
-	thumbRect := image.Rect(thumbX, s.Rect.Min.Y, thumbX+thumbW, s.Rect.Max.Y)
+	// Draw thumb and active range.
+	rangeValue := s.Max - s.Min
+	if rangeValue <= 0 {
+		rangeValue = 1
+	}
+	percent := (s.Value - s.Min) / rangeValue
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 1 {
+		percent = 1
+	}
+	thumbSize := minValueInt(16, s.Rect.Dy()-4)
+	if thumbSize < 10 {
+		thumbSize = 10
+	}
+	thumbCenter := s.Rect.Min.X + int(percent*float32(s.Rect.Dx()))
+	if thumbCenter < s.Rect.Min.X+thumbSize/2 {
+		thumbCenter = s.Rect.Min.X + thumbSize/2
+	}
+	if thumbCenter > s.Rect.Max.X-thumbSize/2 {
+		thumbCenter = s.Rect.Max.X - thumbSize/2
+	}
+	if useTheme {
+		activeTrack := image.Rect(trackRect.Min.X, trackRect.Min.Y, thumbCenter, trackRect.Max.Y)
+		pnt.DrawRoundedRect(activeTrack, roundedRadius(activeTrack, current.Radii.Pill), current.Colors.Accent)
+	}
+	thumbRect := image.Rect(thumbCenter-thumbSize/2, s.Rect.Min.Y+(s.Rect.Dy()-thumbSize)/2, thumbCenter+thumbSize/2, s.Rect.Min.Y+(s.Rect.Dy()-thumbSize)/2+thumbSize)
 
 	col := s.ThumbColor
+	if useTheme {
+		col = current.Colors.Accent
+		if s.Disabled {
+			col = current.Colors.TextDisabled
+		}
+		if s.Invalid {
+			col = current.Colors.Danger
+		}
+	}
 	if state.ActiveID == s.CompID {
 		col.A = 200 // Brighter when dragging
 	}
-	pnt.DrawRoundedRect(thumbRect, 4, col)
+	pnt.DrawRoundedRect(thumbRect, roundedRadius(thumbRect, current.Radii.Pill), col)
 }
 
 func (s *Slider) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
-	if state.FocusedID != s.CompID {
+	if state.FocusedID != s.CompID || s.Disabled {
 		return false
 	}
 	const VK_LEFT = 0x25
@@ -605,9 +877,10 @@ func (s *Slider) OnKey(key uint32, char rune, state *types.ApplicationState) boo
 		}
 		if s.CompID == "sld_vol" {
 			state.Volume = s.Value
-		} else if state.SliderValues != nil {
+		} else if !s.Controlled && state.SliderValues != nil {
 			state.SliderValues[s.CompID] = s.Value
 		}
+		s.notifyChange(state)
 		return true
 	}
 	if key == VK_RIGHT {
@@ -618,22 +891,27 @@ func (s *Slider) OnKey(key uint32, char rune, state *types.ApplicationState) boo
 		}
 		if s.CompID == "sld_vol" {
 			state.Volume = s.Value
-		} else if state.SliderValues != nil {
+		} else if !s.Controlled && state.SliderValues != nil {
 			state.SliderValues[s.CompID] = s.Value
 		}
+		s.notifyChange(state)
 		return true
 	}
 	return false
 }
 
 func (s *Slider) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
+	if s.Disabled {
+		return false
+	}
 	state.ActiveID = s.CompID
 	s.updateValue(pt.X)
 	if s.CompID == "sld_vol" {
 		state.Volume = s.Value
-	} else if state.SliderValues != nil {
+	} else if !s.Controlled && state.SliderValues != nil {
 		state.SliderValues[s.CompID] = s.Value
 	}
+	s.notifyChange(state)
 	return true
 }
 
@@ -647,12 +925,19 @@ func (s *Slider) OnMouseMove(pt image.Point, state *types.ApplicationState) bool
 		s.updateValue(pt.X)
 		if s.CompID == "sld_vol" {
 			state.Volume = s.Value
-		} else if state.SliderValues != nil {
+		} else if !s.Controlled && state.SliderValues != nil {
 			state.SliderValues[s.CompID] = s.Value
 		}
+		s.notifyChange(state)
 		return true
 	}
 	return false
+}
+
+func (s *Slider) notifyChange(state *types.ApplicationState) {
+	if s.OnChange != nil {
+		s.OnChange(s.Value, state)
+	}
 }
 
 func (s *Slider) updateValue(mouseX int) {
@@ -666,8 +951,23 @@ func (s *Slider) updateValue(mouseX int) {
 	s.Value = s.Min + percent*(s.Max-s.Min)
 }
 
-func (s *Slider) Focusable() bool               { return true }
+func (s *Slider) Focusable() bool               { return !s.Disabled }
 func (s *Slider) Walk(fn func(types.Component)) { fn(s) }
+
+func (s *Slider) Semantics(state *types.ApplicationState) semantics.Node {
+	name := s.AccessibleName
+	if name == "" {
+		name = s.CompID
+	}
+	step := (s.Max - s.Min) * 0.05
+	if step <= 0 {
+		step = 1
+	}
+	return semantics.Node{ID: s.CompID, Role: semantics.RoleSlider, Name: name, Value: fmt.Sprintf("%.2f", s.Value), Bounds: s.Rect,
+		State:   semantics.State{Disabled: s.Disabled, Invalid: s.Invalid, Focused: state != nil && state.FocusedID == s.CompID},
+		Range:   &semantics.RangeValue{Minimum: float64(s.Min), Maximum: float64(s.Max), SmallChange: float64(step), LargeChange: float64(step * 10)},
+		Actions: []semantics.Action{semantics.ActionFocus, semantics.ActionIncrement, semantics.ActionDecrement, semantics.ActionSetValue}}
+}
 
 // ParticleComponent is a UI element wrapping the ParticleSystem
 type ParticleComponent struct {

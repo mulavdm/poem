@@ -1,5 +1,14 @@
 # POEM Architectural Specification
 
+## POEM 2.0 portability boundary
+
+The shipping runtime remains Win32/D3D11. Platform-neutral packages under
+`pkg/render` own themes, drawing values, events, semantic accessibility, layout,
+and optional platform-service interfaces. Native presentation, text services,
+window management, and the Windows UI Automation provider stay behind the
+sidecar/platform boundary. Protocol v2 carries semantic snapshots without
+embedding Windows accessibility concepts in Go components.
+
 This document details the core architectural challenges, thread mechanics, memory trade-offs, and package boundaries involved in building low-level, frameworkless user interfaces in Go.
 
 Current runtime note: historical sections below describe earlier single-process and Rust-sidecar experiments. The active runtime is now a Go orchestrator plus a Windows-first C++ sidecar using Win32, D3D11, named pipes, and a repo-owned binary protocol.
@@ -64,7 +73,7 @@ To meet strict software engineering standards, we have migrated the engine into 
                     \            |             /
                      v           v            v
                   +--------------------------------+
-                  |             types              | (Core APIs, State, and VFX Physics)
+                  |             types              | (Core APIs, State, Semantics)
                   +--------------------------------+
 ```
 
@@ -74,27 +83,27 @@ To meet strict software engineering standards, we have migrated the engine into 
 - `pkg/render/`: The unified public wrapper package:
     - **`render.go`**: The single import interface. Leverages **Go type aliasing** to expose subpackage components, constants, and options so that consumers never deal with deep subpackage imports.
     - **`run.go`**: The Inversion-of-Control (IoC) launcher. Locks the thread, creates the window, binds events, and drives the frame tickers.
-    - **`types/`**: Core mathematical API definitions, `Painter`, `UIRenderer`, `Component` contracts, and particle backdrops.
-    - **`components/`**: Pure declarative interactive controls (`Panel`, `GlassPanel`, `Button`, `Label`, `TextInput`, `Slider`, `ParticleComponent`).
+    - **`types/`**: Core API definitions, `Painter`, `UIRenderer`, `Component` contracts, platform-neutral render context, overlay state, and semantic metadata.
+    - **`components/`**: Pure declarative interactive controls (`Panel`, `Button`, `Label`, `TextInput`, `TextArea`, `Slider`, selection controls, menus, tables, dialogs, and opt-in effect components). `GlassPanel` remains compatibility/effect surface, not the default app chrome.
     - **`layout/`**: Axis-alignment flexbox positioning logic (`FlexBox`).
     - **`backend/`**: Hardware and software rendering engines (`cpu.go`, `gpu.go`) swapped compile-time using build tags.
 
 ---
 
-## 🎨 Architectural Comparison: Single-Process GDI/OpenGL vs. Dual-Process isolated wgpu
+## 🎨 Architectural Comparison: Single-Process GDI/OpenGL vs. Process-Isolated Native Presentation
 
 🔬 **Rigorous Architectural Comparison Matrix (Porting Metrics)**
 
-| Architectural Vector | Original Single-Process GDI/OpenGL | New Dual-Process Go-Rust wgpu Core |
+| Architectural Vector | Original Single-Process GDI/OpenGL | Active Go + C++ D3D11 Sidecar |
 | :--- | :--- | :--- |
-| **Runtime Isolation** | None (Any native crash terminates Go main program) | **Full Process Isolation** (Rust presentation core runs separately) |
+| **Runtime Isolation** | None (Any native crash terminates Go main program) | **Process Isolation** (native presentation sidecar runs separately) |
 | **Graphics API** | GDI / OpenGL Core Profile 3.3 | **Direct3D 11** in the active Windows sidecar |
 | **Windowing & Input** | Custom Win32 Syscalls (Go thread-locked) | **Win32** in the active Windows sidecar |
 | **IPC Strategy** | Direct heap pointer sharing (same process thread) | **Win32 Named Pipes** with a repo-owned custom binary protocol |
 | **Acoustic Audio** | Win32 DSP (winmm.dll) in Go | **Native sidecar playback** via Windows multimedia APIs |
 | **CGO Required** | Yes (when building `-tags gpu` with `go-gl`) | **No CGO Required** for the active Go + C++ sidecar runtime |
 | **High-DPI / 4K Scaling** | None (Microscopic elements, layout coordinate clash) | **Automated Coordinate Translation Subsystem** (Logical vs. Physical) |
-| **Frame Telemetry** | CPU bound (~1.1ms), thrashes Go GC on VBO arrays | **Zero-GC Vertex Batching** (Rust memory) & <0.1ms IPC latency |
+| **Frame Telemetry** | CPU bound (~1.1ms), thrashes Go GC on VBO arrays | **Batched protocol frames** with low-allocation Go serialization and native D3D11 presentation |
 
 ---
 
@@ -107,7 +116,7 @@ Traditional linear graphs produce jagged, unpolished vector segments. To solve t
 $$y = y_1 \cdot (1 - t') + y_2 \cdot t'$$
 $$t' = \frac{1 - \cos(t \cdot \pi)}{2}$$
 This maps discrete heap memory telemetry arrays into smooth wave-like paths in microsecond execution times.
-*   **Translucent Fills**: To create a premium backdrop, the area below the curve is filled using 3 separate fading vertical gradient bands (opacities at Alpha 30, 15, and 6) giving a frosted glassmorphic glow.
+*   **Translucent Fills**: Data visualizations may use restrained product-specific fills where they communicate information. Ordinary controls and app chrome use semantic theme tokens instead of glow or glass by default.
 
 ### 2. State-Driven Dynamic Cursor System
 To isolate native Windows syscalls from components, we built a fully state-driven, dynamic mouse cursor subsystem:
@@ -132,7 +141,7 @@ This is run automatically right before hit-testing in `RenderPipeline`, `WM_MOUS
 
 To support large lists, telemetry streams, and logging consoles, we integrated vertical scroll viewports (`render.ScrollView`) and dual-backend clipping masks.
 
-### 1. Viewport Bounded Clipping (wgpu Scissor tests)
+### 1. Viewport Bounded Clipping (D3D11 Scissor Tests)
 To render items inside a scroll container without them bleeding onto stationary UI elements, we introduced a native viewport clipping bounding box to the drawing tree:
 * **Native GPU Scissor Tests**: The active Windows sidecar executes hardware scissor tests in D3D11 render passes.
 * **Aspect Scaling Conversion**: Because the native renderer operates on physical pixels, it converts the logical scissor bounds requested by Go into physical pixels using the current display DPI scale factor. The calculated bounds are safely clamped to avoid exceeding swapchain sizes, providing zero-overhead, anti-aliased sub-frame viewport clipping.
@@ -177,14 +186,17 @@ To drive real-time background animations, a background thread runs an update tic
 
 ### 2. Zero-GC Allocation Draw Command Buffer
 Building declarative UI lists and real-time telemetry graphs requires clearing and rebuilding hundreds of components and draw calls every frame. Allocating fresh slices for paint instructions on every frame would thrash Go's Garbage Collector.
-* **The Solution**: We engineered a slice-retaining strategy inside `FlatBufferPainter`:
+* **The Solution**: We engineered a slice-retaining strategy inside `ProtocolPainter`:
   ```go
-  func (f *FlatBufferPainter) Reset() {
-      f.commands = f.commands[:0]
+  func (p *ProtocolPainter) Reset() {
+      p.commands = p.commands[:0]
       ...
   }
   ```
-  Calling `f.commands[:0]` resets the length of the command slice to zero while fully preserving the underlying allocated backing array capacity. Subsequent appends copy drawing commands directly into pre-allocated memory. This results in **absolute zero GC allocations** during layout redraw ticks, keeping Go's GC overhead at a pristine 0%.
+  Calling `commands[:0]` resets the length of the command slice to zero while
+  preserving the underlying allocated backing array capacity. Subsequent appends
+  copy drawing commands into retained memory, keeping redraw ticks low-allocation
+  and predictable.
 
 ### 3. High-Precision Floating-Point Delta Physics
 Unlocking unthrottled 60Hz+ performance dropped the frame delta `dt` to exactly `0.016` seconds. Because particle coordinates were stored as integers, calculating steps like `int(velocity * dt)` (e.g. `int(40 * 0.016) = int(0.64) = 0`) truncated the step size to exactly `0` every frame, causing the background particles to freeze solid as soon as performance became perfect!
@@ -218,19 +230,19 @@ type ScrollContainer interface {
 }
 ```
 * **Circular Import Avoidance**: By defining this interface inside `pkg/render/types` instead of `pkg/render/components`, we keep our package layout clean and fully compliant with Go's package tree dependencies.
-* **Centered Centering Math with Boundary Spacing**: `ScrollView` implements `ScrollToChild`. It dynamically queries if the target child is a descendant, computes its Y bounds relative to the viewport top coordinate (independent of LERP visual scroll offsets), and shifts `ScrollY` up or down to gracefully center the element inside the visible viewport. It incorporates a `20px` safety boundary padding to prevent focused elements and their visual glow rings from clipping against the viewport edges.
+* **Centered Centering Math with Boundary Spacing**: `ScrollView` implements `ScrollToChild`. It dynamically queries if the target child is a descendant, computes its Y bounds relative to the viewport top coordinate (independent of LERP visual scroll offsets), and shifts `ScrollY` up or down to center the element inside the visible viewport. Boundary padding prevents focused elements and their theme-defined focus outlines from clipping against viewport edges.
 
-### 3. Glow Ring Painter Pipeline Integration
-Focused interactive elements are visually emphasized using glowing outline rings. Inside `Button.Draw`, `TextInput.Draw`, and `Slider.Draw`:
+### 3. Semantic Focus Painter Integration
+Focused interactive elements use the current theme's focus token. Inside `Button.Draw`, `TextInput.Draw`, and `Slider.Draw`:
 - We query `state.FocusedID == CompID`.
-- We draw a larger boundary rect (2px offset gutter) using `p.SetGlow(6.0)` and standard translucent neon colors (`color.RGBA{0, 150, 255, 200}`).
-- This layers the neon focus ring behind the widget box, producing a gorgeous, premium outline accent.
+- Core controls draw a restrained outline outside the control boundary using `Theme.Colors.Focus`.
+- Glow remains available to application-specific effects but is not mandatory control styling.
 
 ### 4. Declarative Keyboard Adjustments & Event Submissions
 Interactive components capture specialized keystroke operations:
 - **`Button.OnKey`**: Intercepts virtual key `Enter` (`VK_RETURN` = 13) and `Space` (`VK_SPACE` = 32) only during `WM_KEYDOWN` key events, running the button's `OnClick` closure. This filters out the duplicate `WM_CHAR` character translations (such as character `\r`) that would otherwise double-trigger the buttons and instantly negate toggles.
 - **`Slider.OnKey`**: Captures `Left Arrow` (`VK_LEFT`) and `Right Arrow` (`VK_RIGHT`) keys to mathematically increment or decrement the slider value. It snaps values to the nearest 5% increment (`math.Round((Value ± step) / step) * step`) to clean up any precise decimal offsets left behind from custom mouse dragging.
-- **`TextInput.OnKey`**: Adds support for an optional `OnSubmit` callback, executed instantly whenever `Enter` is hit inside a focused text input. It filters out character level duplicates by only evaluating the virtual `VK_RETURN` event.
+- **`TextInput.OnKey`**: Supports submission, rune-index selection, word navigation, replacement editing, and clipboard shortcuts. Windows IME pre-edit strings arrive through explicit composition events rather than duplicate `WM_CHAR` insertion.
 
 ### 5. Win32 Key Dispatching Loop
 Inside the native `libWndProc` under `WM_KEYDOWN` (0x0100):
@@ -293,7 +305,7 @@ Sound triggers are carefully routed inside the core window message loop to optim
   This completely filters Win32 keyboard auto-repeat message floods (e.g. when holding `Enter` or `Ctrl+S`), ensuring single chimes play cleanly without overlapping audio stutter.
 * **Button Clicks**: Hooked inside `WM_LBUTTONDOWN`, playing a click chime when clicking any active focusable component boundary.
 * **Global Save & Input Submit**: Plays the success arpeggio on global `"Ctrl+S"` save signals and console command line submissions.
-* **Interactive Preferences Button**: Settings panel contains a dynamic `"MUTE/UNMUTE AUDIO FEEDBACK"` controller button that reactively toggles `state.AudioEnabled` and refreshes UI labels instantly.
+* **Opt-in effects**: Audio feedback is now controlled through `AppConfig.Effects` and remains an application choice rather than a core-control default.
 
 ---
 
@@ -309,7 +321,7 @@ However, forcing the layout engine to compute high-DPI coordinates causes dynami
 ### 2. The Solution: Dual Coordinate Spaces
 POEM segregates the framework into two distinct coordinate systems:
 1. **Logical Coordinate Space (Go Orchestrator)**: The layout matrix, event boundaries, padding, rounding, and vector coordinates run strictly in a virtual **Logical Space** (e.g. standard 1024x768 units).
-2. **Physical Coordinate Space (Rust wgpu Sidecar)**: The GPU textures, render targets, Gaussian blur FBOs, and viewport swapchains run strictly in the device's **Physical Pixel Space** (e.g. 2048x1536 pixels on 200% scaling).
+2. **Physical Coordinate Space (Windows D3D11 Sidecar)**: Native presentation resources, render targets, and swapchains run in the device's **Physical Pixel Space** (e.g. 2048x1536 pixels on 200% scaling).
 
 ### 3. Dynamic Orthographic Projection Translation
 To bridge these coordinate spaces, the sidecar scales its render projection using the current physical size and DPI factor:
@@ -322,27 +334,25 @@ let top = 0.0;
 This maps logical layout coordinates into the sidecar's native render space while preserving correct physical sizing.
 
 ```
-       Go Orchestrator                     Rust wgpu Sidecar
+       Go Orchestrator                     Windows D3D11 Sidecar
 +----------------------------+      +------------------------------+
 | Logical Space (1024x768)   |      | Physical Pixel Space (4K)   |
 |                            |      |                              |
-| - Layout flex calculations |      | - wgpu texture Swapchain     |
-| - Mouse hit-test loops     |      | - FBO Gaussian frosted-glass |
+| - Layout flex calculations |      | - D3D11 swapchain            |
+| - Mouse hit-test loops     |      | - Native render targets      |
 | - Padding & SDF bounds     |      | - Scissor clipping rects     |
 +----------------------------+      +------------------------------+
               |                                     ^
-              | FlatBuffer Serialization            | Dynamic Scale
+              | POEM Protocol Frames                | Dynamic Scale
               v                                     | (scale_factor)
       [ DrawCommand(x,y) ] -------------------------+
 ```
 
-### 4. Physical Viewport Frosted-Glass Alignment
-Frosted-glassmorphic blur shaders sample the background texture using the viewport position `@builtin(position).xy`. Because `@builtin(position)` runs in **physical screen pixels**, the uniform `screen_size` passed to the GPU shader must match the **physical resolution**:
-```wgsl
-let screen_uv = in.clip_position.xy / globals.screen_size; // both are physical!
-let blurred = textureSample(blurred_bg, text_sampler, screen_uv).rgb;
-```
-Using the physical dimensions for `screen_size` aligns the Gaussian blur pass beautifully, preventing any visual stretching, offset shifts, or coordinate mismatch on scaled screens.
+### 4. Physical Presentation Alignment
+The Windows sidecar receives logical draw commands from Go and applies the
+current DPI scale when configuring projection, scissor, and presentation bounds.
+Using physical swapchain dimensions for native presentation prevents visual
+stretching, offset shifts, and coordinate mismatches on scaled displays.
 
 ### 5. Physical Scissor Clipping Boundaries
 Scissor tests (`set_scissor_rect`) operate on physical hardware-level boundaries. If Go requests clipping in a ScrollView at logical `x, y, w, h`, these coordinates are scaled up by `scale_factor` in the renderer before applying the GPU scissor:
@@ -354,4 +364,3 @@ To keep the Go orchestrator decoupled from scaling metrics:
 * **Cursor Movements**: Raw native cursor positions are divided by the active DPI scale before being sent back to Go for precise hit-testing.
 * **Scroll Deltas**: Pixel-based wheel scroll offsets from `MouseWheel` are divided by `scale_factor` to maintain uniform scrolling sensitivity across all screens.
 * **Window Resizes**: Physical window resizes are divided by the scale factor, keeping Go aware of the true logical grid bounds.
-

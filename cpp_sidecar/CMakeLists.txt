@@ -11,8 +11,9 @@ add_executable(poem_cpp_sidecar WIN32
   src/protocol.cpp
   src/audio.cpp
   src/renderer_d3d11.cpp
+  src/accessibility.cpp
 )
 
 target_include_directories(poem_cpp_sidecar PRIVATE src)
 target_compile_definitions(poem_cpp_sidecar PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(poem_cpp_sidecar PRIVATE d3d11 dxgi d3dcompiler winmm user32 gdi32 shcore shell32 ole32 uuid)
+target_link_libraries(poem_cpp_sidecar PRIVATE d3d11 dxgi d3dcompiler winmm user32 gdi32 shcore shell32 ole32 oleaut32 uuid imm32 uiautomationcore)

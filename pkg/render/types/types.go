@@ -5,6 +5,12 @@ import (
 	"image/color"
 	"math"
 	"time"
+
+	"go_native_gpu_gui/pkg/render/events"
+	"go_native_gpu_gui/pkg/render/platform"
+	"go_native_gpu_gui/pkg/render/semantics"
+	renderstate "go_native_gpu_gui/pkg/render/state"
+	"go_native_gpu_gui/pkg/render/theme"
 )
 
 // UIRenderer defines the structural contract both engines must fulfill
@@ -123,6 +129,21 @@ type ApplicationState struct {
 	// Dynamic font metrics detected at boot time
 	FontCharWidth    int // Full cell advance width in pixels
 	FontCharBearingX int // Left Side Bearing (LSB) in pixels
+
+	// POEM 2.0 platform-neutral presentation state.
+	ApplicationName       string
+	ThemeManager          *theme.Manager
+	Services              platform.Services
+	SemanticTree          semantics.Tree
+	SemanticsRevision     uint64
+	Locale                string
+	DPIScale              float32
+	TextScale             float32
+	ReducedMotion         bool
+	ShowDiagnostics       bool
+	LegacyComponentStyles bool
+	Overlays              *OverlayManager
+	TransientState        *renderstate.Store
 }
 
 func (s *ApplicationState) PlayHover() {
@@ -146,10 +167,38 @@ func (s *ApplicationState) PlaySuccess() {
 type HotkeyHandler func(state *ApplicationState)
 
 func (s *ApplicationState) RegisterHotkey(shortcut string, handler HotkeyHandler) {
+	_ = s.RegisterShortcut(shortcut, handler)
+}
+
+// RegisterShortcut stores a normalized, platform-neutral key chord. The
+// legacy RegisterHotkey entry point remains source-compatible and ignores an
+// invalid chord; new code can use this method to surface configuration errors.
+func (s *ApplicationState) RegisterShortcut(shortcut string, handler HotkeyHandler) error {
+	normalized, err := events.NormalizeShortcut(shortcut)
+	if err != nil {
+		return err
+	}
 	if s.Hotkeys == nil {
 		s.Hotkeys = make(map[string]HotkeyHandler)
 	}
-	s.Hotkeys[shortcut] = handler
+	s.Hotkeys[normalized] = handler
+	return nil
+}
+
+func (s *ApplicationState) DispatchShortcut(shortcut string) bool {
+	if s == nil || s.Hotkeys == nil {
+		return false
+	}
+	normalized, err := events.NormalizeShortcut(shortcut)
+	if err != nil {
+		return false
+	}
+	handler := s.Hotkeys[normalized]
+	if handler == nil {
+		return false
+	}
+	handler(s)
+	return true
 }
 
 const (
@@ -159,10 +208,21 @@ const (
 )
 
 func (s *ApplicationState) CycleFocus(reverse bool) {
+	s.DismissFocusLossOverlays()
 	var focusable []string
 	var focusableBounds = make(map[string]image.Rectangle)
 
-	if comps, ok := s.Pages[s.CurrentPage]; ok {
+	comps := s.Pages[s.CurrentPage]
+	if s.Overlays != nil {
+		entries := s.Overlays.Snapshot()
+		for index := len(entries) - 1; index >= 0; index-- {
+			if entries[index].Modal {
+				comps = []Component{entries[index].Component}
+				break
+			}
+		}
+	}
+	if len(comps) > 0 {
 		for _, c := range comps {
 			c.Walk(func(comp Component) {
 				if comp.Focusable() {
@@ -201,7 +261,7 @@ func (s *ApplicationState) CycleFocus(reverse bool) {
 	s.FocusedID = focusable[idx]
 
 	// Automatically scroll the focused component into view if it is inside a ScrollContainer
-	if comps, ok := s.Pages[s.CurrentPage]; ok {
+	if len(comps) > 0 {
 		for _, c := range comps {
 			c.Walk(func(comp Component) {
 				if sc, ok := comp.(ScrollContainer); ok {
@@ -225,6 +285,11 @@ func (s *ApplicationState) NavigateTo(pageID string) {
 
 func (s *ApplicationState) UpdateAnimations(dt float32) {
 	if s.IsTransitioning {
+		if s.RenderContext().ReducedMotion {
+			s.TransitionProgress = 1
+			s.IsTransitioning = false
+			return
+		}
 		s.TransitionProgress += dt * 2.5 // Speed of transition
 		if s.TransitionProgress >= 1.0 {
 			s.TransitionProgress = 1.0
@@ -249,13 +314,16 @@ func RenderPipeline(p Painter, s *ApplicationState) {
 
 	w, h := s.GetWindowSize()
 
-	// 0. CUSTOM BACKGROUND OVERRIDE
+	// 0. THEMED BACKGROUND / CUSTOM OVERRIDE
 	if s.BGColor != nil {
 		p.FillRect(image.Rect(0, 0, w, h), *s.BGColor)
+	} else {
+		activeTheme, _ := s.CurrentTheme()
+		p.FillRect(image.Rect(0, 0, w, h), activeTheme.Colors.Background)
 	}
 
 	// 1. BACKGROUND PARTICLES
-	if s.Particles != nil && s.ParticlesEnabled {
+	if s.Particles != nil && s.ParticlesEnabled && !s.RenderContext().ReducedMotion {
 		s.Particles.Draw(p, s)
 	}
 	p.Flush()
@@ -271,6 +339,22 @@ func RenderPipeline(p Painter, s *ApplicationState) {
 		for i := len(page) - 1; i >= 0; i-- {
 			if id := page[i].HitTest(mousePoint); id != "" {
 				s.HoveredID = id
+				break
+			}
+		}
+	}
+	if s.Overlays != nil {
+		for _, overlay := range s.Overlays.Snapshot() {
+			overlay.Component.SetBounds(overlay.Component.Bounds())
+		}
+		entries := s.Overlays.Snapshot()
+		for index := len(entries) - 1; index >= 0; index-- {
+			if id := entries[index].Component.HitTest(mousePoint); id != "" {
+				s.HoveredID = id
+				break
+			}
+			if entries[index].Modal {
+				s.HoveredID = entries[index].ID
 				break
 			}
 		}
@@ -311,14 +395,24 @@ func RenderPipeline(p Painter, s *ApplicationState) {
 
 	// 4. OVERLAYS (Independent of scroll/transition)
 	p.SetOffset(0, 0)
+	if s.Overlays != nil {
+		for _, overlay := range s.Overlays.Snapshot() {
+			overlay.Component.Draw(p, s)
+		}
+		p.Flush()
+	}
 
-	// Global System Status (Bottom Right)
+	if !s.ShowDiagnostics {
+		return
+	}
+
+	// Optional framework diagnostics (Bottom Right)
 	statusCol := color.RGBA{0, 255, 150, 180}
 	elapsed := time.Since(s.StartTime).Seconds()
 	pulse := uint8(150 + math.Sin(elapsed*5)*100)
 	statusCol.A = pulse
 
-	statusText := "SYSTEM OPERATIONAL // ENCRYPTED"
+	statusText := "POEM renderer active"
 	charWidth := s.FontCharWidth
 	if charWidth <= 0 {
 		charWidth = 8
@@ -353,6 +447,25 @@ type Component interface {
 	OnMouseMove(pt image.Point, state *ApplicationState) bool
 	Focusable() bool
 	Walk(fn func(Component))
+}
+
+// MnemonicComponent is activated by a platform-neutral Alt+key chord.
+type MnemonicComponent interface {
+	MnemonicKey() rune
+	ActivateMnemonic(state *ApplicationState) bool
+}
+
+// ChildComponent exposes direct render-tree children without requiring
+// consumers to know concrete container types. It powers automation,
+// inspection, semantics adapters, and future backend traversal.
+type ChildComponent interface {
+	ChildComponents() []Component
+}
+
+type TextCompositionComponent interface {
+	StartComposition(state *ApplicationState) bool
+	UpdateComposition(text string, state *ApplicationState) bool
+	EndComposition(committedText string, state *ApplicationState) bool
 }
 
 // MeasureResult describes a component's preferred and minimum size without

@@ -16,6 +16,7 @@ class RendererD3D11 {
   public:
     RendererD3D11() = default;
     bool Initialize(HWND hwnd, int width, int height, const protocol::InitEngine& init);
+    bool UpdateFontAtlas(const protocol::InitEngine& init);
     void Resize(int width, int height);
     void Render(const protocol::RenderFrame& frame);
     bool CaptureBackbufferRGBA(std::vector<std::uint8_t>& rgba, int& width, int& height);

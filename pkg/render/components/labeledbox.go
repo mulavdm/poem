@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 
+	"go_native_gpu_gui/pkg/render/semantics"
 	"go_native_gpu_gui/pkg/render/types"
 )
 
@@ -78,7 +79,7 @@ func (l *LabeledBox) SetBounds(r image.Rectangle) {
 func (l *LabeledBox) Draw(p types.Painter, state *types.ApplicationState) {
 	col := l.TitleColor
 	if col.A == 0 {
-		col = color.RGBA{215, 230, 223, 255}
+		col = activeTheme(state).Colors.TextMuted
 	}
 	lineH := l.LineHeight
 	if lineH <= 0 {
@@ -144,4 +145,34 @@ func (l *LabeledBox) Walk(fn func(types.Component)) {
 	if l.Child != nil {
 		l.Child.Walk(fn)
 	}
+}
+
+func (l *LabeledBox) ChildComponents() []types.Component {
+	if l.Child == nil {
+		return nil
+	}
+	return []types.Component{l.Child}
+}
+
+// Semantics exposes the visible title as a real semantic label. The child is
+// appended by the tree builder and related to this label by
+// TransformSemanticChild.
+func (l *LabeledBox) Semantics(*types.ApplicationState) semantics.Node {
+	labelBounds := image.Rect(l.Rect.Min.X, l.Rect.Min.Y, l.Rect.Max.X, l.Rect.Min.Y+maxInt(l.LineHeight, 20))
+	return semantics.Node{ID: l.CompID, Role: semantics.RoleGroup, Name: l.Title, Bounds: l.Rect, Children: []semantics.Node{{
+		ID: l.CompID + "/label", Role: semantics.RoleText, Name: l.Title, Value: l.Title, Bounds: labelBounds,
+	}}}
+}
+
+func (l *LabeledBox) TransformSemanticChild(node *semantics.Node, _ *types.ApplicationState) {
+	if node == nil {
+		return
+	}
+	labelID := l.CompID + "/label"
+	for _, id := range node.Relations.LabeledBy {
+		if id == labelID {
+			return
+		}
+	}
+	node.Relations.LabeledBy = append(node.Relations.LabeledBy, labelID)
 }

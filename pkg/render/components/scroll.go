@@ -1,10 +1,12 @@
 package components
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math"
 
+	"go_native_gpu_gui/pkg/render/semantics"
 	"go_native_gpu_gui/pkg/render/types"
 )
 
@@ -18,11 +20,16 @@ type ScrollView struct {
 	CurrentScrollY int // Smoothly animated/interpolated scroll offset
 	ContentH       int
 	ScrollbarW     int
+	UseTheme       bool
 
 	// Drag state
 	dragging     bool
 	dragStartY   int
 	scrollStartY int
+}
+
+func NewScrollView(id string, children ...types.Component) *ScrollView {
+	return &ScrollView{CompID: id, Children: children, UseTheme: true}
 }
 
 func (s *ScrollView) ID() string              { return s.CompID }
@@ -65,7 +72,7 @@ func (s *ScrollView) Measure(avail image.Point, state *types.ApplicationState) t
 func (s *ScrollView) SetBounds(r image.Rectangle) {
 	s.Rect = r
 	if s.ScrollbarW <= 0 {
-		s.ScrollbarW = 12
+		s.ScrollbarW = activeTheme(nil).Controls.Scrollbar
 	}
 
 	if len(s.Children) > 0 {
@@ -197,7 +204,12 @@ func (s *ScrollView) Draw(p types.Painter, state *types.ApplicationState) {
 	}
 
 	// Draw viewport backdrop
-	p.FillRect(s.Rect, color.RGBA{15, 17, 26, 255})
+	current := activeTheme(state)
+	backdrop := color.RGBA{15, 17, 26, 255}
+	if themed(s.UseTheme, state) {
+		backdrop = current.Colors.SurfaceSunken
+	}
+	p.FillRect(s.Rect, backdrop)
 
 	if len(s.Children) == 0 {
 		return
@@ -225,21 +237,32 @@ func (s *ScrollView) Draw(p types.Painter, state *types.ApplicationState) {
 			s.Rect.Max.X,
 			s.Rect.Max.Y,
 		)
-		p.FillRect(trackRect, color.RGBA{255, 255, 255, 10})
+		trackColor := color.RGBA{255, 255, 255, 10}
+		if themed(s.UseTheme, state) {
+			trackColor = current.Colors.ScrollbarTrack
+		}
+		p.FillRect(trackRect, trackColor)
 
 		// Draw Scrollbar Thumb using animated scrollbar bounds
 		thumb := s.scrollbarThumbRect()
 		thumbColor := color.RGBA{255, 255, 255, 80}
+		if themed(s.UseTheme, state) {
+			thumbColor = current.Colors.ScrollbarThumb
+		}
 
 		// If hovering or dragging, glow neon green!
 		mPt := image.Point{state.MouseX, state.MouseY}
 		isHovered := mPt.In(thumb) || s.dragging
 		if isHovered {
-			thumbColor = color.RGBA{0, 255, 150, 150}
+			if themed(s.UseTheme, state) {
+				thumbColor = current.Colors.ScrollbarActive
+			} else {
+				thumbColor = color.RGBA{0, 255, 150, 150}
+			}
 			state.CursorID = state.HandCursor
 		}
 
-		p.DrawRoundedRect(thumb, 4, thumbColor)
+		p.DrawRoundedRect(thumb, roundedRadius(thumb, current.Radii.Pill), thumbColor)
 	}
 }
 
@@ -420,6 +443,87 @@ func (s *ScrollView) Walk(fn func(types.Component)) {
 	fn(s)
 	for _, child := range s.Children {
 		child.Walk(fn)
+	}
+}
+
+func (s *ScrollView) ChildComponents() []types.Component { return s.Children }
+
+func (s *ScrollView) Semantics(*types.ApplicationState) semantics.Node {
+	maxScroll := s.ContentH - s.Rect.Dy()
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scrollable := maxScroll > 0
+	percent := -1.0
+	viewSize := 100.0
+	if scrollable {
+		percent = float64(s.ScrollY) * 100 / float64(maxScroll)
+		viewSize = float64(s.Rect.Dy()) * 100 / float64(s.ContentH)
+	}
+	actions := []semantics.Action(nil)
+	if scrollable {
+		actions = []semantics.Action{semantics.ActionSetScroll}
+	}
+	return semantics.Node{ID: s.CompID, Role: semantics.RoleGroup, Name: "Scrollable content", Bounds: s.Rect, Actions: actions,
+		Scroll: &semantics.ScrollValue{VerticallyScrollable: scrollable, HorizontalPercent: -1, VerticalPercent: percent, HorizontalViewSize: 100, VerticalViewSize: viewSize}}
+}
+
+func (s *ScrollView) PerformSemanticAction(targetID string, action semantics.Action, value string, state *types.ApplicationState) bool {
+	if targetID != s.CompID || action != semantics.ActionSetScroll {
+		return false
+	}
+	var horizontal, vertical float64
+	if _, err := fmt.Sscanf(value, "%f:%f", &horizontal, &vertical); err != nil {
+		return false
+	}
+	maxScroll := s.ContentH - s.Rect.Dy()
+	if maxScroll <= 0 || vertical < 0 {
+		return false
+	}
+	if vertical > 100 {
+		vertical = 100
+	}
+	s.ScrollY = int(math.Round(vertical * float64(maxScroll) / 100))
+	s.CurrentScrollY = s.ScrollY
+	if state != nil {
+		if state.ScrollPositions == nil {
+			state.ScrollPositions = make(map[string]int)
+		}
+		state.ScrollPositions[s.CompID] = s.ScrollY
+		if state.ScrollCurrent == nil {
+			state.ScrollCurrent = make(map[string]float64)
+		}
+		state.ScrollCurrent[s.CompID] = float64(s.ScrollY)
+	}
+	return true
+}
+
+func (s *ScrollView) TransformSemanticChild(node *semantics.Node, state *types.ApplicationState) {
+	offset := s.CurrentScrollY
+	if state != nil && state.ScrollCurrent != nil {
+		if current, ok := state.ScrollCurrent[s.CompID]; ok {
+			offset = int(math.Round(current))
+		}
+	}
+	transformSemanticViewportNode(node, image.Pt(0, -offset), s.Rect, false)
+}
+
+func transformSemanticViewportNode(node *semantics.Node, offset image.Point, viewport image.Rectangle, parentOffscreen bool) {
+	if node == nil {
+		return
+	}
+	if !node.Bounds.Empty() {
+		node.Bounds = node.Bounds.Add(offset)
+		visible := node.Bounds.Intersect(viewport)
+		node.State.Offscreen = node.State.Offscreen || parentOffscreen || visible.Empty()
+		if !visible.Empty() {
+			node.Bounds = visible
+		}
+	} else if parentOffscreen {
+		node.State.Offscreen = true
+	}
+	for index := range node.Children {
+		transformSemanticViewportNode(&node.Children[index], offset, viewport, node.State.Offscreen)
 	}
 }
 

@@ -1,6 +1,18 @@
 # POEM UI Development Guide (Quickstart)
 
-Welcome to the **P.O.E.M. Operational Engine Matrix (POEM)** UI framework! This guide will walk you through the declarative UI architecture, component catalog, layout system, reactive state loops, and shared automation hooks so you can start building premium, high-performance, glassmorphic interfaces.
+## POEM 2.0 authoring path
+
+New UI should use the typed constructors and semantic theme variants documented
+in [the POEM 2.0 foundation guide](docs/POEM_2_FOUNDATION.md). Legacy raw-color
+struct literals still compile during the staged downstream migration, but are no
+longer the preferred authoring model.
+
+When application-owned state changes from a goroutine after IO, model work, or a
+service callback, call `render.RequestRepaint()` after publishing the new state.
+This marks the current frame dirty without enabling continuous animation and
+without coupling the application to the Windows backend.
+
+Welcome to the **P.O.E.M. Operational Engine Matrix (POEM)** UI framework! This guide walks through the declarative UI architecture, component catalog, layout system, reactive state loops, and shared automation hooks used to build professional native desktop interfaces. Decorative glass, glow, particles, and sound are opt-in product effects rather than the default authoring model for ordinary controls.
 
 ## Automation Quickstart
 
@@ -113,47 +125,33 @@ The lifecycle works as follows:
 
 All elements are exposed directly under the `render` package namespace.
 
-### A. Static & Glassmorphic Panels
-Panels form the background containers and cards of your application.
+### A. Theme-native panels
+Panels form the background containers and cards of your application. New code
+should start with `render.NewPanel`; it uses the active theme's semantic surface
+tokens and remains platform-neutral.
 
 ```go
-// 1. Solid Panel
-&render.Panel{
-    CompID:   "solid_card",
-    Rect:     image.Rect(100, 100, 300, 400),
-    BGColor:  color.RGBA{20, 25, 40, 255},
-    Rounding: 12, // Curvature radius
-}
-
-// 2. Glassmorphic Translucent Panel
-&render.GlassPanel{
-    Panel: render.Panel{
-        CompID:   "glass_card",
-        Rect:     image.Rect(320, 100, 520, 400),
-        BGColor:  color.RGBA{30, 35, 55, 255},
-        Rounding: 15,
-    },
-    Opacity: 160, // 0 (invisible) to 255 (opaque)
-}
+card := render.NewPanel("settings_card")
+card.Rect = image.Rect(100, 100, 460, 340)
+card.Raised = true
 ```
+
+`GlassPanel` remains available for deliberate product effects, but ordinary app
+chrome should use themed panels instead of glass by default.
 
 ### B. Typography & Dynamic Labels
 Labels display text. Dynamic labels automatically query `ApplicationState` to update their strings in real-time.
 
 ```go
-// 1. Static Label
-&render.Label{
-    CompID: "static_header",
-    Pos:    image.Point{120, 140}, // Top-Left position
-    Text:   "DASHBOARD",
-    Color:  color.RGBA{255, 255, 255, 255},
-}
+heading := render.NewLabel("static_header", "Dashboard")
+heading.Pos = image.Point{120, 140}
+heading.Typography = render.TypographyHeading
 
 // 2. Dynamic Label (Updates text on every paint frame)
-&render.DynamicLabel{
+fps := &render.DynamicLabel{
     CompID: "telemetry_fps",
     Pos:    image.Point{120, 180},
-    Color:  color.RGBA{0, 255, 150, 255},
+    Role:   render.TextMuted,
     GetText: func(state *render.ApplicationState) string {
         return fmt.Sprintf("FPS: %.1f // Latency: %.2fms", state.CurrentFPS, float64(state.FrameTime.Microseconds())/1000.0)
     },
@@ -164,58 +162,43 @@ Labels display text. Dynamic labels automatically query `ApplicationState` to up
 Buttons capture click actions via a callback hook.
 
 ```go
-&render.Button{
-    CompID:     "btn_reboot",
-    Rect:       image.Rect(120, 220, 380, 270),
-    Label:      "REBOOT CORE",
-    BaseColor:  color.RGBA{180, 60, 60, 255},
-    HoverColor: color.RGBA{220, 80, 80, 255}, // Auto-applied on mouseover
-    Rounding:   8,
-    OnClick: func(state *render.ApplicationState) {
+button := render.NewButton("btn_reboot", "Reboot Core", func(state *render.ApplicationState) {
         state.ClickCount++
         state.StatusText = "Engine reboot initiated!"
-    },
-}
+})
+button.Rect = image.Rect(120, 220, 380, 270)
+button.Variant = render.VariantDestructive
 ```
 
 ### D. Real-Time Range Sliders
 Sliders are perfect for adjustments (volume, frequency, thresholds). Dragging the slider automatically updates its percentage.
 
 ```go
-&render.Slider{
-    CompID:     "volume_slider",
-    Rect:       image.Rect(120, 300, 380, 325),
-    Min:        0,
-    Max:        100,
-    Value:      state.Volume, // Binds current state
-    TrackColor: color.RGBA{10, 10, 20, 255},
-    ThumbColor: color.RGBA{0, 150, 255, 255},
-}
+slider := render.NewSlider("volume_slider", 0, 100, state.Volume, func(value float32, state *render.ApplicationState) {
+    state.Volume = value
+})
+slider.Rect = image.Rect(120, 300, 380, 325)
 ```
 
 ### E. User Text Inputs
 Fully functional text-input controls capturing focused keyboard strokes.
 
 ```go
-&render.TextInput{
-    CompID:      "input_node_name",
-    Rect:        image.Rect(120, 350, 380, 380),
-    Placeholder: "Enter node identity...",
-    BGColor:     color.RGBA{10, 10, 20, 255},
-    TextColor:   color.RGBA{255, 255, 255, 255},
-    Rounding:    5,
-}
+input := render.NewTextInput("input_node_name", "Enter node identity...")
+input.Rect = image.Rect(120, 350, 380, 386)
 ```
 
 ### F. Real-Time Telemetry Line Charts
-A high-fidelity vector component that plots historical numerical datasets in real-time. Features automated per-pixel **Cosine Interpolation** spline-smoothing and a **3-layer translucent glowing background area fill**.
+A vector component that plots historical numerical datasets in real time. Charts
+are content visualizations, so product-specific colors are acceptable when they
+communicate data meaning. Avoid neon or glow as the default app chrome.
 
 ```go
 &render.LineChart{
     CompID:    "mem_heap_chart",
     Rect:      image.Rect(120, 400, 700, 650),
-    BGColor:   color.RGBA{10, 10, 20, 255},
-    LineColor: color.RGBA{0, 255, 150, 255}, // Neon green glow
+    BGColor:   color.RGBA{21, 24, 29, 255},
+    LineColor: color.RGBA{91, 141, 239, 255},
     Data:      state.HeapHistory,             // Slice of float32 telemetry
     Title:     "REALTIME HEAP MONITOR (MB)",
     Rounding:  10,
@@ -258,7 +241,6 @@ package main
 import (
 	"fmt"
 	"image"
-	"image/color"
 
 	"go_native_gpu_gui/pkg/render"
 )
@@ -279,41 +261,42 @@ func BuildAllPages(state *render.ApplicationState) {
 		state.Pages = make(map[string][]render.Component)
 	}
 
+	bg := render.NewPanel("main_bg")
+	bg.Rect = image.Rect(0, 0, render.Width, render.Height)
+
+	card := render.NewPanel("telemetry_panel")
+	card.Rect = image.Rect(150, 100, 650, 500)
+	card.Raised = true
+
+	header := render.NewLabel("head_lbl", "Operational Control")
+	header.Pos = image.Point{180, 140}
+	header.Typography = render.TypographyTitle
+
+	action := render.NewButton("action_btn", "Trigger Interaction", func(s *render.ApplicationState) {
+		s.ClickCount++
+		s.StatusText = "Action trigger successfully clicked!"
+	})
+	action.Rect = image.Rect(180, 280, 620, 324)
+	action.Variant = render.VariantPrimary
+
+	slider := render.NewSlider("parameter_slider", 0, 100, state.Volume, func(value float32, s *render.ApplicationState) {
+		s.Volume = value
+	})
+	slider.Rect = image.Rect(180, 360, 620, 386)
+
 	// Define our dashboard page components
 	state.Pages[render.PageDashboard] = []render.Component{
-		// Backdrop card
-		&render.Panel{
-			CompID:   "main_bg",
-			Rect:     image.Rect(0, 0, render.Width, render.Height),
-			BGColor:  color.RGBA{10, 10, 15, 255},
-		},
-
-		// Centered Glass Telemetry Panel
-		&render.GlassPanel{
-			Panel: render.Panel{
-				CompID:   "telemetry_panel",
-				Rect:     image.Rect(150, 100, 650, 500),
-				BGColor:  color.RGBA{30, 35, 55, 255},
-				Rounding: 15,
-			},
-			Opacity: 170,
-		},
-
-		// Header Label
-		&render.Label{
-			CompID: "head_lbl",
-			Pos:    image.Point{180, 140},
-			Text:   "REALTIME OPERATIONAL CONTROL",
-			Color:  color.RGBA{255, 255, 255, 255},
-		},
+		bg,
+		card,
+		header,
 
 		// Reactive Counter Telemetry
 		&render.DynamicLabel{
 			CompID: "interactions_telemetry",
 			Pos:    image.Point{180, 190},
-			Color:  color.RGBA{0, 255, 150, 255},
+			Role:   render.TextMuted,
 			GetText: func(s *render.ApplicationState) string {
-				return fmt.Sprintf("> Interactions Logged: %d clicks", s.ClickCount)
+				return fmt.Sprintf("Interactions logged: %d clicks", s.ClickCount)
 			},
 		},
 
@@ -321,44 +304,22 @@ func BuildAllPages(state *render.ApplicationState) {
 		&render.DynamicLabel{
 			CompID: "slider_telemetry",
 			Pos:    image.Point{180, 230},
-			Color:  color.RGBA{0, 150, 255, 255},
+			Role:   render.TextAccent,
 			GetText: func(s *render.ApplicationState) string {
-				return fmt.Sprintf("> System Parameter Output: %.1f%%", s.Volume)
+				return fmt.Sprintf("System parameter output: %.1f%%", s.Volume)
 			},
 		},
 
-		// A clickable trigger
-		&render.Button{
-			CompID:     "action_btn",
-			Rect:       image.Rect(180, 280, 620, 330),
-			Label:      "TRIGGER INTERACTION",
-			BaseColor:  color.RGBA{60, 80, 120, 255},
-			HoverColor: color.RGBA{80, 110, 180, 255},
-			Rounding:   8,
-			OnClick: func(s *render.ApplicationState) {
-				s.ClickCount++
-				s.StatusText = "Action trigger successfully clicked!"
-			},
-		},
-
-		// Master Slider
-		&render.Slider{
-			CompID:     "parameter_slider",
-			Rect:       image.Rect(180, 360, 620, 385),
-			Min:        0,
-			Max:        100,
-			Value:      state.Volume,
-			TrackColor: color.RGBA{15, 20, 30, 255},
-			ThumbColor: color.RGBA{0, 150, 255, 255},
-		},
+		action,
+		slider,
 
 		// Status Footer
 		&render.DynamicLabel{
 			CompID: "footer_lbl",
 			Pos:    image.Point{180, 440},
-			Color:  color.RGBA{150, 160, 180, 255},
+			Role:   render.TextMuted,
 			GetText: func(s *render.ApplicationState) string {
-				return fmt.Sprintf("TELEMETRY: %s", s.StatusText)
+				return fmt.Sprintf("Status: %s", s.StatusText)
 			},
 		},
 	}
@@ -454,13 +415,24 @@ POEM **completely abstracts this coordinate translation**! The `ScrollView` recu
 
 ## ⌨️ 7. Keyboard Focus & Hotkeys
 
-POEM features a fully integrated keyboard focus and accessibility engine, offering sequential focus cycling, high-contrast neon glowing outlines, automatic scroll centering, and customizable global hotkey listeners.
+POEM provides keyboard focus and platform-neutral accessibility semantics with sequential focus cycling, theme-defined focus indicators, automatic scroll centering, and customizable global hotkey listeners. On Windows, the native sidecar exposes the semantic tree through UI Automation.
 
-### A. Focus Cycling and Glowing Outline Rings
+Visible form labels should use `LabeledBox`; it emits a semantic text label and
+connects the child through the portable `LabeledBy` relationship. Custom semantic
+components can populate `semantics.Relationships` (`LabeledBy`, `DescribedBy`,
+`Controls`, and `FlowsTo`). Standard buttons expose the same optional value as
+`Button.Relations`. POEM validates every relationship target before publication.
+
+For content-owned colors, keep the application theme active and set a narrow
+`Panel.Style` override. This is appropriate for a book cover or generated color
+swatch; ordinary surfaces and controls should continue to use theme tokens and
+semantic variants.
+
+### A. Focus Cycling and Focus Rings
 Interactive widgets (`Button`, `TextInput`, `Slider`) return `Focusable() bool { return true }`.
 - **Focus Navigation**: Tapping `Tab` or `Shift+Tab` cycles keyboard focus sequentially across focusable elements on the active page.
-- **Neon Outline Styling**: The focused component automatically draws a high-contrast glowing neon focus ring (`color.RGBA{0, 150, 255, 200}` with 2px offset) to guide the keyboard navigator.
-- **Escape Clearing**: Tapping `Esc` clears active focus at any time.
+- **Theme-defined focus styling**: Focused components use the active theme's accessible focus-ring token. Product-specific glow remains an optional application effect rather than a core-control requirement.
+- **Escape behavior**: Tapping `Esc` dismisses the top eligible overlay and restores its launcher; with no overlay open it clears active focus.
 
 ### B. Polymorphic Autoscrolling Centering
 When focus cycles to off-screen elements inside a scrolling container, the `ScrollView` automatically glides to center the focused element into view. The parent container handles this polymorphically using the type-agnostic `ScrollContainer` interface:
@@ -475,6 +447,16 @@ type ScrollContainer interface {
 Focused components handle key triggers natively:
 - **Buttons**: Pressing `Enter` on a focused button executes its `OnClick` action instantly.
 - **Sliders**: Pressing the `Left Arrow` or `Right Arrow` keys increments or decrements the slider value by exactly 5% steps.
+- **Tab lists**: Arrow keys wrap across enabled tabs; `Home` and `End` select the first and last enabled tab. The strip occupies one sequential tab stop.
+- **Menus**: Opening a focused menu moves keyboard focus to its first enabled item. Arrows wrap, `Home`/`End` jump, character keys search by prefix, and dismissal restores the launcher’s focus.
+- **Selects**: Options use the overlay layer. Closed arrows/typeahead change the controlled value; while expanded, arrows, `Home`, `End`, and typeahead move the active option, `Enter`/`Space` commit, and `Escape` cancels.
+- **Date pickers**: Arrow keys move by day or week, `Home`/`End` move to week boundaries, `Page Up`/`Page Down` change month, and range limits are enforced before `Enter`/`Space` commits.
+- **Accordions**: Up/Down wrap across enabled headers, `Home`/`End` jump to enabled boundaries, and `Enter`/`Space` toggles only the active disclosure.
+- **Trees**: Up/Down and `Home`/`End` move the active selection, character keys search visible labels, and Left/Right navigate the preserved parent/child hierarchy.
+- **Pagination**: Left/Right advance the retained active page and `Home`/`End` jump to the first/last page without requiring uncontrolled application state.
+- **Anchored overlays**: Tabbing or clicking elsewhere dismisses menus, select lists, autocomplete suggestions, and calendars before advancing focus. Owner clicks still toggle correctly, nested popup ancestors remain open, and non-interactive toasts remain visible.
+- **Dialogs**: Modal dialogs trap sequential focus, restore their launcher when closed, wrap message text with active-theme typography, and size actions from their labels.
+- **Data tables**: `Up`, `Down`, `Home`, `End`, `Page Up`, and `Page Down` move the active row and its controlled selection; `Enter` and `Space` activate it. Navigation scrolls the row fully into view.
 - **Text Inputs**: Pressing `Enter` inside a text field fires the optional `OnSubmit` callback:
   ```go
   &render.TextInput{
@@ -487,17 +469,31 @@ Focused components handle key triggers natively:
   }
   ```
 
-### D. Global Shortcuts Registration (Ctrl+S)
-You can declare custom keyboard listeners on the `ApplicationState` that run asynchronously whenever modifier shortcuts are triggered:
+### D. Global shortcuts and mnemonics
+
+Register normalized portable chords with `RegisterShortcut`. Supported modifiers
+are Control, Alt, Shift, and Meta; keys include letters, digits, navigation keys,
+Delete, and F1-F24. Invalid or ambiguous chords return an error.
+
 ```go
 func BuildAllPages(state *render.ApplicationState) {
-    // Register global hotkey
-    state.RegisterHotkey("Ctrl+S", func(s *render.ApplicationState) {
+    if err := state.RegisterShortcut("Ctrl+Shift+S", func(s *render.ApplicationState) {
         s.StatusText = "Configuration Saved Successfully!"
-    })
+    }); err != nil {
+        panic(err)
+    }
 }
 ```
-Whenever the user hits `Ctrl+S`, the registered handler fires, updates state, and repaints the screen immediately!
+
+`RegisterHotkey` remains as a source-compatible wrapper. Buttons may also set an
+explicit `Mnemonic` rune. POEM routes `Alt+<key>` within the active modal/page,
+focuses and invokes the enabled button, and publishes its chord through the
+portable semantic `AccessKey` field and Windows UIA `AccessKey` property.
+
+Sliders created with `NewSlider(..., onChange)` are controlled: update the
+application value in `onChange` and pass it back on the next build. POEM retains
+only the interaction state; it does not overwrite that value from the legacy
+slider map.
 
 ---
 

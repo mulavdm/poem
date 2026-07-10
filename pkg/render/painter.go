@@ -8,22 +8,25 @@ import (
 )
 
 type ProtocolPainter struct {
-	commands  []DrawCmdData
-	offsetX   float32
-	offsetY   float32
-	glow      float32
-	glass     bool
-	shadowOx  float32
-	shadowOy  float32
-	shadowBl  float32
-	clipX     int
-	clipY     int
-	clipW     int
-	clipH     int
+	commands         []DrawCmdData
+	offsetX          float32
+	offsetY          float32
+	glow             float32
+	glass            bool
+	shadowOx         float32
+	shadowOy         float32
+	shadowBl         float32
+	clipX            int
+	clipY            int
+	clipW            int
+	clipH            int
 	clipEn           bool
 	clipStack        []image.Rectangle
 	clipEnabledStack []bool
+	observeText      func(string)
 }
+
+func (f *ProtocolPainter) SetTextObserver(observer func(string)) { f.observeText = observer }
 
 type DrawCmdData struct {
 	Type   protocol.DrawCommandType
@@ -175,6 +178,16 @@ func (f *ProtocolPainter) DrawBillboard3D(viewportRect image.Rectangle, worldX, 
 }
 
 func (f *ProtocolPainter) DrawText(text string, x, y int, col color.RGBA) {
+	f.DrawStyledText(text, x, y, col, 1)
+}
+
+func (f *ProtocolPainter) DrawStyledText(text string, x, y int, col color.RGBA, scale float32) {
+	if scale <= 0 {
+		scale = 1
+	}
+	if f.observeText != nil {
+		f.observeText(text)
+	}
 	f.commands = append(f.commands, DrawCmdData{
 		Type: protocol.DrawCommandTypeDrawText,
 		X1:   x,
@@ -184,6 +197,7 @@ func (f *ProtocolPainter) DrawText(text string, x, y int, col color.RGBA) {
 		B:    col.B,
 		A:    col.A,
 		Text: text,
+		Val1: scale,
 	})
 }
 

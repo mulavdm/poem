@@ -22,6 +22,50 @@ struct ConstantBuffer {
     float pad[2];
 };
 
+std::vector<std::uint32_t> DecodeUtf8(const std::string& text) {
+    std::vector<std::uint32_t> codepoints;
+    codepoints.reserve(text.size());
+    for (std::size_t index = 0; index < text.size();) {
+        const auto first = static_cast<std::uint8_t>(text[index]);
+        std::uint32_t codepoint = 0;
+        std::size_t length = 0;
+        std::uint32_t minimum = 0;
+        if (first < 0x80) {
+            codepoint = first;
+            length = 1;
+        } else if ((first & 0xE0) == 0xC0) {
+            codepoint = first & 0x1F;
+            length = 2;
+            minimum = 0x80;
+        } else if ((first & 0xF0) == 0xE0) {
+            codepoint = first & 0x0F;
+            length = 3;
+            minimum = 0x800;
+        } else if ((first & 0xF8) == 0xF0) {
+            codepoint = first & 0x07;
+            length = 4;
+            minimum = 0x10000;
+        }
+        bool valid = length != 0 && index + length <= text.size();
+        for (std::size_t offset = 1; valid && offset < length; ++offset) {
+            const auto next = static_cast<std::uint8_t>(text[index + offset]);
+            if ((next & 0xC0) != 0x80) {
+                valid = false;
+                break;
+            }
+            codepoint = (codepoint << 6) | (next & 0x3F);
+        }
+        if (!valid || codepoint < minimum || codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+            codepoints.push_back(0xFFFD);
+            ++index;
+            continue;
+        }
+        codepoints.push_back(codepoint);
+        index += length;
+    }
+    return codepoints;
+}
+
 constexpr const char* kVertexShader = R"(
 cbuffer Globals : register(b0) {
     float screenWidth;
@@ -452,8 +496,15 @@ bool RendererD3D11::Initialize(HWND hwnd, int width, int height, const protocol:
     mapCells_.fill(1);
     if (!CreateDeviceAndSwapchain(hwnd, width, height)) return false;
     if (!CreateShaders()) return false;
-    if (!CreateAtlas(init)) return false;
+    if (!UpdateFontAtlas(init)) return false;
     if (!CreateMapBuffer()) return false;
+    return true;
+}
+
+bool RendererD3D11::UpdateFontAtlas(const protocol::InitEngine& init) {
+    if (init.atlasWidth <= 0 || init.atlasHeight <= 0 || init.atlasPixels.empty()) return false;
+    if (!CreateAtlas(init)) return false;
+    glyphs_.clear();
     for (const auto& ch : init.chars) {
         glyphs_[static_cast<std::uint32_t>(ch.r)] = GlyphInfo{ch.u1, ch.v1, ch.u2, ch.v2, ch.width, ch.height, ch.advance};
     }
@@ -965,17 +1016,21 @@ void RendererD3D11::BuildGeometry(const protocol::RenderFrame& frame, std::vecto
         case protocol::DrawCommandType::DrawText: {
             float penX = x1;
             const float baselineY = y1;
-            for (unsigned char ch : cmd.text) {
-                auto it = glyphs_.find(ch);
+            const float textScale = cmd.val1 > 0.0f ? cmd.val1 : 1.0f;
+            for (const auto codepoint : DecodeUtf8(cmd.text)) {
+                auto it = glyphs_.find(codepoint);
                 if (it == glyphs_.end()) {
-                    penX += 8.0f;
-                    continue;
+                    it = glyphs_.find(static_cast<std::uint32_t>('?'));
+                    if (it == glyphs_.end()) {
+                        penX += 8.0f * scaleX * textScale;
+                        continue;
+                    }
                 }
                 const auto& glyph = it->second;
                 const float gx1 = penX;
-                const float glyphWidth = glyph.width * scaleX;
-                const float glyphHeight = glyph.height * scaleY;
-                const float glyphAdvance = glyph.advance * scaleX;
+                const float glyphWidth = glyph.width * scaleX * textScale;
+                const float glyphHeight = glyph.height * scaleY * textScale;
+                const float glyphAdvance = glyph.advance * scaleX * textScale;
                 const float gy1 = baselineY - glyphHeight * 0.78f;
                 const float gx2 = gx1 + glyphWidth;
                 const float gy2 = gy1 + glyphHeight;

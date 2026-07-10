@@ -162,6 +162,8 @@ func (f *FlexBox) Walk(fn func(types.Component)) {
 	}
 }
 
+func (f *FlexBox) ChildComponents() []types.Component { return f.Children }
+
 func (f *FlexBox) measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
 	if len(f.Children) == 0 {
 		size := explicitAvailable(avail)

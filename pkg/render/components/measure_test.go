@@ -16,8 +16,8 @@ func TestButtonMeasureReflectsLabelAndPadding(t *testing.T) {
 	if result.Preferred.X < 140 {
 		t.Fatalf("expected measured width to include padding, got %d", result.Preferred.X)
 	}
-	if result.Preferred.Y != 38 {
-		t.Fatalf("expected default button height 38, got %d", result.Preferred.Y)
+	if result.Preferred.Y != 36 {
+		t.Fatalf("expected themed button height 36, got %d", result.Preferred.Y)
 	}
 }
 
@@ -126,5 +126,13 @@ func TestScrollViewPreservesMeasuredContentWhenChildHasFixedBounds(t *testing.T)
 	}
 	if stack.Bounds().Dy() != scroll.ContentH {
 		t.Fatalf("expected scroll child to receive full content height, got child=%d content=%d", stack.Bounds().Dy(), scroll.ContentH)
+	}
+}
+
+func TestSliderMeasureProvidesNonZeroControlHeight(t *testing.T) {
+	slider := NewSlider("quality", 0, 100, 50, nil)
+	result := slider.Measure(image.Pt(420, 200), nil)
+	if result.Preferred.X != 420 || result.Preferred.Y <= 0 || result.Min.Y <= 0 {
+		t.Fatalf("slider measurement=%+v", result)
 	}
 }

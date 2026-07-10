@@ -1,6 +1,7 @@
 package render
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -8,9 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
@@ -20,38 +24,73 @@ import (
 
 	"go_native_gpu_gui/internal/win32"
 	"go_native_gpu_gui/pkg/render/components"
+	"go_native_gpu_gui/pkg/render/events"
+	"go_native_gpu_gui/pkg/render/platform"
 	"go_native_gpu_gui/pkg/render/protocol"
+	"go_native_gpu_gui/pkg/render/semantics"
+	"go_native_gpu_gui/pkg/render/state"
+	"go_native_gpu_gui/pkg/render/theme"
 	"go_native_gpu_gui/pkg/render/types"
 )
 
+type AccessibilityConfig struct {
+	Enabled             bool
+	TextScale           float32
+	ReducedMotion       bool
+	FollowSystemTheme   bool
+	FollowReducedMotion bool
+	SystemThemeResolver func(theme.Mode) theme.Theme
+}
+
+type EffectsConfig struct {
+	Glass, Particles, Audio bool
+}
+
+type TypographyConfig struct {
+	PrimaryFontPath   string
+	FallbackFontPaths []string
+}
+
 type AppConfig struct {
-	Title        string
-	Width        int
-	Height       int
-	BuildPagesFn func(state *types.ApplicationState)
-	FontPath     string
-	FontSize     float64
-	Automation   *AutomationConfig
+	Title                 string
+	Width                 int
+	Height                int
+	BuildPagesFn          func(state *types.ApplicationState)
+	FontPath              string
+	FontSize              float64
+	Typography            TypographyConfig
+	Automation            *AutomationConfig
+	Theme                 *theme.Manager
+	Services              platform.Services
+	Locale                string
+	Accessibility         AccessibilityConfig
+	Effects               EffectsConfig
+	ShowDiagnostics       bool
+	LegacyComponentStyles bool
 }
 
 // Package-level orchestrator variables
 var (
-	globalState        *types.ApplicationState
-	globalBuildPages   func(state *types.ApplicationState)
-	pipeHandle         uintptr
-	pipeWriteMutex     sync.Mutex
-	stateMutex         sync.Mutex // Protects globalState, component layouts, and painter from concurrent races
-	globalFontPath     string
-	globalFontSize     float64
-	globalPainter      *ProtocolPainter
-	globalRenderConn   io.Writer
-	globalLastFrame    protocol.RenderFrame
-	nativeDebugReqMu   sync.Mutex
-	nativeDebugMu      sync.Mutex
-	nativeDebugRespCh  chan protocol.NativeDebugResponse
-	nativeDialogReqMu  sync.Mutex
-	nativeDialogMu     sync.Mutex
-	nativeDialogRespCh chan protocol.NativeDialogResponse
+	globalState             *types.ApplicationState
+	globalBuildPages        func(state *types.ApplicationState)
+	pipeHandle              uintptr
+	pipeWriteMutex          sync.Mutex
+	stateMutex              sync.Mutex // Protects globalState, component layouts, and painter from concurrent races
+	globalFontPath          string
+	globalFontSize          float64
+	globalFontFallbackPaths []string
+	globalFontAtlas         *fontAtlasManager
+	globalPainter           *ProtocolPainter
+	globalRenderConn        io.Writer
+	globalLastFrame         protocol.RenderFrame
+	globalSemanticRevision  uint64
+	globalRepaintRequested  atomic.Bool
+	nativeDebugReqMu        sync.Mutex
+	nativeDebugMu           sync.Mutex
+	nativeDebugRespCh       chan protocol.NativeDebugResponse
+	nativeDialogReqMu       sync.Mutex
+	nativeDialogMu          sync.Mutex
+	nativeDialogRespCh      chan protocol.NativeDialogResponse
 )
 
 const (
@@ -59,7 +98,99 @@ const (
 	pipeNameSidecarToGo = `\\.\pipe\poem_ipc_sidecar_to_go`
 )
 
+func resolveSystemTheme(config AccessibilityConfig, mode theme.Mode) theme.Theme {
+	if config.SystemThemeResolver != nil {
+		return config.SystemThemeResolver(mode)
+	}
+	switch mode {
+	case theme.ModeLight:
+		return theme.ModernLight()
+	case theme.ModeHighContrast:
+		return theme.HighContrast()
+	default:
+		return theme.ModernDark()
+	}
+}
+
+func applySystemPreferences(state *types.ApplicationState, manager *theme.Manager, config AccessibilityConfig, snapshot platform.PreferenceSnapshot) bool {
+	changed := false
+	if config.FollowSystemTheme {
+		next := resolveSystemTheme(config, snapshot.ThemeMode)
+		current, _ := manager.Current()
+		if current != next {
+			if manager.Set(next) == nil {
+				changed = true
+			}
+		}
+	}
+	if config.FollowReducedMotion {
+		next := config.ReducedMotion || snapshot.ReducedMotion
+		if state.ReducedMotion != next {
+			state.ReducedMotion = next
+			changed = true
+		}
+	}
+	return changed
+}
+
+func pollSystemPreferences(service platform.SystemPreferences, interval time.Duration) (<-chan platform.PreferenceSnapshot, chan struct{}) {
+	updates := make(chan platform.PreferenceSnapshot, 1)
+	stop := make(chan struct{})
+	if interval <= 0 {
+		interval = time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		var previous platform.PreferenceSnapshot
+		havePrevious := false
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), min(interval, 250*time.Millisecond))
+			snapshot, err := service.Current(ctx)
+			cancel()
+			if err == nil && (!havePrevious || snapshot != previous) {
+				select {
+				case updates <- snapshot:
+				default:
+					select {
+					case <-updates:
+					default:
+					}
+					updates <- snapshot
+				}
+				previous, havePrevious = snapshot, true
+			}
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return updates, stop
+}
+
 func Run(config AppConfig) {
+	config.Services = withDefaultPlatformServices(config.Services)
+	manager := config.Theme
+	if manager == nil {
+		manager = theme.NewManager(theme.ModernDark())
+	}
+	initialReducedMotion := config.Accessibility.ReducedMotion
+	if (config.Accessibility.FollowSystemTheme || config.Accessibility.FollowReducedMotion) && config.Services.Preferences != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		if snapshot, err := config.Services.Preferences.Current(ctx); err == nil {
+			if config.Accessibility.FollowSystemTheme {
+				_ = manager.Set(resolveSystemTheme(config.Accessibility, snapshot.ThemeMode))
+			}
+			if config.Accessibility.FollowReducedMotion {
+				initialReducedMotion = initialReducedMotion || snapshot.ReducedMotion
+			}
+		}
+		cancel()
+	}
+	activeTheme, _ := manager.Current()
+
 	// 1. Initialize dimensions
 	if config.Width > 0 {
 		Width = config.Width
@@ -70,32 +201,62 @@ func Run(config AppConfig) {
 		types.Height = config.Height
 	}
 	globalFontPath = config.FontPath
+	if config.Typography.PrimaryFontPath != "" {
+		globalFontPath = config.Typography.PrimaryFontPath
+	}
+	if globalFontPath == "" {
+		globalFontPath = resolveDefaultFontPath()
+	}
 	globalFontSize = config.FontSize
 	if globalFontSize <= 0 {
-		globalFontSize = 17
+		globalFontSize = float64(activeTheme.Typography.Body.Size)
 	}
+	globalFontFallbackPaths = append([]string(nil), config.Typography.FallbackFontPaths...)
+	if len(globalFontFallbackPaths) == 0 {
+		globalFontFallbackPaths = resolveDefaultFallbackFontPaths()
+	}
+	locale := config.Locale
+	if locale == "" {
+		locale = "en-US"
+	}
+	textScale := config.Accessibility.TextScale
+	if textScale <= 0 {
+		textScale = 1
+	}
+	globalFontSize *= float64(textScale)
 
-	// 2. Initialize application state (headless settings, GDI sound stubs removed)
+	// 2. Initialize application state with portable design/platform services.
 	globalState = &types.ApplicationState{
-		StatusText:           "Orchestrator Matrix Running headlessly",
-		Volume:               75.0,
-		GlassEnabled:         true,
-		ArrowCursor:          1, // Abstract ID for Arrow
-		HandCursor:           2, // Abstract ID for Hand
-		IBeamCursor:          3, // Abstract ID for IBeam
-		ScrollPositions:      make(map[string]int),
-		ScrollDragStart:      make(map[string]int),
-		ScrollStartY:         make(map[string]int),
-		ScrollCurrent:        make(map[string]float64),
-		TextInputValues:      make(map[string]string),
-		SliderValues:         make(map[string]float32),
-		AudioEnabled:         true,
-		KeysPressed:          make(map[uint32]bool),
-		ParticlesEnabled:     true,
-		WindowWidth:          Width,
-		WindowHeight:         Height,
-		PhysicalWindowWidth:  Width,
-		PhysicalWindowHeight: Height,
+		StatusText:            "Orchestrator Matrix Running headlessly",
+		Volume:                75.0,
+		GlassEnabled:          config.Effects.Glass,
+		ArrowCursor:           1, // Abstract ID for Arrow
+		HandCursor:            2, // Abstract ID for Hand
+		IBeamCursor:           3, // Abstract ID for IBeam
+		ScrollPositions:       make(map[string]int),
+		ScrollDragStart:       make(map[string]int),
+		ScrollStartY:          make(map[string]int),
+		ScrollCurrent:         make(map[string]float64),
+		TextInputValues:       make(map[string]string),
+		SliderValues:          make(map[string]float32),
+		AudioEnabled:          config.Effects.Audio,
+		KeysPressed:           make(map[uint32]bool),
+		ParticlesEnabled:      config.Effects.Particles,
+		WindowWidth:           Width,
+		WindowHeight:          Height,
+		PhysicalWindowWidth:   Width,
+		PhysicalWindowHeight:  Height,
+		ApplicationName:       config.Title,
+		ThemeManager:          manager,
+		Services:              config.Services,
+		Locale:                locale,
+		DPIScale:              1,
+		TextScale:             textScale,
+		ReducedMotion:         initialReducedMotion,
+		ShowDiagnostics:       config.ShowDiagnostics,
+		LegacyComponentStyles: config.LegacyComponentStyles,
+		Overlays:              types.NewOverlayManager(),
+		TransientState:        state.NewStore(),
 	}
 	globalState.CursorID = globalState.ArrowCursor
 	globalBuildPages = config.BuildPagesFn
@@ -103,6 +264,13 @@ func Run(config AppConfig) {
 	globalState.StartTime = time.Now()
 	globalState.CoreMask = (1 << uint(runtime.NumCPU())) - 1
 	globalState.Particles = types.NewParticleSystem(100, image.Rect(0, 0, Width, Height))
+
+	var preferenceUpdates <-chan platform.PreferenceSnapshot
+	var stopPreferencePolling chan struct{}
+	if (config.Accessibility.FollowSystemTheme || config.Accessibility.FollowReducedMotion) && config.Services.Preferences != nil {
+		preferenceUpdates, stopPreferencePolling = pollSystemPreferences(config.Services.Preferences, time.Second)
+		defer close(stopPreferencePolling)
+	}
 
 	if globalBuildPages != nil {
 		globalBuildPages(globalState)
@@ -187,11 +355,18 @@ func Run(config AppConfig) {
 	}
 
 	// 6. Generate and transmit dynamically-rasterized Font Atlas
-	atlasPixels, chars, atlasW, atlasH, measuredLSB := buildHiDPIFontAtlasPixels(globalFontPath, globalFontSize)
+	globalFontAtlas = newFontAtlasManager(globalFontPath, globalFontFallbackPaths, globalFontSize)
+	if globalState.Services.TextShaper == nil {
+		globalState.Services.TextShaper = globalFontAtlas
+	}
+	atlasInit, measuredLSB, err := globalFontAtlas.Build(Width, Height)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build font atlas: %v", err))
+	}
 
 	// Dynamically resolve monospaced character width and LSB from loaded font metrics
 	detectedWidth := 7
-	for _, char := range chars {
+	for _, char := range atlasInit.Chars {
 		if char.R == 'A' {
 			detectedWidth = int(char.Advance) // Advance = full cell width used for layout
 			break
@@ -201,7 +376,7 @@ func Run(config AppConfig) {
 	globalState.FontCharBearingX = measuredLSB
 	fmt.Printf("❖ Font Engine: CharWidth=%dpx, BearingX=%dpx\n", detectedWidth, measuredLSB)
 
-	initBytes, err := serializeInitEngine(Width, Height, atlasPixels, chars, atlasW, atlasH)
+	initBytes, err := protocol.EncodeInitEngine(atlasInit)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to serialize InitEngine bootstrap package: %v", err))
 	}
@@ -213,6 +388,7 @@ func Run(config AppConfig) {
 
 	// 7. Initialize protocol-backed painter
 	painter := NewProtocolPainter()
+	painter.SetTextObserver(globalFontAtlas.Observe)
 	globalPainter = painter
 
 	if config.Automation != nil && config.Automation.Enabled {
@@ -228,12 +404,22 @@ func Run(config AppConfig) {
 			time.Sleep(16 * time.Millisecond) // ~60 FPS
 
 			stateMutex.Lock()
+			if preferenceUpdates != nil {
+				select {
+				case snapshot := <-preferenceUpdates:
+					if applySystemPreferences(globalState, manager, config.Accessibility, snapshot) {
+						globalState.NeedsRepaint = true
+					}
+				default:
+				}
+			}
 			now := time.Now()
 			dt := now.Sub(lastFrame).Seconds()
 			if dt > 0 {
 				globalState.CurrentFPS = 1.0 / dt
 				globalState.LastDt = dt
-				if globalState.Particles != nil {
+				motionAllowed := !globalState.RenderContext().ReducedMotion
+				if globalState.Particles != nil && motionAllowed {
 					globalState.Particles.Update(dt)
 				}
 				globalState.UpdateAnimations(float32(dt))
@@ -260,11 +446,15 @@ func Run(config AppConfig) {
 			}
 			lastFrame = now
 			globalState.FrameTime = time.Since(start)
+			if globalRepaintRequested.Swap(false) {
+				globalState.NeedsRepaint = true
+			}
 
-			shouldRepaint := globalState.NeedsRepaint || globalState.ParticlesEnabled || globalState.IsTransitioning
+			motionAllowed := !globalState.RenderContext().ReducedMotion
+			shouldRepaint := globalState.NeedsRepaint || (motionAllowed && globalState.ParticlesEnabled) || globalState.IsTransitioning
 			if shouldRepaint {
-				triggerRepaintFrame(pipeConnGoToSidecar, painter)
-				globalState.NeedsRepaint = false
+				atlasChanged := triggerRepaintFrame(pipeConnGoToSidecar, painter)
+				globalState.NeedsRepaint = atlasChanged
 			}
 			stateMutex.Unlock()
 		}
@@ -802,9 +992,9 @@ func sendSoundEvent(conn io.Writer, soundType protocol.SoundType) {
 // Main paint event dispatcher
 var lastPrintTime time.Time
 
-func triggerRepaintFrame(conn io.Writer, painter *ProtocolPainter) {
+func triggerRepaintFrame(conn io.Writer, painter *ProtocolPainter) (atlasChanged bool) {
 	if globalState == nil {
-		return
+		return false
 	}
 	frameStart := time.Now()
 
@@ -821,6 +1011,30 @@ func triggerRepaintFrame(conn io.Writer, painter *ProtocolPainter) {
 	renderStart := time.Now()
 	types.RenderPipeline(painter, globalState)
 	renderDuration := time.Since(renderStart)
+	if globalFontAtlas != nil {
+		if atlas, changed, atlasErr := globalFontAtlas.TakeUpdate(Width, Height); atlasErr != nil {
+			fmt.Printf("font atlas update failed: %v\n", atlasErr)
+		} else if changed {
+			if payload, encodeErr := protocol.EncodeFontAtlas(atlas); encodeErr == nil {
+				_ = writeMessage(conn, payload)
+				atlasChanged = true
+			}
+		}
+	}
+
+	semanticTree := types.BuildSemanticsTree(globalState)
+	if semanticTree.Revision != globalSemanticRevision {
+		if validationErr := semanticTree.Validate(); validationErr != nil {
+			fmt.Printf("semantic tree validation failed: %v\n", validationErr)
+			globalSemanticRevision = semanticTree.Revision
+		} else if payload, encodeErr := protocol.EncodeSemanticTree(toProtocolSemanticTree(semanticTree)); encodeErr == nil {
+			_ = writeMessage(conn, payload)
+			globalSemanticRevision = semanticTree.Revision
+		} else {
+			fmt.Printf("semantic tree encoding failed: %v\n", encodeErr)
+			globalSemanticRevision = semanticTree.Revision
+		}
+	}
 
 	// Map cursor IDs to protocol cursor values.
 	var cursorVal byte = 0 // Arrow
@@ -863,12 +1077,84 @@ func triggerRepaintFrame(conn io.Writer, painter *ProtocolPainter) {
 	serializeDuration := time.Since(serializeStart)
 	if err != nil {
 		fmt.Printf("failed to serialize render frame: %v\n", err)
-		return
+		return atlasChanged
 	}
 	writeStart := time.Now()
 	_ = writeMessage(conn, payload)
 	writeDuration := time.Since(writeStart)
 	globalPerfTracker.recordFrame(buildPagesDuration, renderDuration, serializeDuration, writeDuration, time.Since(frameStart), len(painter.commands))
+	return atlasChanged
+}
+
+func toProtocolSemanticTree(tree semantics.Tree) protocol.SemanticTree {
+	out := protocol.SemanticTree{Revision: tree.Revision}
+	var appendNode func(semantics.Node, int32)
+	appendNode = func(node semantics.Node, parent int32) {
+		index := int32(len(out.Nodes))
+		state := uint32(0)
+		flags := []bool{node.State.Disabled, node.State.Focused, node.State.Selected, node.State.Checked,
+			node.State.Expanded, node.State.ReadOnly, node.State.Required, node.State.Invalid, node.State.Password, node.State.Offscreen}
+		for bit, enabled := range flags {
+			if enabled {
+				state |= 1 << bit
+			}
+		}
+		wire := protocol.SemanticNode{Parent: parent, ID: node.ID, Role: string(node.Role), Name: node.Name,
+			Description: node.Description, AccessKey: node.AccessKey, Value: node.Value, X1: int32(node.Bounds.Min.X), Y1: int32(node.Bounds.Min.Y),
+			X2: int32(node.Bounds.Max.X), Y2: int32(node.Bounds.Max.Y), State: state}
+		if node.Range != nil {
+			wire.HasRange = true
+			wire.RangeMin = node.Range.Minimum
+			wire.RangeMax = node.Range.Maximum
+			wire.SmallChange = node.Range.SmallChange
+			wire.LargeChange = node.Range.LargeChange
+		}
+		if node.Text != nil {
+			wire.HasText = true
+			wire.SelectionStart = int32(node.Text.SelectionStart)
+			wire.SelectionEnd = int32(node.Text.SelectionEnd)
+			wire.Multiline = node.Text.Multiline
+		}
+		if node.Collection != nil && node.Collection.Selectable {
+			wire.HasCollection = true
+			wire.CanSelectMultiple = node.Collection.CanSelectMultiple
+			wire.SelectionRequired = node.Collection.SelectionRequired
+		}
+		if node.Grid != nil {
+			wire.HasGrid = true
+			wire.GridRows = int32(node.Grid.Rows)
+			wire.GridColumns = int32(node.Grid.Columns)
+		}
+		if node.GridItem != nil {
+			wire.HasGridItem = true
+			wire.GridRow = int32(node.GridItem.Row)
+			wire.GridColumn = int32(node.GridItem.Column)
+			wire.GridRowSpan = int32(node.GridItem.RowSpan)
+			wire.GridColumnSpan = int32(node.GridItem.ColumnSpan)
+		}
+		if node.Scroll != nil {
+			wire.HasScroll = true
+			wire.HScrollable = node.Scroll.HorizontallyScrollable
+			wire.VScrollable = node.Scroll.VerticallyScrollable
+			wire.HScrollPercent = node.Scroll.HorizontalPercent
+			wire.VScrollPercent = node.Scroll.VerticalPercent
+			wire.HViewSize = node.Scroll.HorizontalViewSize
+			wire.VViewSize = node.Scroll.VerticalViewSize
+		}
+		wire.LabeledBy = append(wire.LabeledBy, node.Relations.LabeledBy...)
+		wire.DescribedBy = append(wire.DescribedBy, node.Relations.DescribedBy...)
+		wire.Controls = append(wire.Controls, node.Relations.Controls...)
+		wire.FlowsTo = append(wire.FlowsTo, node.Relations.FlowsTo...)
+		for _, action := range node.Actions {
+			wire.Actions = append(wire.Actions, string(action))
+		}
+		out.Nodes = append(out.Nodes, wire)
+		for _, child := range node.Children {
+			appendNode(child, index)
+		}
+	}
+	appendNode(tree.Root, -1)
+	return out
 }
 
 // Input event processor & state mapping
@@ -915,6 +1201,8 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			globalState.MouseY = int(ev.Y)
 
 			pt := image.Point{globalState.MouseX, globalState.MouseY}
+			initialTarget := libFindHoveredComponent(pt)
+			globalState.DismissFocusLossOverlaysForPointer(initialTarget, pt)
 			newFocus := libFindHoveredComponent(pt)
 			globalState.FocusedID = newFocus
 
@@ -926,7 +1214,8 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			globalState.ActiveID = newFocus
 			if globalState.ActiveID != "" {
 				handled := false
-				if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+				comps := interactionRoots()
+				{
 					for i := len(comps) - 1; i >= 0; i-- {
 						c := comps[i]
 						if c.HitTest(pt) != "" {
@@ -957,7 +1246,8 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 
 			if globalState.ActiveID != "" {
 				handled := false
-				if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+				comps := interactionRoots()
+				{
 					for i := len(comps) - 1; i >= 0; i-- {
 						c := comps[i]
 						if c.HitTest(pt) != "" {
@@ -992,7 +1282,8 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 
 			if globalState.ActiveID != "" {
 				handled := false
-				if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+				comps := interactionRoots()
+				{
 					for i := len(comps) - 1; i >= 0; i-- {
 						c := comps[i]
 						if c.HitTest(pt) != "" {
@@ -1014,7 +1305,8 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 				}
 			} else if newHover != "" {
 				handled := false
-				if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+				comps := interactionRoots()
+				{
 					for i := len(comps) - 1; i >= 0; i-- {
 						c := comps[i]
 						if c.HitTest(pt) != "" {
@@ -1037,7 +1329,8 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			delta := int(ev.Delta)
 			pt := image.Point{globalState.MouseX, globalState.MouseY}
 
-			if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+			comps := interactionRoots()
+			{
 				for _, comp := range comps {
 					comp.Walk(func(c types.Component) {
 						if sc, ok := c.(types.ScrollableComponent); ok {
@@ -1060,22 +1353,27 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			const VK_ESCAPE = 0x1B
 			const VK_TAB = 0x09
 
-			ctrlPressed := (ev.Button & 1) != 0 // Control state passed through button field
+			modifiers := events.Modifiers{
+				Control: (ev.Button & 1) != 0,
+				Shift:   (ev.Button & 2) != 0,
+				Alt:     (ev.Button & 4) != 0,
+			}
+			shortcut, hasShortcut := events.ShortcutFromVirtualKey(wparam, modifiers)
 
-			if wparam == VK_ESCAPE {
-				globalState.FocusedID = ""
-			} else if wparam == VK_TAB {
-				reverse := (ev.Button & 2) != 0 // Shift state passed through button field
-				globalState.CycleFocus(reverse)
-			} else if ctrlPressed && (wparam == 'S' || wparam == 's') && globalState.AudioEnabled {
-				if globalState.Hotkeys != nil {
-					if handler, ok := globalState.Hotkeys["Ctrl+S"]; ok {
-						handler(globalState)
-						sendSoundEvent(conn, protocol.SoundTypeSuccess)
-					}
+			if wparam == VK_ESCAPE && !modifiers.Control && !modifiers.Shift && !modifiers.Alt {
+				if _, ok := globalState.DismissTopOverlay(); ok {
+				} else {
+					globalState.FocusedID = ""
 				}
+			} else if wparam == VK_TAB && !modifiers.Control && !modifiers.Alt {
+				globalState.CycleFocus(modifiers.Shift)
+			} else if hasShortcut && globalState.DispatchShortcut(shortcut.String()) {
+				globalState.NeedsRepaint = true
+			} else if keyRunes := []rune(shortcut.Key); hasShortcut && modifiers.Alt && len(keyRunes) == 1 && activateMnemonic(keyRunes[0]) {
+				globalState.NeedsRepaint = true
 			} else if globalState.FocusedID != "" {
-				if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+				comps := interactionRoots()
+				{
 					for _, c := range comps {
 						if c.OnKey(uint32(wparam), 0, globalState) {
 							if comp := libFindComponent(globalState.FocusedID); comp != nil {
@@ -1101,13 +1399,35 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			keyboardEvents++
 			charRune := rune(ev.Char)
 			if globalState.FocusedID != "" {
-				if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+				comps := interactionRoots()
+				{
 					for _, c := range comps {
 						if c.OnKey(0, charRune, globalState) {
 							break
 						}
 					}
 				}
+			}
+		case protocol.EventTypeCompositionStart, protocol.EventTypeCompositionUpdate, protocol.EventTypeCompositionEnd:
+			keyboardEvents++
+			if globalState.FocusedID != "" {
+				if component := libFindComponent(globalState.FocusedID); component != nil {
+					if target, ok := component.(types.TextCompositionComponent); ok {
+						switch ev.Type {
+						case protocol.EventTypeCompositionStart:
+							target.StartComposition(globalState)
+						case protocol.EventTypeCompositionUpdate:
+							target.UpdateComposition(ev.Text, globalState)
+						case protocol.EventTypeCompositionEnd:
+							target.EndComposition(ev.Text, globalState)
+						}
+						globalState.NeedsRepaint = true
+					}
+				}
+			}
+		case protocol.EventTypeSemanticAction:
+			if performSemanticAction(ev.Target, semantics.Action(ev.Action), ev.Value) {
+				globalState.NeedsRepaint = true
 			}
 		}
 	}
@@ -1117,19 +1437,107 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 	}
 }
 
+func activateMnemonic(key rune) bool {
+	if globalState == nil || key == 0 {
+		return false
+	}
+	want := unicode.ToUpper(key)
+	for _, root := range interactionRoots() {
+		handled := false
+		root.Walk(func(candidate types.Component) {
+			if handled {
+				return
+			}
+			if mnemonic, ok := candidate.(types.MnemonicComponent); ok && unicode.ToUpper(mnemonic.MnemonicKey()) == want {
+				handled = mnemonic.ActivateMnemonic(globalState)
+			}
+		})
+		if handled {
+			return true
+		}
+	}
+	return false
+}
+
+func performSemanticAction(target string, action semantics.Action, value string) bool {
+	if globalState == nil || target == "" {
+		return false
+	}
+	if action == semantics.ActionFocus {
+		globalState.DismissFocusLossOverlaysForTarget(target)
+	}
+	for _, root := range interactionRoots() {
+		handled := false
+		root.Walk(func(candidate types.Component) {
+			if handled {
+				return
+			}
+			if semantic, ok := candidate.(types.SemanticActionComponent); ok {
+				handled = semantic.PerformSemanticAction(target, action, value, globalState)
+			}
+		})
+		if handled {
+			return true
+		}
+	}
+
+	component := libFindComponent(target)
+	if component == nil {
+		return false
+	}
+	switch action {
+	case semantics.ActionFocus:
+		return automationFocusComponent(target) == nil
+	case semantics.ActionInvoke, semantics.ActionSelect:
+		return automationClickComponent(target) == nil
+	case semantics.ActionSetValue:
+		if automationSetText(target, value) == nil {
+			return true
+		}
+		slider, ok := component.(*components.Slider)
+		if !ok || slider.Max <= slider.Min {
+			return false
+		}
+		number, err := strconv.ParseFloat(value, 32)
+		if err != nil {
+			return false
+		}
+		fraction := (float32(number) - slider.Min) / (slider.Max - slider.Min)
+		if fraction < 0 {
+			fraction = 0
+		} else if fraction > 1 {
+			fraction = 1
+		}
+		point := image.Pt(slider.Bounds().Min.X+int(fraction*float32(slider.Bounds().Dx())), slider.Bounds().Min.Y+slider.Bounds().Dy()/2)
+		return slider.OnMouseDown(point, globalState) && slider.OnMouseUp(point, globalState)
+	case semantics.ActionSetSelection:
+		var start, end int
+		if _, err := fmt.Sscanf(value, "%d:%d", &start, &end); err != nil {
+			return false
+		}
+		return automationSelectText(target, start, end) == nil
+	case semantics.ActionIncrement, semantics.ActionDecrement:
+		globalState.FocusedID = target
+		key := uint32(0x27)
+		if action == semantics.ActionDecrement {
+			key = 0x25
+		}
+		return component.OnKey(key, 0, globalState)
+	}
+	return false
+}
+
 func libFindComponent(id string) types.Component {
 	if id == "" || globalState == nil {
 		return nil
 	}
 	var found types.Component
-	if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
-		for _, c := range comps {
-			c.Walk(func(comp types.Component) {
-				if comp.ID() == id {
-					found = comp
-				}
-			})
-		}
+	for _, c := range interactionRoots() {
+		c.Walk(func(comp types.Component) {
+			if comp.ID() == id {
+				found = comp
+			}
+		})
 	}
 	return found
 }
@@ -1138,7 +1546,8 @@ func libFindHoveredComponent(pt image.Point) string {
 	if globalState == nil {
 		return ""
 	}
-	if comps, ok := globalState.Pages[globalState.CurrentPage]; ok {
+	comps := interactionRoots()
+	if len(comps) > 0 {
 		// Layout sync pass
 		for _, comp := range comps {
 			comp.SetBounds(comp.Bounds())
@@ -1150,4 +1559,18 @@ func libFindHoveredComponent(pt image.Point) string {
 		}
 	}
 	return ""
+}
+
+func interactionRoots() []types.Component {
+	if globalState == nil {
+		return nil
+	}
+	page := globalState.Pages[globalState.CurrentPage]
+	entries := globalState.Overlays.Snapshot()
+	roots := make([]types.Component, 0, len(page)+len(entries))
+	roots = append(roots, page...)
+	for _, entry := range entries {
+		roots = append(roots, entry.Component)
+	}
+	return roots
 }

@@ -29,10 +29,10 @@ func (sp *SplitPane) Measure(avail image.Point, state *types.ApplicationState) t
 	if sp.SplitBarWidth == 0 {
 		sp.SplitBarWidth = 6
 	}
-	
+
 	availLeft := image.Pt(sp.SplitOffset, avail.Y)
 	availRight := image.Pt(avail.X-sp.SplitOffset-sp.SplitBarWidth, avail.Y)
-	
+
 	var leftRes, rightRes types.MeasureResult
 	if sp.LeftChild != nil {
 		if mr, ok := sp.LeftChild.(interface {
@@ -73,7 +73,7 @@ func (sp *SplitPane) SetBounds(r image.Rectangle) {
 	if sp.SplitOffset <= 0 || sp.SplitOffset > r.Dx() {
 		sp.SplitOffset = r.Dx() / 2
 	}
-	
+
 	// Layout children
 	if sp.LeftChild != nil {
 		sp.LeftChild.SetBounds(image.Rect(r.Min.X, r.Min.Y, r.Min.X+sp.SplitOffset, r.Max.Y))
@@ -122,7 +122,7 @@ func (sp *SplitPane) Draw(pnt types.Painter, state *types.ApplicationState) {
 
 	// Draw Splitter Bar
 	barRect := image.Rect(sp.Rect.Min.X+sp.SplitOffset, sp.Rect.Min.Y, sp.Rect.Min.X+sp.SplitOffset+sp.SplitBarWidth, sp.Rect.Max.Y)
-	
+
 	col := sp.SplitBarColor
 	if state.ActiveID == sp.CompID+"_splitter" {
 		col = sp.ActiveBarColor
@@ -182,7 +182,7 @@ func (sp *SplitPane) OnMouseMove(pt image.Point, state *types.ApplicationState) 
 			newOffset = maxOffset
 		}
 		sp.SplitOffset = newOffset
-		
+
 		// Re-layout children
 		sp.SetBounds(sp.Rect)
 		return true
@@ -207,4 +207,15 @@ func (sp *SplitPane) Walk(fn func(types.Component)) {
 	if sp.RightChild != nil {
 		sp.RightChild.Walk(fn)
 	}
+}
+
+func (sp *SplitPane) ChildComponents() []types.Component {
+	children := make([]types.Component, 0, 2)
+	if sp.LeftChild != nil {
+		children = append(children, sp.LeftChild)
+	}
+	if sp.RightChild != nil {
+		children = append(children, sp.RightChild)
+	}
+	return children
 }

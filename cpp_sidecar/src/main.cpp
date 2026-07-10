@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "accessibility.h"
 #include "ipc.h"
 #include "protocol.h"
 #include "renderer_d3d11.h"
@@ -9,6 +10,7 @@
 #include <shobjidl.h>
 #include <windows.h>
 #include <windowsx.h>
+#include <imm.h>
 
 #include <algorithm>
 #include <atomic>
@@ -21,6 +23,13 @@
 namespace {
 
 constexpr UINT WM_POEM_FRAME = WM_APP + 1;
+constexpr UINT WM_POEM_SEMANTICS = WM_APP + 2;
+
+struct ComApartment {
+    ComApartment() : result(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {}
+    ~ComApartment() { if (SUCCEEDED(result)) CoUninitialize(); }
+    HRESULT result;
+};
 
 struct AppState {
     poem::ipc::PipeConnection toRenderer;
@@ -29,21 +38,51 @@ struct AppState {
     poem::RendererD3D11 renderer;
     poem::AudioEngine audio;
     std::mutex frameMutex;
+    std::mutex eventMutex;
     poem::protocol::RenderFrame latestFrame;
+    poem::AccessibilityHost accessibility;
     bool hasFrame = false;
     BYTE cursorType = 0;
     std::atomic<bool> running = true;
     HWND hwnd = nullptr;
+    bool imeResultSent = false;
 };
+
+std::string CompositionWideToUtf8(const std::wstring& value) {
+    if (value.empty()) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+    if (size <= 0) return {};
+    std::string utf8(static_cast<std::size_t>(size), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), utf8.data(), size, nullptr, nullptr) <= 0) return {};
+    return utf8;
+}
+
+std::string ReadCompositionString(HWND hwnd, DWORD kind) {
+    HIMC context = ImmGetContext(hwnd);
+    if (!context) return {};
+    const LONG byteCount = ImmGetCompositionStringW(context, kind, nullptr, 0);
+    if (byteCount <= 0 || byteCount > (1 << 20)) {
+        ImmReleaseContext(hwnd, context);
+        return {};
+    }
+    std::wstring value(static_cast<std::size_t>(byteCount) / sizeof(wchar_t), L'\0');
+    const LONG copied = ImmGetCompositionStringW(context, kind, value.data(), byteCount);
+    ImmReleaseContext(hwnd, context);
+    if (copied <= 0) return {};
+    value.resize(static_cast<std::size_t>(copied) / sizeof(wchar_t));
+    return CompositionWideToUtf8(value);
+}
 
 std::uint32_t ModifierMask() {
     std::uint32_t mask = 0;
     if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) mask |= 1;
     if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) mask |= 2;
+	if ((GetKeyState(VK_MENU) & 0x8000) != 0) mask |= 4;
     return mask;
 }
 
 void SendEvent(AppState* app, const poem::protocol::Event& ev) {
+    std::lock_guard<std::mutex> lock(app->eventMutex);
     poem::protocol::EventBatch batch;
     batch.events.push_back(ev);
     auto payload = poem::protocol::EncodeEventBatch(batch);
@@ -53,6 +92,17 @@ void SendEvent(AppState* app, const poem::protocol::Event& ev) {
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     auto* app = reinterpret_cast<AppState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     switch (msg) {
+    case WM_GETOBJECT:
+        if (app) {
+            if (const auto result = app->accessibility.HandleGetObject(wParam, lParam); result != 0) return result;
+        }
+        break;
+    case WM_POEM_SEMANTICS:
+        if (app) {
+            std::unique_ptr<poem::protocol::SemanticTree> tree(reinterpret_cast<poem::protocol::SemanticTree*>(lParam));
+            if (tree) app->accessibility.Publish(std::move(*tree));
+        }
+        return 0;
     case WM_NCCREATE: {
         auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
@@ -126,6 +176,35 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (app) {
             SendEvent(app, {poem::protocol::EventType::KeyDown, 0, 0, static_cast<std::int32_t>(ModifierMask()), 0,
                             static_cast<std::uint32_t>(wParam), 0, 0, 0});
+        }
+        return 0;
+    case WM_IME_STARTCOMPOSITION:
+        if (app) {
+            app->imeResultSent = false;
+            SendEvent(app, {poem::protocol::EventType::CompositionStart});
+        }
+        return 0;
+    case WM_IME_COMPOSITION:
+        if (app) {
+            if ((lParam & GCS_COMPSTR) != 0) {
+                poem::protocol::Event event{};
+                event.type = poem::protocol::EventType::CompositionUpdate;
+                event.text = ReadCompositionString(hwnd, GCS_COMPSTR);
+                SendEvent(app, event);
+            }
+            if ((lParam & GCS_RESULTSTR) != 0) {
+                poem::protocol::Event event{};
+                event.type = poem::protocol::EventType::CompositionEnd;
+                event.text = ReadCompositionString(hwnd, GCS_RESULTSTR);
+                SendEvent(app, event);
+                app->imeResultSent = true;
+            }
+        }
+        return 0;
+    case WM_IME_ENDCOMPOSITION:
+        if (app) {
+            if (!app->imeResultSent) SendEvent(app, {poem::protocol::EventType::CompositionEnd});
+            app->imeResultSent = false;
         }
         return 0;
     case WM_KEYUP:
@@ -650,6 +729,7 @@ poem::protocol::NativeDebugResponse BuildNativeDebugResponse(AppState& app, cons
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
+    ComApartment comApartment;
     SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
 
     std::printf("POEM C++ sidecar starting up...\n");
@@ -698,6 +778,15 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         return 2;
     }
     app.hwnd = hwnd;
+    app.accessibility.SetWindow(hwnd);
+    app.accessibility.SetActionHandler([&app](std::string target, std::string action, std::string value) {
+        poem::protocol::Event event{};
+        event.type = poem::protocol::EventType::SemanticAction;
+        event.target = std::move(target);
+        event.action = std::move(action);
+        event.value = std::move(value);
+        SendEvent(&app, event);
+    });
     ClampWindowToCurrentMonitorWorkArea(hwnd);
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
@@ -725,6 +814,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                 } else if (env.type == poem::protocol::MessageType::PlaySound) {
                     auto sound = poem::protocol::DecodePlaySound(env.body);
                     app.audio.Play(sound.type);
+                } else if (env.type == poem::protocol::MessageType::SemanticTree) {
+                    auto tree = poem::protocol::DecodeSemanticTree(env.body);
+                    auto* pendingTree = new poem::protocol::SemanticTree(std::move(tree));
+                    SendMessageW(app.hwnd, WM_POEM_SEMANTICS, 0, reinterpret_cast<LPARAM>(pendingTree));
+                } else if (env.type == poem::protocol::MessageType::FontAtlas) {
+                    auto atlas = poem::protocol::DecodeInitEngine(env.body);
+                    std::lock_guard<std::mutex> lock(app.frameMutex);
+                    if (!app.renderer.UpdateFontAtlas(atlas)) {
+                        throw std::runtime_error("font atlas update failed");
+                    }
                 } else if (env.type == poem::protocol::MessageType::NativeDebugRequest) {
                     auto request = poem::protocol::DecodeNativeDebugRequest(env.body);
                     auto response = BuildNativeDebugResponse(app, request);

@@ -1,11 +1,19 @@
 # POEM
 
+> **POEM 2.0 is in incremental development.** The current milestone introduces
+> portable theme, drawing, event, semantic, and platform-service contracts plus
+> protocol v2. Windows/D3D11 is the only implemented backend; public contracts do
+> not expose Win32 types. See [the POEM 2.0 foundation guide](docs/POEM_2_FOUNDATION.md).
+
+The Windows backend can optionally follow live system light/dark/high-contrast
+and reduced-motion preferences through platform-neutral configuration.
+
 POEM is a frameworkless desktop UI engine for Go applications. The public API lives in `pkg/render`, where consumers call `render.Run(render.AppConfig{...})` and build pages declaratively from Go. Native presentation is handled by a separate sidecar process so layout, state, focus, and input semantics stay in Go while the window, GPU rendering, and local audio stay native.
 
 The active runtime today is:
 
 - Go orchestrator for state, layout, page rebuilds, hit-testing, focus, automation semantics, and draw-command generation
-- Windows C++ sidecar for Win32 windowing, D3D11 rendering, cursor updates, DPI handling, and native capture hooks
+- Windows C++ sidecar for Win32 windowing, D3D11 rendering, live Unicode font-atlas updates, UI Automation, cursor updates, DPI handling, and native capture hooks
 - local IPC over two Windows named pipes
 - repo-owned binary protocol in `pkg/render/protocol`
 
@@ -23,6 +31,7 @@ The public Go API remains stable while the native presentation layer evolves und
 |   |-- components/        # Declarative UI primitives
 |   |-- layout/            # Layout helpers
 |   |-- protocol/          # Custom binary wire protocol
+|   |-- state/             # Stable-ID transient interaction state
 |   |-- types/             # Shared state, interfaces, and contracts
 |   |-- painter.go         # Draw-command capture and frame serialization
 |   `-- run.go             # Sidecar launch, IPC, and event/render orchestration
@@ -90,6 +99,18 @@ render.Run(render.AppConfig{
 ```
 
 The source-of-truth automation reference is [docs/AUTOMATION.md](./docs/AUTOMATION.md).
+Commands may use stable component IDs or unique semantic role/name/state
+selectors; successful selector commands report the resolved stable target ID.
+
+Windows accessibility integration is exercised by `cpp_sidecar/test_uia.ps1`.
+It reads the platform-neutral semantic tree through UI Automation and verifies
+that standard control-pattern actions reach the Go component runtime and that
+property/text-change notifications reach a native accessibility client. The
+probe also covers emoji/CJK TextPattern ranges and password redaction.
+Collection coverage includes tab/table Selection and data-grid Grid/Table item
+relationships. Scrollable containers publish live ScrollPattern percentages and
+retain their semantic descendants. Stable-ID semantic relationships map to UIA
+LabeledBy, DescribedBy, ControllerFor, and FlowsTo properties.
 
 ## Layout Measurement
 
@@ -133,13 +154,22 @@ cmake -S cpp_sidecar -B cpp_sidecar\build
 cmake --build cpp_sidecar\build --config Release
 ```
 
-Build the Go demo:
+Build the POEM 2.0 component gallery:
+
+```powershell
+go build ./cmd/gallery
+```
+
+`cmd/gallery` is the preferred visual acceptance surface for professional
+theme-native controls, overlays, semantics, and responsive layouts.
+
+Build the legacy runtime smoke demo:
 
 ```powershell
 go build ./cmd/engine
 ```
 
-Run the demo:
+Run the legacy runtime smoke demo:
 
 ```powershell
 .\engine.exe
@@ -161,6 +191,7 @@ The active C++ sidecar supports the current core path:
 - bootstrap atlas upload
 - render frames over the custom protocol
 - mouse, wheel, keyboard, resize, and DPI events
+- normalized portable shortcuts and UIA-visible button mnemonics
 - startup sizing that uses the target monitor DPI and launches within a conservative work-area fraction
 - cursor switching
 - core draw commands, text atlas rendering, clipping, and sound triggers

@@ -33,8 +33,14 @@ func (m *Modal) Walk(fn func(types.Component)) {
 	}
 }
 
+func (m *Modal) ChildComponents() []types.Component { return m.Children }
+
 func (m *Modal) Draw(p types.Painter, state *types.ApplicationState) {
-	p.DrawRoundedRect(m.Rect, 0, m.BackdropColor)
+	backdrop := m.BackdropColor
+	if backdrop.A == 0 {
+		backdrop = activeTheme(state).Colors.Overlay
+	}
+	p.DrawRoundedRect(m.Rect, 0, backdrop)
 	for _, child := range m.Children {
 		child.Draw(p, state)
 	}

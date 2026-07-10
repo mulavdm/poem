@@ -7,7 +7,17 @@ import (
 	"io"
 )
 
+const maxProtocolByteVector = 256 << 20
+
 func EncodeInitEngine(msg InitEngine) ([]byte, error) {
+	return encodeFontPayload(MessageInitEngine, msg)
+}
+
+func EncodeFontAtlas(msg InitEngine) ([]byte, error) {
+	return encodeFontPayload(MessageFontAtlas, msg)
+}
+
+func encodeFontPayload(messageType MessageType, msg InitEngine) ([]byte, error) {
 	var body bytes.Buffer
 	writeInt32(&body, msg.Width)
 	writeInt32(&body, msg.Height)
@@ -25,7 +35,7 @@ func EncodeInitEngine(msg InitEngine) ([]byte, error) {
 		writeInt32(&body, ch.Height)
 		writeInt32(&body, ch.Advance)
 	}
-	return wrapEnvelope(MessageInitEngine, body.Bytes()), nil
+	return wrapEnvelope(messageType, body.Bytes()), nil
 }
 
 func EncodeRenderFrame(msg RenderFrame) ([]byte, error) {
@@ -63,10 +73,250 @@ func EncodePlaySound(msg PlaySound) ([]byte, error) {
 	return wrapEnvelope(MessagePlaySound, body.Bytes()), nil
 }
 
+func EncodeSemanticTree(msg SemanticTree) ([]byte, error) {
+	var body bytes.Buffer
+	_ = binary.Write(&body, binary.LittleEndian, msg.Revision)
+	writeUint32(&body, uint32(len(msg.Nodes)))
+	for _, node := range msg.Nodes {
+		writeInt32(&body, node.Parent)
+		writeString(&body, node.ID)
+		writeString(&body, node.Role)
+		writeString(&body, node.Name)
+		writeString(&body, node.Description)
+		writeString(&body, node.AccessKey)
+		writeString(&body, node.Value)
+		writeInt32(&body, node.X1)
+		writeInt32(&body, node.Y1)
+		writeInt32(&body, node.X2)
+		writeInt32(&body, node.Y2)
+		writeUint32(&body, node.State)
+		writeBool(&body, node.HasRange)
+		writeFloat64(&body, node.RangeMin)
+		writeFloat64(&body, node.RangeMax)
+		writeFloat64(&body, node.SmallChange)
+		writeFloat64(&body, node.LargeChange)
+		writeBool(&body, node.HasText)
+		writeInt32(&body, node.SelectionStart)
+		writeInt32(&body, node.SelectionEnd)
+		writeBool(&body, node.Multiline)
+		writeBool(&body, node.HasCollection)
+		writeBool(&body, node.CanSelectMultiple)
+		writeBool(&body, node.SelectionRequired)
+		writeBool(&body, node.HasGrid)
+		writeInt32(&body, node.GridRows)
+		writeInt32(&body, node.GridColumns)
+		writeBool(&body, node.HasGridItem)
+		writeInt32(&body, node.GridRow)
+		writeInt32(&body, node.GridColumn)
+		writeInt32(&body, node.GridRowSpan)
+		writeInt32(&body, node.GridColumnSpan)
+		writeBool(&body, node.HasScroll)
+		writeBool(&body, node.HScrollable)
+		writeBool(&body, node.VScrollable)
+		writeFloat64(&body, node.HScrollPercent)
+		writeFloat64(&body, node.VScrollPercent)
+		writeFloat64(&body, node.HViewSize)
+		writeFloat64(&body, node.VViewSize)
+		for _, relationships := range [][]string{node.LabeledBy, node.DescribedBy, node.Controls, node.FlowsTo} {
+			if len(relationships) > 256 {
+				return nil, fmt.Errorf("semantic relationship count %d exceeds limit", len(relationships))
+			}
+			writeUint32(&body, uint32(len(relationships)))
+			for _, target := range relationships {
+				writeString(&body, target)
+			}
+		}
+		writeUint32(&body, uint32(len(node.Actions)))
+		for _, action := range node.Actions {
+			writeString(&body, action)
+		}
+	}
+	return wrapEnvelope(MessageSemanticTree, body.Bytes()), nil
+}
+
+func DecodeSemanticTree(payload []byte) (SemanticTree, error) {
+	msgType, body, err := DecodeEnvelope(payload)
+	if err != nil {
+		return SemanticTree{}, err
+	}
+	if msgType != MessageSemanticTree {
+		return SemanticTree{}, fmt.Errorf("unexpected message type %d", msgType)
+	}
+	r := bytes.NewReader(body)
+	var revision uint64
+	if err := binary.Read(r, binary.LittleEndian, &revision); err != nil {
+		return SemanticTree{}, err
+	}
+	count, err := readUint32(r)
+	if err != nil {
+		return SemanticTree{}, err
+	}
+	if count > 100_000 {
+		return SemanticTree{}, fmt.Errorf("semantic node count %d exceeds limit", count)
+	}
+	nodes := make([]SemanticNode, 0, count)
+	for i := uint32(0); i < count; i++ {
+		var node SemanticNode
+		if node.Parent, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.ID, err = readString(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.Role, err = readString(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.Name, err = readString(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.Description, err = readString(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.AccessKey, err = readString(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.Value, err = readString(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.X1, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.Y1, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.X2, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.Y2, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.State, err = readUint32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.HasRange, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.RangeMin, err = readFloat64(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.RangeMax, err = readFloat64(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.SmallChange, err = readFloat64(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.LargeChange, err = readFloat64(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.HasText, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.SelectionStart, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.SelectionEnd, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.Multiline, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.HasCollection, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.CanSelectMultiple, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.SelectionRequired, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.HasGrid, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.GridRows, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.GridColumns, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.HasGridItem, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.GridRow, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.GridColumn, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.GridRowSpan, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.GridColumnSpan, err = readInt32(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.HasScroll, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.HScrollable, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.VScrollable, err = readBool(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.HScrollPercent, err = readFloat64(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.VScrollPercent, err = readFloat64(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.HViewSize, err = readFloat64(r); err != nil {
+			return SemanticTree{}, err
+		}
+		if node.VViewSize, err = readFloat64(r); err != nil {
+			return SemanticTree{}, err
+		}
+		relationships := []*[]string{&node.LabeledBy, &node.DescribedBy, &node.Controls, &node.FlowsTo}
+		for _, targets := range relationships {
+			relationshipCount, relationshipErr := readUint32(r)
+			if relationshipErr != nil {
+				return SemanticTree{}, relationshipErr
+			}
+			if relationshipCount > 256 {
+				return SemanticTree{}, fmt.Errorf("semantic relationship count %d exceeds limit", relationshipCount)
+			}
+			for relationshipIndex := uint32(0); relationshipIndex < relationshipCount; relationshipIndex++ {
+				target, targetErr := readString(r)
+				if targetErr != nil {
+					return SemanticTree{}, targetErr
+				}
+				*targets = append(*targets, target)
+			}
+		}
+		actionCount, actionErr := readUint32(r)
+		if actionErr != nil {
+			return SemanticTree{}, actionErr
+		}
+		if actionCount > 256 {
+			return SemanticTree{}, fmt.Errorf("semantic action count %d exceeds limit", actionCount)
+		}
+		for actionIndex := uint32(0); actionIndex < actionCount; actionIndex++ {
+			action, actionErr := readString(r)
+			if actionErr != nil {
+				return SemanticTree{}, actionErr
+			}
+			node.Actions = append(node.Actions, action)
+		}
+		nodes = append(nodes, node)
+	}
+	return SemanticTree{Revision: revision, Nodes: nodes}, nil
+}
+
 func EncodeEventBatch(msg EventBatch) ([]byte, error) {
 	var body bytes.Buffer
 	writeUint32(&body, uint32(len(msg.Events)))
 	for _, ev := range msg.Events {
+		if len(ev.Text) > 1<<20 || len(ev.Target) > 1<<20 || len(ev.Action) > 1<<20 || len(ev.Value) > 1<<20 {
+			return nil, fmt.Errorf("event string exceeds 1 MiB")
+		}
 		writeByte(&body, byte(ev.Type))
 		writeInt32(&body, ev.X)
 		writeInt32(&body, ev.Y)
@@ -76,6 +326,10 @@ func EncodeEventBatch(msg EventBatch) ([]byte, error) {
 		writeUint32(&body, ev.Char)
 		writeInt32(&body, ev.Width)
 		writeInt32(&body, ev.Height)
+		writeString(&body, ev.Text)
+		writeString(&body, ev.Target)
+		writeString(&body, ev.Action)
+		writeString(&body, ev.Value)
 	}
 	return wrapEnvelope(MessageEventBatch, body.Bytes()), nil
 }
@@ -364,6 +618,25 @@ func DecodeEventBatch(payload []byte) (EventBatch, error) {
 		if err != nil {
 			return EventBatch{}, err
 		}
+		text, err := readString(r)
+		if err != nil {
+			return EventBatch{}, err
+		}
+		target, err := readString(r)
+		if err != nil {
+			return EventBatch{}, err
+		}
+		action, err := readString(r)
+		if err != nil {
+			return EventBatch{}, err
+		}
+		value, err := readString(r)
+		if err != nil {
+			return EventBatch{}, err
+		}
+		if len(text) > 1<<20 || len(target) > 1<<20 || len(action) > 1<<20 || len(value) > 1<<20 {
+			return EventBatch{}, fmt.Errorf("event string exceeds 1 MiB")
+		}
 		events = append(events, Event{
 			Type:    EventType(t),
 			X:       x,
@@ -374,6 +647,10 @@ func DecodeEventBatch(payload []byte) (EventBatch, error) {
 			Char:    charCode,
 			Width:   width,
 			Height:  height,
+			Text:    text,
+			Target:  target,
+			Action:  action,
+			Value:   value,
 		})
 	}
 	return EventBatch{Events: events}, nil
@@ -533,6 +810,10 @@ func writeInt32(w io.Writer, v int32)   { _ = binary.Write(w, binary.LittleEndia
 func writeFloat32(w io.Writer, v float32) {
 	_ = binary.Write(w, binary.LittleEndian, v)
 }
+
+func writeFloat64(w io.Writer, v float64) {
+	_ = binary.Write(w, binary.LittleEndian, v)
+}
 func writeBytes(w io.Writer, b []byte) {
 	writeUint32(w, uint32(len(b)))
 	_, _ = w.Write(b)
@@ -559,10 +840,19 @@ func readFloat32(r io.Reader) (float32, error) {
 	err := binary.Read(r, binary.LittleEndian, &v)
 	return v, err
 }
+
+func readFloat64(r io.Reader) (float64, error) {
+	var v float64
+	err := binary.Read(r, binary.LittleEndian, &v)
+	return v, err
+}
 func readBytes(r io.Reader) ([]byte, error) {
 	size, err := readUint32(r)
 	if err != nil {
 		return nil, err
+	}
+	if size > maxProtocolByteVector {
+		return nil, fmt.Errorf("protocol byte vector length %d exceeds limit", size)
 	}
 	buf := make([]byte, size)
 	_, err = io.ReadFull(r, buf)

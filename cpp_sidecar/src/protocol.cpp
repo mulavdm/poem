@@ -24,6 +24,10 @@ class Reader {
 
     std::vector<std::uint8_t> ReadBytes() {
         auto size = Read<std::uint32_t>();
+        constexpr std::uint32_t kMaxByteVector = 256u * 1024u * 1024u;
+        if (size > kMaxByteVector) {
+            throw std::runtime_error("protocol byte vector exceeds limit");
+        }
         if (offset_ + size > data_.size()) {
             throw std::runtime_error("protocol byte vector overflow");
         }
@@ -165,6 +169,83 @@ PlaySound DecodePlaySound(const std::vector<std::uint8_t>& body) {
     return out;
 }
 
+SemanticTree DecodeSemanticTree(const std::vector<std::uint8_t>& body) {
+    Reader r(body);
+    SemanticTree out;
+    out.revision = r.Read<std::uint64_t>();
+    const auto count = r.Read<std::uint32_t>();
+    if (count > 100000) {
+        throw std::runtime_error("semantic node count exceeds limit");
+    }
+    out.nodes.reserve(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        SemanticNode node;
+        node.parent = r.Read<std::int32_t>();
+        node.id = r.ReadString();
+        node.role = r.ReadString();
+        node.name = r.ReadString();
+        node.description = r.ReadString();
+		node.accessKey = r.ReadString();
+        node.value = r.ReadString();
+        node.x1 = r.Read<std::int32_t>();
+        node.y1 = r.Read<std::int32_t>();
+        node.x2 = r.Read<std::int32_t>();
+        node.y2 = r.Read<std::int32_t>();
+        node.state = r.Read<std::uint32_t>();
+		node.hasRange = r.Read<std::uint8_t>() != 0;
+		node.rangeMin = r.Read<double>();
+		node.rangeMax = r.Read<double>();
+		node.smallChange = r.Read<double>();
+		node.largeChange = r.Read<double>();
+		node.hasText = r.Read<std::uint8_t>() != 0;
+		node.selectionStart = r.Read<std::int32_t>();
+		node.selectionEnd = r.Read<std::int32_t>();
+		node.multiline = r.Read<std::uint8_t>() != 0;
+		node.hasCollection = r.Read<std::uint8_t>() != 0;
+		node.canSelectMultiple = r.Read<std::uint8_t>() != 0;
+		node.selectionRequired = r.Read<std::uint8_t>() != 0;
+		node.hasGrid = r.Read<std::uint8_t>() != 0;
+		node.gridRows = r.Read<std::int32_t>();
+		node.gridColumns = r.Read<std::int32_t>();
+		node.hasGridItem = r.Read<std::uint8_t>() != 0;
+		node.gridRow = r.Read<std::int32_t>();
+		node.gridColumn = r.Read<std::int32_t>();
+		node.gridRowSpan = r.Read<std::int32_t>();
+		node.gridColumnSpan = r.Read<std::int32_t>();
+		node.hasScroll = r.Read<std::uint8_t>() != 0;
+		node.hScrollable = r.Read<std::uint8_t>() != 0;
+		node.vScrollable = r.Read<std::uint8_t>() != 0;
+		node.hScrollPercent = r.Read<double>();
+		node.vScrollPercent = r.Read<double>();
+		node.hViewSize = r.Read<double>();
+		node.vViewSize = r.Read<double>();
+		auto readRelationships = [&r](std::vector<std::string>& relationships) {
+			const auto relationshipCount = r.Read<std::uint32_t>();
+			if (relationshipCount > 256) {
+				throw std::runtime_error("semantic relationship count exceeds limit");
+			}
+			relationships.reserve(relationshipCount);
+			for (std::uint32_t relationshipIndex = 0; relationshipIndex < relationshipCount; ++relationshipIndex) {
+				relationships.push_back(r.ReadString());
+			}
+		};
+		readRelationships(node.labeledBy);
+		readRelationships(node.describedBy);
+		readRelationships(node.controls);
+		readRelationships(node.flowsTo);
+        const auto actionCount = r.Read<std::uint32_t>();
+        if (actionCount > 256) {
+            throw std::runtime_error("semantic action count exceeds limit");
+        }
+        node.actions.reserve(actionCount);
+        for (std::uint32_t actionIndex = 0; actionIndex < actionCount; ++actionIndex) {
+            node.actions.push_back(r.ReadString());
+        }
+        out.nodes.push_back(std::move(node));
+    }
+    return out;
+}
+
 NativeDebugRequest DecodeNativeDebugRequest(const std::vector<std::uint8_t>& body) {
     Reader r(body);
     NativeDebugRequest out;
@@ -200,6 +281,10 @@ std::vector<std::uint8_t> EncodeEventBatch(const EventBatch& batch) {
         w.Write<std::uint32_t>(ev.ch);
         w.Write<std::int32_t>(ev.width);
         w.Write<std::int32_t>(ev.height);
+        w.WriteString(ev.text);
+		w.WriteString(ev.target);
+		w.WriteString(ev.action);
+		w.WriteString(ev.value);
     }
     return w.Finish(MessageType::EventBatch);
 }

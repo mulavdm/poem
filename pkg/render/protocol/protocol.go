@@ -2,7 +2,7 @@ package protocol
 
 const (
 	Magic   = "POEM"
-	Version = uint16(1)
+	Version = uint16(2)
 )
 
 type MessageType uint16
@@ -11,6 +11,8 @@ const (
 	MessageInitEngine           MessageType = 1
 	MessageRenderFrame          MessageType = 2
 	MessagePlaySound            MessageType = 3
+	MessageSemanticTree         MessageType = 4
+	MessageFontAtlas            MessageType = 5
 	MessageEventBatch           MessageType = 101
 	MessageNativeDebugRequest   MessageType = 201
 	MessageNativeDebugResponse  MessageType = 202
@@ -53,6 +55,10 @@ const (
 	EventTypeKeyDown
 	EventTypeKeyUp
 	EventTypeKeyChar
+	EventTypeCompositionStart
+	EventTypeCompositionUpdate
+	EventTypeCompositionEnd
+	EventTypeSemanticAction
 )
 
 type CharInfo struct {
@@ -107,6 +113,56 @@ type PlaySound struct {
 	Type SoundType
 }
 
+type SemanticNode struct {
+	Parent            int32
+	ID                string
+	Role              string
+	Name              string
+	Description       string
+	AccessKey         string
+	Value             string
+	X1, Y1            int32
+	X2, Y2            int32
+	State             uint32
+	HasRange          bool
+	RangeMin          float64
+	RangeMax          float64
+	SmallChange       float64
+	LargeChange       float64
+	HasText           bool
+	SelectionStart    int32
+	SelectionEnd      int32
+	Multiline         bool
+	HasCollection     bool
+	CanSelectMultiple bool
+	SelectionRequired bool
+	HasGrid           bool
+	GridRows          int32
+	GridColumns       int32
+	HasGridItem       bool
+	GridRow           int32
+	GridColumn        int32
+	GridRowSpan       int32
+	GridColumnSpan    int32
+	HasScroll         bool
+	HScrollable       bool
+	VScrollable       bool
+	HScrollPercent    float64
+	VScrollPercent    float64
+	HViewSize         float64
+	VViewSize         float64
+	LabeledBy         []string
+	DescribedBy       []string
+	Controls          []string
+	FlowsTo           []string
+	Actions           []string
+}
+
+type SemanticTree struct {
+	Revision uint64
+	Nodes    []SemanticNode
+}
+
 type Event struct {
 	Type    EventType
 	X       int32
@@ -117,6 +173,10 @@ type Event struct {
 	Char    uint32
 	Width   int32
 	Height  int32
+	Text    string
+	Target  string
+	Action  string
+	Value   string
 }
 
 type EventBatch struct {

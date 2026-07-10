@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"go_native_gpu_gui/pkg/render/semantics"
 	"go_native_gpu_gui/pkg/render/types"
 )
 
@@ -17,16 +18,27 @@ type textareaStyledChar struct {
 }
 
 type TextArea struct {
-	CompID      string
-	Rect        image.Rectangle
-	Text        string
-	Placeholder string
-	BGColor     color.RGBA
-	TextColor   color.RGBA
-	Rounding    int
-	CharWidth   int // default 8 if 0
-	LineHeight  int // default 24 if 0
-	CursorIndex int // character cursor offset (runes based), -1 if not focused/at end on init
+	CompID         string
+	Rect           image.Rectangle
+	Text           string
+	Placeholder    string
+	BGColor        color.RGBA
+	TextColor      color.RGBA
+	Rounding       int
+	CharWidth      int // default 8 if 0
+	LineHeight     int // default 24 if 0
+	CursorIndex    int // character cursor offset (runes based), -1 if not focused/at end on init
+	UseTheme       bool
+	Disabled       bool
+	ReadOnly       bool
+	Invalid        bool
+	Required       bool
+	AccessibleName string
+	OnChange       func(string, *types.ApplicationState)
+}
+
+func NewTextArea(id, placeholder string) *TextArea {
+	return &TextArea{CompID: id, Placeholder: placeholder, CursorIndex: -1, UseTheme: true}
 }
 
 func (t *TextArea) ID() string              { return t.CompID }
@@ -61,7 +73,7 @@ func (t *TextArea) SetBounds(r image.Rectangle) {
 	t.Rect = r
 }
 
-func (t *TextArea) Focusable() bool               { return true }
+func (t *TextArea) Focusable() bool               { return !t.Disabled }
 func (t *TextArea) Walk(fn func(types.Component)) { fn(t) }
 
 func (t *TextArea) HitTest(pt image.Point) string {
@@ -72,7 +84,11 @@ func (t *TextArea) HitTest(pt image.Point) string {
 }
 
 func (t *TextArea) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
+	if t.Disabled {
+		return false
+	}
 	state.FocusedID = t.CompID
+	state.ActiveID = t.CompID
 
 	charW := t.CharWidth
 	if charW <= 0 {
@@ -178,6 +194,11 @@ func (t *TextArea) OnMouseDown(pt image.Point, state *types.ApplicationState) bo
 		state.TextInputValues[t.CompID] = t.Text
 		state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
 	}
+	selection := textInputSelection{Anchor: t.CursorIndex, Caret: t.CursorIndex}
+	if modifierPressed(state, 0x10) {
+		selection.Anchor = t.editingSelection(state, len(rawRunes)).Anchor
+	}
+	t.setEditingSelection(state, selection, len(rawRunes))
 
 	return true
 }
@@ -288,9 +309,23 @@ func buildTextareaParagraphs(rawRunes []rune) [][]textareaStyledChar {
 }
 
 func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
-	if state.FocusedID != t.CompID {
+	if state.FocusedID != t.CompID || t.Disabled {
 		return false
 	}
+	if key != 0x26 && key != 0x28 {
+		before := t.Text
+		handled := t.handleEditingKey(key, char, state)
+		if handled && t.Text != before && t.OnChange != nil {
+			t.OnChange(t.Text, state)
+		}
+		return handled
+	}
+	before := t.Text
+	defer func() {
+		if t.Text != before && t.OnChange != nil {
+			t.OnChange(t.Text, state)
+		}
+	}()
 
 	defer func() {
 		if state.TextInputValues != nil {
@@ -327,6 +362,7 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 
 	// Support UP/DOWN key navigation
 	if key == VK_UP || key == VK_DOWN {
+		verticalSelection := t.editingSelection(state, len(rawRunes))
 		charW := t.CharWidth
 		if charW <= 0 {
 			charW = state.FontCharWidth
@@ -411,6 +447,11 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 				}, newCol)
 			}
 		}
+		anchor := t.CursorIndex
+		if modifierPressed(state, 0x10) {
+			anchor = verticalSelection.Anchor
+		}
+		t.setEditingSelection(state, textInputSelection{Anchor: anchor, Caret: t.CursorIndex}, len(rawRunes))
 		return true
 	}
 
@@ -492,8 +533,23 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 	}
 	maxCharsPerLine := maxWidth / charW
 
-	// Draw glowing focus outline ring if focused
-	if state.FocusedID == t.CompID {
+	current := activeTheme(state)
+	useTheme := themed(t.UseTheme, state)
+	if useTheme {
+		visual := controlVisual{background: current.Colors.SurfaceSunken, foreground: current.Colors.Text,
+			border: current.Colors.Border, focus: current.Colors.Focus, radius: current.Radii.Medium}
+		if state.HoveredID == t.CompID {
+			visual.border = current.Colors.BorderStrong
+		}
+		if t.Invalid {
+			visual.border = current.Colors.Danger
+		}
+		if t.Disabled {
+			visual.background, visual.foreground = current.Colors.Surface, current.Colors.TextDisabled
+		}
+		drawControlSurface(pnt, t.Rect, visual, state.FocusedID == t.CompID && !t.Disabled)
+		t.TextColor = visual.foreground
+	} else if state.FocusedID == t.CompID {
 		pnt.SetGlow(6.0)
 		pnt.DrawRoundedRect(image.Rect(t.Rect.Min.X-2, t.Rect.Min.Y-2, t.Rect.Max.X+2, t.Rect.Max.Y+2), t.Rounding+2, color.RGBA{139, 92, 246, 200})
 		pnt.SetGlow(0)
@@ -504,19 +560,26 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 	}
 
 	// Draw background box if BGColor has alpha
-	if t.BGColor.A > 0 {
+	if !useTheme && t.BGColor.A > 0 {
 		pnt.DrawRoundedRect(t.Rect, t.Rounding, t.BGColor)
 	}
 
-	rawRunes := []rune(t.Text)
-	paragraphs := buildTextareaParagraphs(rawRunes)
-
 	// If cursor is not set yet, set to end
-	if t.CursorIndex < 0 || t.CursorIndex > len(rawRunes) {
-		t.CursorIndex = len(rawRunes)
+	baseRunes := []rune(t.Text)
+	if t.CursorIndex < 0 || t.CursorIndex > len(baseRunes) {
+		t.CursorIndex = len(baseRunes)
 		if state.TextInputValues != nil {
 			state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
 		}
+	}
+	displayText, compositionStart, compositionEnd, compositionActive := t.compositionDisplay(state)
+	rawRunes := []rune(displayText)
+	paragraphs := buildTextareaParagraphs(rawRunes)
+	drawCursorIndex := t.CursorIndex
+	selectionStart, selectionEnd := t.Selection(state)
+	if compositionActive {
+		drawCursorIndex = compositionEnd
+		selectionStart, selectionEnd = 0, 0
 	}
 
 	currentY := t.Rect.Min.Y + padY
@@ -531,7 +594,7 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 	for _, paragraph := range paragraphs {
 		// Empty paragraph represents a single newline
 		if len(paragraph) == 0 {
-			if startAbsIdx == t.CursorIndex {
+			if startAbsIdx == drawCursorIndex {
 				caretX = t.Rect.Min.X + padX
 				caretY = currentY
 			}
@@ -540,7 +603,7 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 			continue
 		}
 
-		if startAbsIdx == t.CursorIndex {
+		if startAbsIdx == drawCursorIndex {
 			caretX = t.Rect.Min.X + padX
 			caretY = currentY
 		}
@@ -551,9 +614,20 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 			}
 
 			cursorX := t.Rect.Min.X + padX
-			caretVisualCol := textareaLineVisibleColumn(line, t.CursorIndex)
+			caretVisualCol := textareaLineVisibleColumn(line, drawCursorIndex)
 			var subsegment []rune
 			subIsBold := false
+			lineEndAbsIdx := textareaLineEndIndex(line)
+			if selectionStart < selectionEnd && selectionEnd > line.startAbsIdx && selectionStart < lineEndAbsIdx {
+				highlightStart := maxInt(selectionStart, line.startAbsIdx)
+				highlightEnd := minInt(selectionEnd, lineEndAbsIdx)
+				startColumn := textareaLineVisibleColumn(line, highlightStart)
+				endColumn := textareaLineVisibleColumn(line, highlightEnd)
+				if endColumn > startColumn {
+					left := t.Rect.Min.X + padX + startColumn*charW
+					pnt.FillRect(image.Rect(left, currentY-lineH+4, left+(endColumn-startColumn)*charW, currentY+4), current.Colors.Selection)
+				}
+			}
 
 			flushSub := func() {
 				if len(subsegment) == 0 {
@@ -561,8 +635,12 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 				}
 				c := t.TextColor
 				if subIsBold {
-					c = color.RGBA{196, 181, 253, 255} // Glowing violet for bold
-					pnt.SetGlow(3.0)
+					if useTheme {
+						c = current.Colors.Accent
+					} else {
+						c = color.RGBA{196, 181, 253, 255}
+						pnt.SetGlow(3.0)
+					}
 				}
 				pnt.DrawText(string(subsegment), cursorX, currentY, c)
 				pnt.SetGlow(0)
@@ -586,9 +664,18 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 				subsegment = append(subsegment, sc.char)
 			}
 			flushSub()
+			if compositionActive && compositionEnd > line.startAbsIdx && compositionStart < lineEndAbsIdx {
+				underlineStart := maxInt(compositionStart, line.startAbsIdx)
+				underlineEnd := minInt(compositionEnd, lineEndAbsIdx)
+				startColumn := textareaLineVisibleColumn(line, underlineStart)
+				endColumn := textareaLineVisibleColumn(line, underlineEnd)
+				if endColumn > startColumn {
+					left := t.Rect.Min.X + padX + startColumn*charW
+					pnt.FillRect(image.Rect(left, currentY+5, left+(endColumn-startColumn)*charW, currentY+7), current.Colors.Focus)
+				}
+			}
 
-			lineEndAbsIdx := textareaLineEndIndex(line)
-			if lineEndAbsIdx == t.CursorIndex {
+			if lineEndAbsIdx == drawCursorIndex {
 				caretX = cursorX
 				caretY = currentY
 			}
@@ -597,7 +684,7 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 		}
 
 		paraEndAbsIdx := startAbsIdx + len(paragraph)
-		if paraEndAbsIdx == t.CursorIndex {
+		if paraEndAbsIdx == drawCursorIndex {
 			caretX = t.Rect.Min.X + padX
 			caretY = currentY
 		}
@@ -610,12 +697,17 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 	// Draw the caret blinking (if focused)
 	if state.FocusedID == t.CompID {
 		if (time.Since(state.StartTime).Milliseconds()/500)%2 == 0 {
-			caretColor := color.RGBA{139, 92, 246, 255} // Violet
+			caretColor := current.Colors.Accent
+			if !useTheme {
+				caretColor = color.RGBA{139, 92, 246, 255}
+			}
 			if state.TextInputValues["txt_manuscript_editor_streaming"] == "true" {
 				caretColor = color.RGBA{0, 255, 150, 255} // Emerald
 			}
 
-			pnt.SetGlow(6.0)
+			if !useTheme {
+				pnt.SetGlow(6.0)
+			}
 			bearingX := state.FontCharBearingX
 			pnt.PushClip(t.Rect)
 			pnt.FillRect(image.Rect(caretX+bearingX, caretY-13, caretX+bearingX+2, caretY+3), caretColor)
@@ -626,5 +718,36 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 
 }
 
-func (t *TextArea) OnMouseUp(pt image.Point, state *types.ApplicationState) bool   { return false }
-func (t *TextArea) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
+func (t *TextArea) Semantics(state *types.ApplicationState) semantics.Node {
+	name := t.AccessibleName
+	if name == "" {
+		name = t.Placeholder
+	}
+	start, end := t.Selection(state)
+	return semantics.Node{ID: t.CompID, Role: semantics.RoleTextField, Name: name, Value: t.Text, Bounds: t.Rect,
+		State:   semantics.State{Disabled: t.Disabled, ReadOnly: t.ReadOnly, Required: t.Required, Invalid: t.Invalid, Focused: state != nil && state.FocusedID == t.CompID},
+		Text:    &semantics.TextValue{SelectionStart: start, SelectionEnd: end, Multiline: true},
+		Actions: []semantics.Action{semantics.ActionFocus, semantics.ActionSetValue, semantics.ActionSetSelection}}
+}
+
+func (t *TextArea) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
+	if state.ActiveID != t.CompID {
+		return false
+	}
+	state.ActiveID = ""
+	return true
+}
+
+func (t *TextArea) OnMouseMove(pt image.Point, state *types.ApplicationState) bool {
+	if state.ActiveID != t.CompID {
+		return false
+	}
+	if state.KeysPressed == nil {
+		state.KeysPressed = make(map[uint32]bool)
+	}
+	shiftWasPressed := state.KeysPressed[0x10]
+	state.KeysPressed[0x10] = true
+	handled := t.OnMouseDown(pt, state)
+	state.KeysPressed[0x10] = shiftWasPressed
+	return handled
+}

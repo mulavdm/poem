@@ -7,12 +7,14 @@
 namespace poem::protocol {
 
 constexpr char kMagic[4] = {'P', 'O', 'E', 'M'};
-constexpr std::uint16_t kVersion = 1;
+constexpr std::uint16_t kVersion = 2;
 
 enum class MessageType : std::uint16_t {
     InitEngine = 1,
     RenderFrame = 2,
     PlaySound = 3,
+    SemanticTree = 4,
+    FontAtlas = 5,
     EventBatch = 101,
     NativeDebugRequest = 201,
     NativeDebugResponse = 202,
@@ -49,6 +51,10 @@ enum class EventType : std::uint8_t {
     KeyDown = 6,
     KeyUp = 7,
     KeyChar = 8,
+    CompositionStart = 9,
+    CompositionUpdate = 10,
+    CompositionEnd = 11,
+	SemanticAction = 12,
 };
 
 struct Envelope {
@@ -108,6 +114,55 @@ struct PlaySound {
     SoundType type{};
 };
 
+struct SemanticNode {
+    std::int32_t parent{-1};
+    std::string id;
+    std::string role;
+    std::string name;
+    std::string description;
+	std::string accessKey;
+    std::string value;
+    std::int32_t x1{}, y1{}, x2{}, y2{};
+    std::uint32_t state{};
+	bool hasRange{};
+	double rangeMin{};
+	double rangeMax{};
+	double smallChange{};
+	double largeChange{};
+	bool hasText{};
+	std::int32_t selectionStart{};
+	std::int32_t selectionEnd{};
+	bool multiline{};
+	bool hasCollection{};
+	bool canSelectMultiple{};
+	bool selectionRequired{};
+	bool hasGrid{};
+	std::int32_t gridRows{};
+	std::int32_t gridColumns{};
+	bool hasGridItem{};
+	std::int32_t gridRow{};
+	std::int32_t gridColumn{};
+	std::int32_t gridRowSpan{};
+	std::int32_t gridColumnSpan{};
+	bool hasScroll{};
+	bool hScrollable{};
+	bool vScrollable{};
+	double hScrollPercent{};
+	double vScrollPercent{};
+	double hViewSize{};
+	double vViewSize{};
+	std::vector<std::string> labeledBy;
+	std::vector<std::string> describedBy;
+	std::vector<std::string> controls;
+	std::vector<std::string> flowsTo;
+    std::vector<std::string> actions;
+};
+
+struct SemanticTree {
+    std::uint64_t revision{};
+    std::vector<SemanticNode> nodes;
+};
+
 struct Event {
     EventType type{};
     std::int32_t x{};
@@ -118,6 +173,10 @@ struct Event {
     std::uint32_t ch{};
     std::int32_t width{};
     std::int32_t height{};
+    std::string text;
+	std::string target;
+	std::string action;
+	std::string value;
 };
 
 struct EventBatch {
@@ -180,6 +239,7 @@ Envelope DecodeEnvelope(const std::vector<std::uint8_t>& payload);
 InitEngine DecodeInitEngine(const std::vector<std::uint8_t>& body);
 RenderFrame DecodeRenderFrame(const std::vector<std::uint8_t>& body);
 PlaySound DecodePlaySound(const std::vector<std::uint8_t>& body);
+SemanticTree DecodeSemanticTree(const std::vector<std::uint8_t>& body);
 NativeDebugRequest DecodeNativeDebugRequest(const std::vector<std::uint8_t>& body);
 NativeDialogRequest DecodeNativeDialogRequest(const std::vector<std::uint8_t>& body);
 std::vector<std::uint8_t> EncodeEventBatch(const EventBatch& batch);
