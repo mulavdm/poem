@@ -25,7 +25,7 @@ The public Go API remains stable while the native presentation layer evolves und
 .
 |-- cmd/engine/            # Demo entrypoint that exercises the library
 |-- cpp_sidecar/           # Windows-first native presentation sidecar (Win32 + D3D11)
-|-- docs/                  # Focused reference docs such as automation
+|-- docs/                  # Focused reference docs (POEM 2.0 foundation guide)
 |-- internal/win32/        # Private Win32 syscall wrappers used by the Go side
 |-- pkg/render/            # Public Go UI library
 |   |-- components/        # Declarative UI primitives
@@ -35,10 +35,8 @@ The public Go API remains stable while the native presentation layer evolves und
 |   |-- types/             # Shared state, interfaces, and contracts
 |   |-- painter.go         # Draw-command capture and frame serialization
 |   `-- run.go             # Sidecar launch, IPC, and event/render orchestration
-|-- AGENTS.md              # Project-specific agent guidance
-|-- ARCHITECTURE.md        # Design notes and deeper implementation context
-|-- GEMINI.md              # Mirrored project-specific agent guidance
-`-- GUIDE.md               # UI authoring quickstart
+|-- okf/                   # Local OKF knowledge bundle (architecture, API, protocol, automation concepts)
+`-- AGENTS.md              # Project-specific agent guidance
 ```
 
 `rust_engine/` is still present as legacy reference material during the port, but it is no longer the active runtime path.
@@ -98,7 +96,7 @@ render.Run(render.AppConfig{
 })
 ```
 
-The source-of-truth automation reference is [docs/AUTOMATION.md](./docs/AUTOMATION.md).
+The source-of-truth automation reference is [okf/concepts/automation/index.md](./okf/concepts/automation/index.md).
 Commands may use stable component IDs or unique semantic role/name/state
 selectors; successful selector commands report the resolved stable target ID.
 
@@ -132,7 +130,7 @@ This means downstream apps should not assume "declare children and forget it" br
 - cap long status text or labels explicitly when the UI has tight horizontal budgets
 - **Systematic Layout Rule**: Never use hardcoded visual offsets or ad-hoc coordinate bypasses to fix visual text or container clipping. Position and baseline issues must be resolved systematically within the rendering engine's layout components (like FlexBox or Grid) or component-level metric calculations, and parent container dimensions must be properly sized to fit their contents.
 
-See [GUIDE.md](./GUIDE.md) for the downstream migration pattern.
+See [okf/concepts/architecture/layout-measurement.md](./okf/concepts/architecture/layout-measurement.md) for the downstream migration pattern.
 
 ## Sidecar Resolution
 
@@ -209,8 +207,6 @@ Known follow-up work:
 
 ## Docs
 
-- [GUIDE.md](./GUIDE.md)
-- [ARCHITECTURE.md](./ARCHITECTURE.md)
-- [docs/AUTOMATION.md](./docs/AUTOMATION.md)
+- [docs/POEM_2_FOUNDATION.md](./docs/POEM_2_FOUNDATION.md)
 - [AGENTS.md](./AGENTS.md)
-- [GEMINI.md](./GEMINI.md)
+- [okf/index.md](./okf/index.md)
