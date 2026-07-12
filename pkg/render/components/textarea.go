@@ -20,7 +20,7 @@ type textareaStyledChar struct {
 type TextArea struct {
 	CompID         string
 	Rect           image.Rectangle
-	Text           string
+	Value          string
 	Placeholder    string
 	BGColor        color.RGBA
 	TextColor      color.RGBA
@@ -57,7 +57,7 @@ func (t *TextArea) Measure(avail image.Point, state *types.ApplicationState) typ
 		width = 320
 	}
 	maxCharsPerLine := maxInt(1, (width-padX)/charW)
-	content := t.Text
+	content := t.Value
 	if strings.TrimSpace(content) == "" {
 		content = t.Placeholder
 	}
@@ -108,7 +108,7 @@ func (t *TextArea) OnMouseDown(pt image.Point, state *types.ApplicationState) bo
 	bearingX := state.FontCharBearingX
 	clickX := pt.X - t.Rect.Min.X - padX - bearingX
 
-	rawRunes := []rune(t.Text)
+	rawRunes := []rune(t.Value)
 	paragraphs := buildTextareaParagraphs(rawRunes)
 
 	maxWidth := t.Rect.Dx() - 2*padX
@@ -191,7 +191,7 @@ func (t *TextArea) OnMouseDown(pt image.Point, state *types.ApplicationState) bo
 
 	// Update in state text values
 	if state.TextInputValues != nil {
-		state.TextInputValues[t.CompID] = t.Text
+		state.TextInputValues[t.CompID] = t.Value
 		state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
 	}
 	selection := textInputSelection{Anchor: t.CursorIndex, Caret: t.CursorIndex}
@@ -313,17 +313,17 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 		return false
 	}
 	if key != 0x26 && key != 0x28 {
-		before := t.Text
+		before := t.Value
 		handled := t.handleEditingKey(key, char, state)
-		if handled && t.Text != before && t.OnChange != nil {
-			t.OnChange(t.Text, state)
+		if handled && t.Value != before && t.OnChange != nil {
+			t.OnChange(t.Value, state)
 		}
 		return handled
 	}
-	before := t.Text
+	before := t.Value
 	defer func() {
-		if t.Text != before && t.OnChange != nil {
-			t.OnChange(t.Text, state)
+		if t.Value != before && t.OnChange != nil {
+			t.OnChange(t.Value, state)
 		}
 	}()
 
@@ -340,7 +340,7 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 	const VK_RIGHT = 0x27
 	const VK_DOWN = 0x28
 
-	rawRunes := []rune(t.Text)
+	rawRunes := []rune(t.Value)
 
 	// Clamp cursor index safely
 	if t.CursorIndex < 0 || t.CursorIndex > len(rawRunes) {
@@ -458,11 +458,11 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 	if key == VK_RETURN {
 		// Insert newline at CursorIndex
 		newText := append(rawRunes[:t.CursorIndex], append([]rune{'\n'}, rawRunes[t.CursorIndex:]...)...)
-		t.Text = string(newText)
+		t.Value = string(newText)
 		t.CursorIndex++
 
 		if state.TextInputValues != nil {
-			state.TextInputValues[t.CompID] = t.Text
+			state.TextInputValues[t.CompID] = t.Value
 		}
 		return true
 	}
@@ -471,11 +471,11 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 		if t.CursorIndex > 0 {
 			// Delete character at CursorIndex-1
 			newText := append(rawRunes[:t.CursorIndex-1], rawRunes[t.CursorIndex:]...)
-			t.Text = string(newText)
+			t.Value = string(newText)
 			t.CursorIndex--
 
 			if state.TextInputValues != nil {
-				state.TextInputValues[t.CompID] = t.Text
+				state.TextInputValues[t.CompID] = t.Value
 			}
 		}
 		return true
@@ -484,11 +484,11 @@ func (t *TextArea) OnKey(key uint32, char rune, state *types.ApplicationState) b
 	// Handle Printable ASCII characters insert
 	if char >= 32 && char <= 126 {
 		newText := append(rawRunes[:t.CursorIndex], append([]rune{char}, rawRunes[t.CursorIndex:]...)...)
-		t.Text = string(newText)
+		t.Value = string(newText)
 		t.CursorIndex++
 
 		if state.TextInputValues != nil {
-			state.TextInputValues[t.CompID] = t.Text
+			state.TextInputValues[t.CompID] = t.Value
 		}
 		return true
 	}
@@ -500,9 +500,9 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 	// Restore state if present
 	if state.TextInputValues != nil {
 		if val, ok := state.TextInputValues[t.CompID]; ok {
-			t.Text = val
+			t.Value = val
 		} else {
-			state.TextInputValues[t.CompID] = t.Text
+			state.TextInputValues[t.CompID] = t.Value
 		}
 		if cursorValStr, ok := state.TextInputValues[t.CompID+"_cursor"]; ok {
 			var restoredCursor int
@@ -565,7 +565,7 @@ func (t *TextArea) Draw(pnt types.Painter, state *types.ApplicationState) {
 	}
 
 	// If cursor is not set yet, set to end
-	baseRunes := []rune(t.Text)
+	baseRunes := []rune(t.Value)
 	if t.CursorIndex < 0 || t.CursorIndex > len(baseRunes) {
 		t.CursorIndex = len(baseRunes)
 		if state.TextInputValues != nil {
@@ -724,7 +724,7 @@ func (t *TextArea) Semantics(state *types.ApplicationState) semantics.Node {
 		name = t.Placeholder
 	}
 	start, end := t.Selection(state)
-	return semantics.Node{ID: t.CompID, Role: semantics.RoleTextField, Name: name, Value: t.Text, Bounds: t.Rect,
+	return semantics.Node{ID: t.CompID, Role: semantics.RoleTextField, Name: name, Value: t.Value, Bounds: t.Rect,
 		State:   semantics.State{Disabled: t.Disabled, ReadOnly: t.ReadOnly, Required: t.Required, Invalid: t.Invalid, Focused: state != nil && state.FocusedID == t.CompID},
 		Text:    &semantics.TextValue{SelectionStart: start, SelectionEnd: end, Multiline: true},
 		Actions: []semantics.Action{semantics.ActionFocus, semantics.ActionSetValue, semantics.ActionSetSelection}}

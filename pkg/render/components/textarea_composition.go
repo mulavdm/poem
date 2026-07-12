@@ -65,7 +65,7 @@ func (t *TextArea) EndComposition(committedText string, state *types.Application
 		start, end := t.Selection(state)
 		composition = textInputComposition{SelectionStart: start, SelectionEnd: end}
 	}
-	runes := []rune(t.Text)
+	runes := []rune(t.Value)
 	selection := textInputSelection{
 		Anchor: clampTextIndex(composition.SelectionStart, len(runes)),
 		Caret:  clampTextIndex(composition.SelectionEnd, len(runes)),
@@ -75,11 +75,11 @@ func (t *TextArea) EndComposition(committedText string, state *types.Application
 	if len(runes)-(end-start)+len(replacement) > maxTextInputRunes {
 		return false
 	}
-	before := t.Text
+	before := t.Value
 	next, caret := replaceSelectedRunes(runes, selection, replacement)
 	t.syncEditedText(state, next, caret)
-	if t.Text != before && t.OnChange != nil {
-		t.OnChange(t.Text, state)
+	if t.Value != before && t.OnChange != nil {
+		t.OnChange(t.Value, state)
 	}
 	return true
 }
@@ -87,9 +87,9 @@ func (t *TextArea) EndComposition(committedText string, state *types.Application
 func (t *TextArea) compositionDisplay(state *types.ApplicationState) (text string, start, end int, active bool) {
 	composition, ok := t.composition(state)
 	if !ok {
-		return t.Text, 0, 0, false
+		return t.Value, 0, 0, false
 	}
-	runes := []rune(t.Text)
+	runes := []rune(t.Value)
 	start = clampTextIndex(composition.SelectionStart, len(runes))
 	selectionEnd := clampTextIndex(composition.SelectionEnd, len(runes))
 	if start > selectionEnd {

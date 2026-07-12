@@ -50,7 +50,7 @@ Wrap a vertical `render.FlexBox` container inside a `render.ScrollView` and plac
             Gap:       15,
             Children: []render.Component{
                 &render.Label{CompID: "lbl_header", Text: "MASSIVE LIST CONTENT"},
-                &render.Button{CompID: "scroll_btn_1", Rect: image.Rect(0, 0, 150, 40), Label: "CLICK ME"},
+                &render.Button{CompID: "scroll_btn_1", Rect: image.Rect(0, 0, 150, 40), Text: "CLICK ME"},
                 &render.TextInput{CompID: "scroll_txt_1", Rect: image.Rect(0, 0, 150, 45), Placeholder: "Type here..."},
                 // Add as many children as needed...
             },

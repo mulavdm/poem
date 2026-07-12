@@ -59,6 +59,10 @@ func (m *Modal) HitTest(pt image.Point) string {
 }
 
 func (m *Modal) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
+	if key == 27 && m.OnDismiss != nil {
+		m.OnDismiss(state)
+		return true
+	}
 	for i := len(m.Children) - 1; i >= 0; i-- {
 		if m.Children[i].OnKey(key, char, state) {
 			return true

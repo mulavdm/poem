@@ -19,6 +19,26 @@ type LabeledBox struct {
 	Child       types.Component
 	LineHeight  int
 	TitleOffset int
+
+	// Help is supplementary text shown below the child when non-empty. Error
+	// takes precedence over Help when both are set.
+	Help  string
+	Error string
+}
+
+// hasDescription reports whether a help/error row should be reserved below
+// the child.
+func (l *LabeledBox) hasDescription() bool {
+	return l.Help != "" || l.Error != ""
+}
+
+// descriptionText returns the text to draw in the reserved row, preferring
+// Error over Help.
+func (l *LabeledBox) descriptionText() string {
+	if l.Error != "" {
+		return l.Error
+	}
+	return l.Help
 }
 
 func (l *LabeledBox) ID() string              { return l.CompID }
@@ -39,23 +59,28 @@ func (l *LabeledBox) Measure(avail image.Point, state *types.ApplicationState) t
 		gap = 8
 	}
 
+	descH := 0
+	if l.hasDescription() {
+		descH = lineH + gap
+	}
+
 	titleWidth := maxInt(charW, len([]rune(l.Title))*charW)
 	titleSize := image.Pt(titleWidth, lineH)
 	if l.Child == nil {
-		size := applyExplicitSize(explicitSize(l.Rect), image.Pt(titleSize.X, titleSize.Y))
+		size := applyExplicitSize(explicitSize(l.Rect), image.Pt(titleSize.X, titleSize.Y+descH))
 		return types.MeasureResult{Preferred: size, Min: size}
 	}
 
 	childAvail := avail
 	if childAvail.Y > 0 {
-		childAvail.Y = maxInt(0, childAvail.Y-lineH-gap)
+		childAvail.Y = maxInt(0, childAvail.Y-lineH-gap-descH)
 	}
 	childMeasure := types.MeasureComponent(l.Child, childAvail, state)
-	preferred := image.Pt(maxInt(titleSize.X, childMeasure.Preferred.X), titleSize.Y+gap+childMeasure.Preferred.Y)
+	preferred := image.Pt(maxInt(titleSize.X, childMeasure.Preferred.X), titleSize.Y+gap+childMeasure.Preferred.Y+descH)
 	preferred = applyExplicitSize(explicitSize(l.Rect), preferred)
 	return types.MeasureResult{
 		Preferred: preferred,
-		Min:       image.Pt(maxInt(titleSize.X, childMeasure.Min.X), titleSize.Y+gap+childMeasure.Min.Y),
+		Min:       image.Pt(maxInt(titleSize.X, childMeasure.Min.X), titleSize.Y+gap+childMeasure.Min.Y+descH),
 	}
 }
 
@@ -73,7 +98,11 @@ func (l *LabeledBox) SetBounds(r image.Rectangle) {
 		gap = 8
 	}
 	childTop := r.Min.Y + lineH + gap
-	l.Child.SetBounds(image.Rect(r.Min.X, childTop, r.Max.X, r.Max.Y))
+	childBottom := r.Max.Y
+	if l.hasDescription() {
+		childBottom = maxInt(childTop, r.Max.Y-lineH-gap)
+	}
+	l.Child.SetBounds(image.Rect(r.Min.X, childTop, r.Max.X, childBottom))
 }
 
 func (l *LabeledBox) Draw(p types.Painter, state *types.ApplicationState) {
@@ -95,6 +124,13 @@ func (l *LabeledBox) Draw(p types.Painter, state *types.ApplicationState) {
 	p.DrawText(l.Title, l.Rect.Min.X, l.Rect.Min.Y+offset, col)
 	if l.Child != nil {
 		l.Child.Draw(p, state)
+	}
+	if l.hasDescription() {
+		descCol := activeTheme(state).Colors.TextMuted
+		if l.Error != "" {
+			descCol = activeTheme(state).Colors.Danger
+		}
+		p.DrawText(l.descriptionText(), l.Rect.Min.X, l.Rect.Max.Y-lineH+offset, descCol)
 	}
 }
 
@@ -158,10 +194,23 @@ func (l *LabeledBox) ChildComponents() []types.Component {
 // appended by the tree builder and related to this label by
 // TransformSemanticChild.
 func (l *LabeledBox) Semantics(*types.ApplicationState) semantics.Node {
-	labelBounds := image.Rect(l.Rect.Min.X, l.Rect.Min.Y, l.Rect.Max.X, l.Rect.Min.Y+maxInt(l.LineHeight, 20))
-	return semantics.Node{ID: l.CompID, Role: semantics.RoleGroup, Name: l.Title, Bounds: l.Rect, Children: []semantics.Node{{
+	lineH := maxInt(l.LineHeight, 20)
+	labelBounds := image.Rect(l.Rect.Min.X, l.Rect.Min.Y, l.Rect.Max.X, l.Rect.Min.Y+lineH)
+	children := []semantics.Node{{
 		ID: l.CompID + "/label", Role: semantics.RoleText, Name: l.Title, Value: l.Title, Bounds: labelBounds,
-	}}}
+	}}
+	if l.hasDescription() {
+		descBounds := image.Rect(l.Rect.Min.X, l.Rect.Max.Y-lineH, l.Rect.Max.X, l.Rect.Max.Y)
+		descRole := semantics.RoleText
+		if l.Error != "" {
+			descRole = semantics.RoleAlert
+		}
+		text := l.descriptionText()
+		children = append(children, semantics.Node{
+			ID: l.CompID + "/description", Role: descRole, Name: text, Value: text, Bounds: descBounds,
+		})
+	}
+	return semantics.Node{ID: l.CompID, Role: semantics.RoleGroup, Name: l.Title, Bounds: l.Rect, Children: children}
 }
 
 func (l *LabeledBox) TransformSemanticChild(node *semantics.Node, _ *types.ApplicationState) {
@@ -169,10 +218,24 @@ func (l *LabeledBox) TransformSemanticChild(node *semantics.Node, _ *types.Appli
 		return
 	}
 	labelID := l.CompID + "/label"
+	hasLabel := false
 	for _, id := range node.Relations.LabeledBy {
 		if id == labelID {
+			hasLabel = true
+			break
+		}
+	}
+	if !hasLabel {
+		node.Relations.LabeledBy = append(node.Relations.LabeledBy, labelID)
+	}
+	if !l.hasDescription() {
+		return
+	}
+	descID := l.CompID + "/description"
+	for _, id := range node.Relations.DescribedBy {
+		if id == descID {
 			return
 		}
 	}
-	node.Relations.LabeledBy = append(node.Relations.LabeledBy, labelID)
+	node.Relations.DescribedBy = append(node.Relations.DescribedBy, descID)
 }

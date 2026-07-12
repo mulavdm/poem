@@ -19,8 +19,8 @@ POEM features a fully responsive multi-axis grid positioning system mirroring Fl
     Padding:        10,
     Gap:            15, // Space between elements
     Children: []render.Component{
-        &render.Button{CompID: "btn_a", Rect: image.Rect(0,0,100,40), Label: "Button A"},
-        &render.Button{CompID: "btn_b", Rect: image.Rect(0,0,100,40), Label: "Button B"},
+        &render.Button{CompID: "btn_a", Rect: image.Rect(0,0,100,40), Text: "Button A"},
+        &render.Button{CompID: "btn_b", Rect: image.Rect(0,0,100,40), Text: "Button B"},
     },
 }
 ```

@@ -182,7 +182,7 @@ func (t *Toast) Draw(p types.Painter, state *types.ApplicationState) {
 	p.SetShadow(0, 0, 0)
 	accent := textRoleColor(th, TextAccent)
 	switch t.Variant {
-	case theme.VariantDestructive:
+	case theme.VariantDanger:
 		accent = th.Colors.Danger
 	case theme.VariantSuccess:
 		accent = th.Colors.Success

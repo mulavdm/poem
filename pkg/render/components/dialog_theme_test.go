@@ -22,7 +22,7 @@ func TestDialogAppliesInitialRevisionZeroTheme(t *testing.T) {
 }
 
 func TestDialogButtonsSizeToLabels(t *testing.T) {
-	dialog := &Dialog{CompID: "pause", Buttons: []*Button{{CompID: "restart", Label: "Restart run"}}}
+	dialog := &Dialog{CompID: "pause", Buttons: []*Button{{CompID: "restart", Text: "Restart run"}}}
 	dialog.SetBounds(image.Rect(0, 0, 800, 600))
 	if width := dialog.Buttons[0].Bounds().Dx(); width <= 100 {
 		t.Fatalf("descriptive action width=%d", width)

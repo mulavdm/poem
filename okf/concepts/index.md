@@ -4,3 +4,4 @@
 * [Public API Surface](/concepts/public-api.md) — the `pkg/render` contract downstream apps consume
 * [Sidecar Protocol](/concepts/protocol.md) — the binary wire protocol between Go and the sidecar
 * [Automation](/concepts/automation/index.md) — the HTTP inspection/automation surface
+* [Decisions](/concepts/decisions/index.md) — architectural decisions and their rationale

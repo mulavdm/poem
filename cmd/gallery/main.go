@@ -49,7 +49,7 @@ func buildGallery(state *render.ApplicationState) {
 	title.Typography = render.TypographyTitle
 	title.SetBounds(image.Rect(40, 28, 420, 68))
 	status := render.NewBadge("gallery.status", "FOUNDATION")
-	status.Role = render.TextSuccess
+	status.Variant = render.VariantSuccess
 	status.SetBounds(image.Rect(w-160, 34, w-42, 64))
 
 	sidebar := render.NewPanel("gallery.sidebar")
@@ -71,7 +71,7 @@ func buildGallery(state *render.ApplicationState) {
 	tabs := render.NewTabs("gallery.tabs", []render.TabItem{{ID: "controls", Label: "Controls"}, {ID: "inputs", Label: "Inputs"}, {ID: "navigation", Label: "Navigation"}, {ID: "feedback", Label: "Feedback"}}, activeTab, func(next string, _ *render.ApplicationState) { activeTab = next })
 	name := render.NewTextInput("gallery.name", "Project name")
 	password := render.NewTextInput("gallery.password", "Password")
-	password.Text = "gallery secret"
+	password.Value = "gallery secret"
 	password.Masked = true
 	password.AccessibleName = "Password"
 	name.AccessibleName = "Project name"
@@ -95,11 +95,11 @@ func buildGallery(state *render.ApplicationState) {
 	secondary := render.NewButton("gallery.secondary", "Secondary", func(*render.ApplicationState) {})
 	secondary.Variant = render.VariantSecondary
 	danger := render.NewButton("gallery.danger", "Delete", func(*render.ApplicationState) {})
-	danger.Variant = render.VariantDestructive
+	danger.Variant = render.VariantDanger
 	dialogButton := render.NewButton("gallery.dialog", "Open dialog", func(s *render.ApplicationState) {
 		dialog := render.NewAlertDialog("gallery.alert", "Professional defaults", "POEM controls now share theme, focus, input, and accessibility semantics.", func(inner *render.ApplicationState) { inner.CloseOverlay("gallery.alert") })
 		dialog.SetBounds(image.Rect(0, 0, w, h))
-		s.OpenOverlay("gallery.alert", dialog, true, true)
+		s.OpenModal("gallery.alert", dialog, nil)
 	})
 	menuButton := render.NewButton("gallery.menu-button", "Open menu", func(s *render.ApplicationState) {
 		menu := render.NewMenu("gallery.menu", []render.MenuItem{
@@ -155,9 +155,9 @@ func buildGallery(state *render.ApplicationState) {
 			{ID: "accessibility", Title: "Accessibility", Content: render.NewLabel("gallery.accordion.accessibility", "Semantic actions remain platform-neutral.")},
 		}, expandedAccordion, func(id string, expanded bool, _ *render.ApplicationState) { expandedAccordion[id] = expanded })
 		table := render.NewDataTable("gallery.table", []render.TableColumn{
-			{Key: "name", Title: "Component", Width: 220},
-			{Key: "category", Title: "Category", Width: 180},
-			{Key: "status", Title: "Status"},
+			{Key: "name", Label: "Component", Width: 220},
+			{Key: "category", Label: "Category", Width: 180},
+			{Key: "status", Label: "Status"},
 		}, []render.TableRow{
 			{ID: "alpha", Values: map[string]string{"name": "Button", "category": "Input", "status": "Stable"}},
 			{ID: "beta", Values: map[string]string{"name": "Data table", "category": "Collection", "status": "New"}},

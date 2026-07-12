@@ -9,7 +9,7 @@ import (
 )
 
 func TestButtonMeasureReflectsLabelAndPadding(t *testing.T) {
-	button := &Button{Label: "GENERATE IMAGE"}
+	button := &Button{Text: "GENERATE IMAGE"}
 
 	result := button.Measure(image.Pt(400, 80), &types.ApplicationState{FontCharWidth: 8})
 
@@ -49,7 +49,7 @@ func TestParagraphMeasureHeightGrowsWithWrapping(t *testing.T) {
 
 func TestTextAreaMeasureHeightGrowsWithWrapping(t *testing.T) {
 	area := &TextArea{
-		Text:       "one two three four five six seven eight nine ten eleven twelve",
+		Value:      "one two three four five six seven eight nine ten eleven twelve",
 		CharWidth:  8,
 		LineHeight: 20,
 	}
@@ -99,11 +99,11 @@ func TestScrollViewSetBoundsUsesChildMeasurement(t *testing.T) {
 
 func TestScrollViewPreservesMeasuredContentWhenChildHasFixedBounds(t *testing.T) {
 	children := []types.Component{
-		&Button{Label: "one"},
-		&Button{Label: "two"},
-		&Button{Label: "three"},
-		&Button{Label: "four"},
-		&Button{Label: "five"},
+		&Button{Text: "one"},
+		&Button{Text: "two"},
+		&Button{Text: "three"},
+		&Button{Text: "four"},
+		&Button{Text: "five"},
 	}
 	stack := &layout.FlexBox{
 		Rect:           image.Rect(0, 0, 180, 80),

@@ -31,7 +31,7 @@ func TestBuildAutomationSnapshotIncludesChildren(t *testing.T) {
 			JustifyContent: JustifyStart,
 			AlignItems:     AlignStretch,
 			Children: []Component{
-				&components.Button{CompID: "btn_a", Rect: image.Rect(0, 0, 100, 40), Label: "A"},
+				&components.Button{CompID: "btn_a", Rect: image.Rect(0, 0, 100, 40), Text: "A"},
 			},
 		},
 	}
@@ -134,7 +134,7 @@ func TestAutomationClickComponentInvokesButton(t *testing.T) {
 	button := &components.Button{
 		CompID:    "btn_test",
 		Rect:      image.Rect(0, 0, 100, 40),
-		Label:     "Click",
+		Text:      "Click",
 		OnClick:   func(state *ApplicationState) { clicked = true },
 		BaseColor: color.RGBA{10, 10, 10, 255},
 	}
@@ -158,7 +158,7 @@ func TestAutomationPressKeySupportsCollectionNavigation(t *testing.T) {
 		ScrollCurrent:   make(map[string]float64),
 	}
 	selected := "a"
-	table := components.NewDataTable("table", []components.TableColumn{{Key: "name", Title: "Name"}}, []components.TableRow{
+	table := components.NewDataTable("table", []components.TableColumn{{Key: "name", Label: "Name"}}, []components.TableRow{
 		{ID: "a", Values: map[string]string{"name": "Alpha"}},
 		{ID: "b", Values: map[string]string{"name": "Beta"}},
 		{ID: "c", Values: map[string]string{"name": "Gamma"}},
@@ -265,7 +265,7 @@ func TestAutomationHTTPComponentsEndpoint(t *testing.T) {
 			CompID: "root",
 			Rect:   image.Rect(0, 0, 240, 80),
 			Children: []Component{
-				&components.Button{CompID: "btn_http", Rect: image.Rect(0, 0, 100, 40), Label: "HTTP"},
+				&components.Button{CompID: "btn_http", Rect: image.Rect(0, 0, 100, 40), Text: "HTTP"},
 			},
 		},
 	}
@@ -312,8 +312,8 @@ func TestAutomationHTTPSetTextUpdatesTextInput(t *testing.T) {
 
 func TestAutomationSnapshotDoesNotExposeMaskedText(t *testing.T) {
 	globalState = &ApplicationState{Pages: make(map[string][]Component), CurrentPage: PageDashboard, TextInputValues: make(map[string]string), TransientState: renderstate.NewStore()}
-	input := &components.TextInput{CompID: "password", Text: "secret", Masked: true, Rect: image.Rect(0, 0, 180, 40)}
-	input.CursorIndex = len([]rune(input.Text))
+	input := &components.TextInput{CompID: "password", Value: "secret", Masked: true, Rect: image.Rect(0, 0, 180, 40)}
+	input.CursorIndex = len([]rune(input.Value))
 	globalState.Pages[PageDashboard] = []Component{input}
 	_, flat := buildAutomationSnapshot()
 	if len(flat) != 1 || flat[0].Text != "" || flat[0].Value != "" || flat[0].SelectionStart != 0 || flat[0].SelectionEnd != 0 {
@@ -328,7 +328,7 @@ func TestAutomationHTTPSelectTextPublishesRuneRange(t *testing.T) {
 		TextInputValues: make(map[string]string),
 		TransientState:  renderstate.NewStore(),
 	}
-	input := &components.TextInput{CompID: "txt_select", Text: "A日本語Z", Rect: image.Rect(0, 0, 180, 40)}
+	input := &components.TextInput{CompID: "txt_select", Value: "A日本語Z", Rect: image.Rect(0, 0, 180, 40)}
 	globalState.Pages[PageDashboard] = []Component{input}
 
 	body := bytes.NewBufferString(`{"id":"txt_select","start":1,"end":4}`)
@@ -351,7 +351,7 @@ func TestAutomationHTTPSelectTextPublishesRuneRange(t *testing.T) {
 
 func TestAutomationHTTPCompositionCommitsUnicode(t *testing.T) {
 	globalState = &ApplicationState{Pages: make(map[string][]Component), CurrentPage: PageDashboard, TextInputValues: make(map[string]string), TransientState: renderstate.NewStore()}
-	input := &components.TextInput{CompID: "txt_ime", Text: "A-Z", Rect: image.Rect(0, 0, 180, 40)}
+	input := &components.TextInput{CompID: "txt_ime", Value: "A-Z", Rect: image.Rect(0, 0, 180, 40)}
 	globalState.Pages[PageDashboard] = []Component{input}
 	input.SetSelection(1, 2, globalState)
 	handler := newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{}))
@@ -368,14 +368,14 @@ func TestAutomationHTTPCompositionCommitsUnicode(t *testing.T) {
 			t.Fatalf("%s: status=%d body=%s", request.path, rec.Code, rec.Body.String())
 		}
 	}
-	if input.Text != "A日本Z" {
-		t.Fatalf("composition committed %q", input.Text)
+	if input.Value != "A日本Z" {
+		t.Fatalf("composition committed %q", input.Value)
 	}
 }
 
 func TestAutomationTextAreaSelectionAndComposition(t *testing.T) {
 	globalState = &ApplicationState{Pages: make(map[string][]Component), CurrentPage: PageDashboard, TextInputValues: make(map[string]string), TransientState: renderstate.NewStore()}
-	area := &components.TextArea{CompID: "notes", Text: "one two", Rect: image.Rect(0, 0, 240, 120)}
+	area := &components.TextArea{CompID: "notes", Value: "one two", Rect: image.Rect(0, 0, 240, 120)}
 	globalState.Pages[PageDashboard] = []Component{area}
 	handler := newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{}))
 	for _, request := range []struct{ path, body string }{
@@ -392,8 +392,8 @@ func TestAutomationTextAreaSelectionAndComposition(t *testing.T) {
 			t.Fatalf("%s: status=%d body=%s", request.path, rec.Code, rec.Body.String())
 		}
 	}
-	if area.Text != "one 日本" {
-		t.Fatalf("composition committed %q", area.Text)
+	if area.Value != "one 日本" {
+		t.Fatalf("composition committed %q", area.Value)
 	}
 	_, flat := buildAutomationSnapshot()
 	if len(flat) != 1 || flat[0].SelectionStart != 6 || flat[0].SelectionEnd != 6 {
@@ -411,7 +411,7 @@ func TestAutomationHTTPClickTriggersButton(t *testing.T) {
 		&components.Button{
 			CompID:    "btn_http_click",
 			Rect:      image.Rect(0, 0, 120, 40),
-			Label:     "Click",
+			Text:      "Click",
 			OnClick:   func(state *ApplicationState) { clicked = true },
 			BaseColor: color.RGBA{10, 10, 10, 255},
 		},
@@ -808,7 +808,7 @@ func TestAutomationHTTPMeasureActionReportsLatency(t *testing.T) {
 		&components.Button{
 			CompID:    "btn_measure",
 			Rect:      image.Rect(0, 0, 100, 40),
-			Label:     "Measure",
+			Text:      "Measure",
 			OnClick:   func(state *ApplicationState) { clicked = true; state.StatusText = "clicked" },
 			BaseColor: color.RGBA{10, 10, 10, 255},
 		},

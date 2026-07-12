@@ -44,7 +44,7 @@ type Autocomplete struct {
 
 func NewAutocomplete(id, placeholder, query string, options []AutocompleteOption, onQueryChange func(string, *types.ApplicationState), onSelect func(string, *types.ApplicationState)) *Autocomplete {
 	input := NewTextInput(id, placeholder)
-	input.Text = query
+	input.Value = query
 	input.CursorIndex = len([]rune(query))
 	return &Autocomplete{CompID: id, Placeholder: placeholder, Query: query, Options: options, MaxVisible: 6, Highlighted: -1, OnQueryChange: onQueryChange, OnSelect: onSelect, input: *input}
 }
@@ -87,8 +87,8 @@ func (a *Autocomplete) syncInput(state *types.ApplicationState) {
 	a.input.Disabled = a.Disabled
 	a.input.ReadOnly = a.ReadOnly
 	a.input.Invalid = a.Invalid
-	if a.input.Text != a.Query && (state == nil || state.FocusedID != a.CompID) {
-		a.input.Text = a.Query
+	if a.input.Value != a.Query && (state == nil || state.FocusedID != a.CompID) {
+		a.input.Value = a.Query
 		a.input.CursorIndex = len([]rune(a.Query))
 		if state != nil && state.TextInputValues != nil {
 			state.TextInputValues[a.CompID] = a.Query
@@ -134,7 +134,7 @@ func (a *Autocomplete) openSuggestions(state *types.ApplicationState) bool {
 	if a.Disabled || a.ReadOnly {
 		return false
 	}
-	options := a.visibleOptions(a.input.Text)
+	options := a.visibleOptions(a.input.Value)
 	if len(options) == 0 {
 		a.setOpen(false, state)
 		return false
@@ -191,7 +191,7 @@ func (a *Autocomplete) OnKey(key uint32, char rune, state *types.ApplicationStat
 	if state.FocusedID != a.CompID || a.Disabled || a.ReadOnly {
 		return false
 	}
-	options := a.visibleOptions(a.input.Text)
+	options := a.visibleOptions(a.input.Value)
 	highlighted := a.highlighted(state)
 	switch key {
 	case 0x28: // down
@@ -273,7 +273,7 @@ func (a *Autocomplete) PerformSemanticAction(targetID string, action semantics.A
 			a.OnQueryChange(value, state)
 		} else {
 			a.Query = value
-			a.input.Text = value
+			a.input.Value = value
 		}
 		return true
 	}

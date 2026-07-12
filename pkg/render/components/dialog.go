@@ -22,6 +22,7 @@ type Dialog struct {
 	TitleColor    color.RGBA
 	TextColor     color.RGBA
 	UseTheme      bool
+	OnDismiss     func(state *types.ApplicationState)
 
 	// internal composed modal
 	modal         *Modal
@@ -43,6 +44,7 @@ func NewAlertDialog(id, title, message string, onDismiss func(state *types.Appli
 		TitleColor:    color.RGBA{255, 255, 255, 255},
 		TextColor:     color.RGBA{200, 200, 200, 255},
 		UseTheme:      true,
+		OnDismiss:     onDismiss,
 	}
 }
 
@@ -93,7 +95,7 @@ func (d *Dialog) buildModal() {
 		b := d.Buttons[i]
 		// Size actions from their labels so translated or descriptive text is not
 		// silently clipped. The dialog retains a predictable minimum target size.
-		bw, bh := maxInt(100, len([]rune(b.Label))*9+28), 40
+		bw, bh := maxInt(100, len([]rune(b.Text))*9+28), 40
 		btnX -= bw
 		b.SetBounds(image.Rect(btnX, btnY, btnX+bw, btnY+bh))
 		children = append(children, b)
@@ -106,6 +108,7 @@ func (d *Dialog) buildModal() {
 		CardRect:      cardRect,
 		BackdropColor: d.BackdropColor,
 		Children:      children,
+		OnDismiss:     d.OnDismiss,
 	}
 }
 

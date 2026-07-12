@@ -97,13 +97,13 @@ func (t *TextInput) setEditingSelection(state *types.ApplicationState, selection
 
 // Selection returns the normalized rune-index selection range.
 func (t *TextInput) Selection(state *types.ApplicationState) (start, end int) {
-	return selectionBounds(t.editingSelection(state, len([]rune(t.Text))))
+	return selectionBounds(t.editingSelection(state, len([]rune(t.Value))))
 }
 
 // SetSelection replaces the transient selection using rune indexes. Values are
 // clamped to the current text length.
 func (t *TextInput) SetSelection(anchor, caret int, state *types.ApplicationState) {
-	t.setEditingSelection(state, textInputSelection{Anchor: anchor, Caret: caret}, len([]rune(t.Text)))
+	t.setEditingSelection(state, textInputSelection{Anchor: anchor, Caret: caret}, len([]rune(t.Value)))
 }
 
 func selectionBounds(selection textInputSelection) (int, int) {
@@ -114,10 +114,10 @@ func selectionBounds(selection textInputSelection) (int, int) {
 }
 
 func (t *TextInput) syncEditedText(state *types.ApplicationState, runes []rune, caret int) {
-	t.Text = string(runes)
+	t.Value = string(runes)
 	t.setEditingSelection(state, textInputSelection{Anchor: caret, Caret: caret}, len(runes))
 	if state != nil && state.TextInputValues != nil {
-		state.TextInputValues[t.CompID] = t.Text
+		state.TextInputValues[t.CompID] = t.Value
 	}
 }
 
@@ -212,7 +212,7 @@ func (t *TextInput) handleEditingKey(key uint32, char rune, state *types.Applica
 		vkRight   = 0x27
 		vkDelete  = 0x2E
 	)
-	runes := []rune(t.Text)
+	runes := []rune(t.Value)
 	selection := t.editingSelection(state, len(runes))
 	control := modifierPressed(state, vkControl)
 	shift := modifierPressed(state, vkShift)
@@ -241,7 +241,7 @@ func (t *TextInput) handleEditingKey(key uint32, char rune, state *types.Applica
 
 	if key == vkReturn {
 		if t.OnSubmit != nil {
-			t.OnSubmit(t.Text, state)
+			t.OnSubmit(t.Value, state)
 			return true
 		}
 		return false

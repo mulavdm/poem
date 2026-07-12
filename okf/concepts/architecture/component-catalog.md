@@ -51,7 +51,7 @@ button := render.NewButton("btn_reboot", "Reboot Core", func(state *render.Appli
         state.StatusText = "Engine reboot initiated!"
 })
 button.Rect = image.Rect(120, 220, 380, 270)
-button.Variant = render.VariantDestructive
+button.Variant = render.VariantDanger
 ```
 
 ## Real-time range sliders

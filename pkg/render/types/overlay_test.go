@@ -122,6 +122,23 @@ func TestPointerInsideNestedPopupPreservesAnchoredAncestors(t *testing.T) {
 	}
 }
 
+func TestOpenModalDefaultsToModalFocusTrapAndDismissOnEscape(t *testing.T) {
+	state := &ApplicationState{FocusedID: "launcher", Overlays: NewOverlayManager()}
+	dialog := &overlayTestComponent{id: "dialog", focusable: true}
+	calls := 0
+	state.OpenModal("gallery.alert", dialog, func(*ApplicationState) { calls++ })
+	if state.FocusedID != "dialog" {
+		t.Fatalf("initial focus=%q, want dialog", state.FocusedID)
+	}
+	entries := state.Overlays.Snapshot()
+	if len(entries) != 1 || !entries[0].Modal || !entries[0].DismissOnEscape || entries[0].DismissOnFocusLoss || entries[0].RestoreFocusID != "launcher" {
+		t.Fatalf("modal overlay entry=%+v", entries)
+	}
+	if _, ok := state.DismissTopOverlay(); !ok || calls != 1 || state.FocusedID != "launcher" {
+		t.Fatalf("escape dismissal calls=%d focus=%q", calls, state.FocusedID)
+	}
+}
+
 func TestOverlayDismissCallbackRunsOnceForEveryClosePath(t *testing.T) {
 	for _, test := range []struct {
 		name    string

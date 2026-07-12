@@ -112,7 +112,7 @@ func (p *GlassPanel) Walk(fn func(types.Component)) { fn(p) }
 type Button struct {
 	CompID         string
 	Rect           image.Rectangle
-	Label          string
+	Text           string
 	BaseColor      color.RGBA
 	HoverColor     color.RGBA
 	Rounding       int
@@ -131,7 +131,7 @@ type Button struct {
 }
 
 func NewButton(id, label string, onClick func(*types.ApplicationState)) *Button {
-	return &Button{CompID: id, Label: label, OnClick: onClick, UseTheme: true, Size: ControlMedium}
+	return &Button{CompID: id, Text: label, OnClick: onClick, UseTheme: true, Size: ControlMedium}
 }
 
 func (b *Button) ID() string              { return b.CompID }
@@ -142,7 +142,7 @@ func (b *Button) Measure(avail image.Point, state *types.ApplicationState) types
 	if state != nil && state.FontCharWidth > 0 {
 		charW = state.FontCharWidth
 	}
-	labelWidth := len([]rune(strings.TrimSpace(b.Label))) * charW
+	labelWidth := len([]rune(strings.TrimSpace(b.Text))) * charW
 	width := maxInt(140, labelWidth+24)
 	if avail.X > 0 {
 		width = clampInt(width, 90, avail.X)
@@ -169,7 +169,7 @@ func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 		if hovered && !b.Disabled {
 			state.CursorID = state.HandCursor
 		}
-		label := b.Label
+		label := b.Text
 		if b.Loading {
 			label = "Working..."
 		}
@@ -210,7 +210,7 @@ func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 	if charW <= 0 {
 		charW = 8
 	}
-	label := fitButtonLabel(b.Label, b.Rect.Dx(), charW)
+	label := fitButtonLabel(b.Text, b.Rect.Dx(), charW)
 	labelWidth := len([]rune(label)) * charW
 	tx := b.Rect.Min.X + 10
 	if labelWidth <= b.Rect.Dx()-20 {
@@ -272,7 +272,7 @@ func (b *Button) ActivateMnemonic(state *types.ApplicationState) bool {
 func (b *Button) Semantics(state *types.ApplicationState) semantics.Node {
 	name := b.AccessibleName
 	if name == "" {
-		name = b.Label
+		name = b.Text
 	}
 	accessKey := ""
 	if b.Mnemonic != 0 {
@@ -494,7 +494,7 @@ func (dl *DynamicLabel) Semantics(state *types.ApplicationState) semantics.Node 
 type TextInput struct {
 	CompID         string
 	Rect           image.Rectangle
-	Text           string
+	Value          string
 	Placeholder    string
 	Masked         bool
 	BGColor        color.RGBA
@@ -524,7 +524,7 @@ func (t *TextInput) Measure(avail image.Point, state *types.ApplicationState) ty
 	if state != nil && state.FontCharWidth > 0 {
 		charW = state.FontCharWidth
 	}
-	content := t.Text
+	content := t.Value
 	if strings.TrimSpace(content) == "" {
 		content = t.Placeholder
 	}
@@ -555,9 +555,9 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 	// Restore state if present
 	if state.TextInputValues != nil {
 		if val, ok := state.TextInputValues[t.CompID]; ok {
-			t.Text = val
+			t.Value = val
 		} else {
-			state.TextInputValues[t.CompID] = t.Text
+			state.TextInputValues[t.CompID] = t.Value
 		}
 		if cursorVal, ok := state.TextInputValues[t.CompID+"_cursor"]; ok {
 			var restoredCursor int
@@ -566,7 +566,7 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 			}
 		}
 	}
-	runes := []rune(t.Text)
+	runes := []rune(t.Value)
 	if t.CursorIndex < 0 || t.CursorIndex > len(runes) {
 		t.CursorIndex = len(runes)
 	}
@@ -604,7 +604,7 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 	}
 
 	// Draw text or placeholder
-	disp := t.Text
+	disp := t.Value
 	compositionStart, compositionEnd := 0, 0
 	compositionActive := false
 	if composed, startWidth, endWidth, active := t.compositionDisplay(state); active {
@@ -621,11 +621,11 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 
 	pnt.PushClip(t.Rect)
 	textY := t.Rect.Min.Y + (t.Rect.Dy()-defaultFontHeight)/2 + defaultFontBaseline
-	if state.FocusedID == t.CompID && t.Text != "" && !compositionActive {
-		selection := t.editingSelection(state, len([]rune(t.Text)))
+	if state.FocusedID == t.CompID && t.Value != "" && !compositionActive {
+		selection := t.editingSelection(state, len([]rune(t.Value)))
 		start, end := selectionBounds(selection)
 		if start != end {
-			textRunes := []rune(t.Text)
+			textRunes := []rune(t.Value)
 			selectionStartX := inputTextWidth(state, string(textRunes[:start]))
 			selectionEndX := inputTextWidth(state, string(textRunes[:end]))
 			selectionTop := t.Rect.Min.Y + (t.Rect.Dy()-defaultFontHeight)/2
@@ -647,7 +647,7 @@ func (t *TextInput) Draw(pnt types.Painter, state *types.ApplicationState) {
 			if compositionActive {
 				cursorX = t.Rect.Min.X + 10 + compositionEnd
 			} else {
-				textRunes := []rune(t.Text)
+				textRunes := []rune(t.Value)
 				cursor := clampTextIndex(t.CursorIndex, len(textRunes))
 				cursorX = t.Rect.Min.X + 10 + inputTextWidth(state, string(textRunes[:cursor]))
 			}
@@ -661,10 +661,10 @@ func (t *TextInput) OnKey(key uint32, char rune, state *types.ApplicationState) 
 	if state.FocusedID != t.CompID || t.Disabled {
 		return false
 	}
-	before := t.Text
+	before := t.Value
 	defer func() {
-		if t.Text != before && t.OnChange != nil {
-			t.OnChange(t.Text, state)
+		if t.Value != before && t.OnChange != nil {
+			t.OnChange(t.Value, state)
 		}
 	}()
 
@@ -678,8 +678,8 @@ func (t *TextInput) OnMouseDown(pt image.Point, state *types.ApplicationState) b
 	state.FocusedID = t.CompID
 
 	clickX := pt.X - t.Rect.Min.X - 10
-	runes := []rune(t.Text)
-	cursor := inputTextIndexAtX(state, t.Text, clickX)
+	runes := []rune(t.Value)
+	cursor := inputTextIndexAtX(state, t.Value, clickX)
 	t.CursorIndex = cursor
 	selection := textInputSelection{Anchor: cursor, Caret: cursor}
 	if modifierPressed(state, 0x10) {
@@ -689,7 +689,7 @@ func (t *TextInput) OnMouseDown(pt image.Point, state *types.ApplicationState) b
 	state.ActiveID = t.CompID
 
 	if state.TextInputValues != nil {
-		state.TextInputValues[t.CompID] = t.Text
+		state.TextInputValues[t.CompID] = t.Value
 		state.TextInputValues[t.CompID+"_cursor"] = fmt.Sprintf("%d", t.CursorIndex)
 	}
 	return true
@@ -701,10 +701,10 @@ func (t *TextInput) OnMouseMove(pt image.Point, state *types.ApplicationState) b
 	if state.ActiveID != t.CompID {
 		return false
 	}
-	caret := inputTextIndexAtX(state, t.Text, pt.X-t.Rect.Min.X-10)
-	selection := t.editingSelection(state, len([]rune(t.Text)))
+	caret := inputTextIndexAtX(state, t.Value, pt.X-t.Rect.Min.X-10)
+	selection := t.editingSelection(state, len([]rune(t.Value)))
 	selection.Caret = caret
-	t.setEditingSelection(state, selection, len([]rune(t.Text)))
+	t.setEditingSelection(state, selection, len([]rune(t.Value)))
 	return true
 }
 
@@ -716,7 +716,7 @@ func (t *TextInput) Semantics(state *types.ApplicationState) semantics.Node {
 	if name == "" {
 		name = t.Placeholder
 	}
-	value := t.Text
+	value := t.Value
 	var textValue *semantics.TextValue
 	actions := []semantics.Action{semantics.ActionFocus, semantics.ActionSetValue}
 	if t.Masked {

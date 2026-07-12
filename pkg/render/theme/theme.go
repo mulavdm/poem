@@ -39,11 +39,11 @@ const (
 type Variant uint8
 
 const (
-	VariantDefault Variant = iota
+	VariantNeutral Variant = iota
 	VariantPrimary
 	VariantSecondary
 	VariantSubtle
-	VariantDestructive
+	VariantDanger
 	VariantSuccess
 	VariantWarning
 )

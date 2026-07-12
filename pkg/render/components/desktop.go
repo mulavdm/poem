@@ -7,6 +7,7 @@ import (
 
 	"go_native_gpu_gui/pkg/render/semantics"
 	renderstate "go_native_gpu_gui/pkg/render/state"
+	"go_native_gpu_gui/pkg/render/theme"
 	"go_native_gpu_gui/pkg/render/types"
 )
 
@@ -42,10 +43,10 @@ func (s *Separator) Semantics(*types.ApplicationState) semantics.Node {
 }
 
 type Badge struct {
-	CompID string
-	Rect   image.Rectangle
-	Text   string
-	Role   TextRole
+	CompID  string
+	Rect    image.Rectangle
+	Text    string
+	Variant theme.Variant
 }
 
 func NewBadge(id, text string) *Badge        { return &Badge{CompID: id, Text: text} }
@@ -63,13 +64,13 @@ func (b *Badge) Measure(avail image.Point, state *types.ApplicationState) types.
 }
 func (b *Badge) Draw(p types.Painter, state *types.ApplicationState) {
 	t := activeTheme(state)
-	bg := mix(t.Colors.SurfaceRaised, textRoleColor(t, b.Role), 30)
+	bg, fg := badgeVisual(t, b.Variant)
 	p.DrawRoundedRect(b.Rect, roundedRadius(b.Rect, t.Radii.Pill), bg)
 	cw := state.FontCharWidth
 	if cw <= 0 {
 		cw = 8
 	}
-	p.DrawText(b.Text, b.Rect.Min.X+(b.Rect.Dx()-len([]rune(b.Text))*cw)/2, b.Rect.Min.Y+b.Rect.Dy()/2+5, textRoleColor(t, b.Role))
+	p.DrawText(b.Text, b.Rect.Min.X+(b.Rect.Dx()-len([]rune(b.Text))*cw)/2, b.Rect.Min.Y+b.Rect.Dy()/2+5, fg)
 }
 func (b *Badge) HitTest(image.Point) string                            { return "" }
 func (b *Badge) OnKey(uint32, rune, *types.ApplicationState) bool      { return false }

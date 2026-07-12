@@ -212,13 +212,13 @@ const (
 	TypographyTitle   = components.TypographyTitle
 	TypographyHeading = components.TypographyHeading
 
-	VariantDefault     = theme.VariantDefault
-	VariantPrimary     = theme.VariantPrimary
-	VariantSecondary   = theme.VariantSecondary
-	VariantSubtle      = theme.VariantSubtle
-	VariantDestructive = theme.VariantDestructive
-	VariantSuccess     = theme.VariantSuccess
-	VariantWarning     = theme.VariantWarning
+	VariantNeutral   = theme.VariantNeutral
+	VariantPrimary   = theme.VariantPrimary
+	VariantSecondary = theme.VariantSecondary
+	VariantSubtle    = theme.VariantSubtle
+	VariantDanger    = theme.VariantDanger
+	VariantSuccess   = theme.VariantSuccess
+	VariantWarning   = theme.VariantWarning
 
 	Vertical   = layout.Vertical
 	Horizontal = layout.Horizontal

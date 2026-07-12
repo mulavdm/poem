@@ -27,7 +27,7 @@ func TestVirtualListBuildsOnlyVisibleItems(t *testing.T) {
 }
 
 func TestDataTablePublishesGridCoordinatesAndOffscreenState(t *testing.T) {
-	table := NewDataTable("table", []TableColumn{{Key: "name", Title: "Name", Width: 120}, {Key: "status", Title: "Status"}}, []TableRow{
+	table := NewDataTable("table", []TableColumn{{Key: "name", Label: "Name", Width: 120}, {Key: "status", Label: "Status"}}, []TableRow{
 		{ID: "a", Values: map[string]string{"name": "Alpha", "status": "Ready"}},
 		{ID: "b", Values: map[string]string{"name": "Beta", "status": "Busy"}},
 		{ID: "c", Values: map[string]string{"name": "Gamma", "status": "Done"}},
@@ -63,7 +63,7 @@ func TestDataTableKeyboardNavigationPersistsAcrossControlledRebuild(t *testing.T
 	}
 	requested := ""
 	newTable := func() *DataTable {
-		table := NewDataTable("table", []TableColumn{{Key: "name", Title: "Name"}}, rows)
+		table := NewDataTable("table", []TableColumn{{Key: "name", Label: "Name"}}, rows)
 		table.Rect = image.Rect(0, 0, 300, 172) // four body rows
 		table.OnSelect = func(id string, _ *types.ApplicationState) { requested = id }
 		return table
@@ -98,7 +98,7 @@ func TestDataTableKeyboardNavigationPersistsAcrossControlledRebuild(t *testing.T
 
 func TestDataTableSemanticFocusAndSelectionActions(t *testing.T) {
 	state := &types.ApplicationState{TransientState: renderstate.NewStore()}
-	table := NewDataTable("table", []TableColumn{{Key: "name", Title: "Name"}}, []TableRow{
+	table := NewDataTable("table", []TableColumn{{Key: "name", Label: "Name"}}, []TableRow{
 		{ID: "a", Values: map[string]string{"name": "Alpha"}},
 		{ID: "b", Values: map[string]string{"name": "Beta"}},
 		{ID: "c", Values: map[string]string{"name": "Gamma"}},
@@ -124,7 +124,7 @@ func TestDataTableSemanticFocusAndSelectionActions(t *testing.T) {
 
 func TestDataTablePointerFocusUsesSingleGridTabStop(t *testing.T) {
 	state := &types.ApplicationState{TransientState: renderstate.NewStore()}
-	table := NewDataTable("table", []TableColumn{{Key: "name", Title: "Name"}}, []TableRow{{ID: "a", Values: map[string]string{"name": "Alpha"}}})
+	table := NewDataTable("table", []TableColumn{{Key: "name", Label: "Name"}}, []TableRow{{ID: "a", Values: map[string]string{"name": "Alpha"}}})
 	table.Rect = image.Rect(0, 0, 240, 100)
 	point := image.Pt(20, table.headerHeight()+10)
 	if !table.OnMouseDown(point, state) || state.FocusedID != "table" {

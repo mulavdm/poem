@@ -206,7 +206,7 @@ func (v *VirtualList) Semantics(state *types.ApplicationState) semantics.Node {
 }
 
 type TableColumn struct {
-	Key, Title string
+	Key, Label string
 	Width      int
 }
 type TableRow struct {
@@ -404,7 +404,7 @@ func (t *DataTable) Draw(p types.Painter, state *types.ApplicationState) {
 	header := image.Rect(t.Rect.Min.X, t.Rect.Min.Y, t.Rect.Max.X, t.Rect.Min.Y+t.headerHeight())
 	p.FillRect(header, th.Colors.SurfaceRaised)
 	for i, c := range t.Columns {
-		p.DrawText(c.Title, x+th.Spacing.SM, header.Min.Y+header.Dy()/2+5, th.Colors.TextMuted)
+		p.DrawText(c.Label, x+th.Spacing.SM, header.Min.Y+header.Dy()/2+5, th.Colors.TextMuted)
 		x += widths[i]
 	}
 	body := image.Rect(t.Rect.Min.X, header.Max.Y, t.Rect.Max.X, t.Rect.Max.Y)
@@ -567,7 +567,7 @@ func (t *DataTable) Semantics(state *types.ApplicationState) semantics.Node {
 			width = widths[columnIndex]
 		}
 		cellBounds := image.Rect(x, headerBounds.Min.Y, x+width, headerBounds.Max.Y)
-		header.Children = append(header.Children, semantics.Node{ID: t.CompID + "/header/" + column.Key, Role: semantics.RoleColumnHeader, Name: column.Title, Bounds: cellBounds})
+		header.Children = append(header.Children, semantics.Node{ID: t.CompID + "/header/" + column.Key, Role: semantics.RoleColumnHeader, Name: column.Label, Bounds: cellBounds})
 		x += width
 	}
 	node.Children = append(node.Children, header)
@@ -586,7 +586,7 @@ func (t *DataTable) Semantics(state *types.ApplicationState) semantics.Node {
 				width = widths[columnIndex]
 			}
 			cellBounds := image.Rect(x, rowBounds.Min.Y, x+width, rowBounds.Max.Y)
-			rowNode.Children = append(rowNode.Children, semantics.Node{ID: t.CompID + "/row/" + row.ID + "/" + column.Key, Role: semantics.RoleCell, Name: column.Title, Value: row.Values[column.Key], Bounds: cellBounds,
+			rowNode.Children = append(rowNode.Children, semantics.Node{ID: t.CompID + "/row/" + row.ID + "/" + column.Key, Role: semantics.RoleCell, Name: column.Label, Value: row.Values[column.Key], Bounds: cellBounds,
 				State: semantics.State{Offscreen: offscreen, ReadOnly: true}, GridItem: &semantics.GridItemValue{Row: rowIndex, Column: columnIndex, RowSpan: 1, ColumnSpan: 1}})
 			x += width
 		}

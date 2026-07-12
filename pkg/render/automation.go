@@ -1364,7 +1364,7 @@ func componentTypeName(comp types.Component) string {
 func componentText(comp types.Component) string {
 	switch c := comp.(type) {
 	case *components.Button:
-		return c.Label
+		return c.Text
 	case *components.Label:
 		return c.Text
 	case *components.TextInput:
@@ -1376,14 +1376,14 @@ func componentText(comp types.Component) string {
 				return val
 			}
 		}
-		return c.Text
+		return c.Value
 	case *components.TextArea:
 		if globalState != nil && globalState.TextInputValues != nil {
 			if val, ok := globalState.TextInputValues[c.CompID]; ok {
 				return val
 			}
 		}
-		return c.Text
+		return c.Value
 	case *components.Paragraph:
 		return c.Text
 	default:
@@ -1475,7 +1475,7 @@ func automationSetText(id, value string) error {
 	}
 	switch c := comp.(type) {
 	case *components.TextInput:
-		c.Text = value
+		c.Value = value
 		c.CursorIndex = len([]rune(value))
 		globalState.TextInputValues[id] = value
 		globalState.TextInputValues[id+"_cursor"] = strconv.Itoa(c.CursorIndex)
@@ -1483,7 +1483,7 @@ func automationSetText(id, value string) error {
 		globalState.FocusedID = id
 		return nil
 	case *components.TextArea:
-		c.Text = value
+		c.Value = value
 		c.CursorIndex = len([]rune(value))
 		globalState.TextInputValues[id] = value
 		globalState.TextInputValues[id+"_cursor"] = strconv.Itoa(c.CursorIndex)

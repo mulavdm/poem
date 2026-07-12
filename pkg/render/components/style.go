@@ -87,6 +87,26 @@ func textRoleColor(t theme.Theme, role TextRole) color.RGBA {
 	}
 }
 
+// badgeVisual derives a tinted pill background and full-strength foreground
+// for Badge from the same semantic colors buttonVisual uses. VariantSecondary
+// and VariantSubtle fall back to the muted default alongside VariantNeutral,
+// since the theme palette has no dedicated secondary hue (buttonVisual's own
+// VariantSecondary case has no color of its own either).
+func badgeVisual(t theme.Theme, variant theme.Variant) (bg, fg color.RGBA) {
+	base := t.Colors.TextMuted
+	switch variant {
+	case theme.VariantPrimary:
+		base = t.Colors.Accent
+	case theme.VariantDanger:
+		base = t.Colors.Danger
+	case theme.VariantSuccess:
+		base = t.Colors.Success
+	case theme.VariantWarning:
+		base = t.Colors.Warning
+	}
+	return mix(t.Colors.SurfaceRaised, base, 30), base
+}
+
 // StyleOverride is intentionally small and semantic. Applications normally use
 // theme variants; overrides are for genuinely product-specific controls.
 type StyleOverride struct {
@@ -169,7 +189,7 @@ func buttonVisual(t theme.Theme, variant theme.Variant, hovered, pressed, disabl
 		visual.background, visual.border = t.Colors.Surface, t.Colors.BorderStrong
 	case theme.VariantSubtle:
 		visual.background, visual.border = t.Colors.Surface, color.RGBA{}
-	case theme.VariantDestructive:
+	case theme.VariantDanger:
 		visual.background, visual.foreground, visual.border = t.Colors.Danger, t.Colors.OnDanger, t.Colors.Danger
 	case theme.VariantSuccess:
 		visual.background, visual.foreground, visual.border = t.Colors.Success, t.Colors.OnSuccess, t.Colors.Success

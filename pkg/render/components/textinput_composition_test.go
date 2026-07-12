@@ -16,7 +16,7 @@ func TestTextInputCompositionPreviewAndCommit(t *testing.T) {
 	state := compositionTestState()
 	changed := ""
 	input := NewTextInput("input", "")
-	input.Text = "abcd"
+	input.Value = "abcd"
 	input.OnChange = func(value string, _ *types.ApplicationState) { changed = value }
 	input.SetSelection(1, 3, state)
 	if !input.StartComposition(state) || !input.UpdateComposition("日本", state) {
@@ -26,8 +26,8 @@ func TestTextInputCompositionPreviewAndCommit(t *testing.T) {
 	if !active || display != "a日本d" || end <= start {
 		t.Fatalf("preview=%q range=%d:%d active=%v", display, start, end, active)
 	}
-	if !input.EndComposition("日本", state) || input.Text != "a日本d" || changed != "a日本d" {
-		t.Fatalf("committed=%q callback=%q", input.Text, changed)
+	if !input.EndComposition("日本", state) || input.Value != "a日本d" || changed != "a日本d" {
+		t.Fatalf("committed=%q callback=%q", input.Value, changed)
 	}
 	if _, active := input.composition(state); active {
 		t.Fatal("composition state remained after commit")
@@ -37,18 +37,18 @@ func TestTextInputCompositionPreviewAndCommit(t *testing.T) {
 func TestTextInputCompositionSurvivesRebuildAndCanCancel(t *testing.T) {
 	state := compositionTestState()
 	first := NewTextInput("input", "")
-	first.Text = "hello"
+	first.Value = "hello"
 	first.SetSelection(5, 5, state)
 	if !first.StartComposition(state) || !first.UpdateComposition("世界", state) {
 		t.Fatal("composition did not start")
 	}
 	rebuilt := NewTextInput("input", "")
-	rebuilt.Text = "hello"
+	rebuilt.Value = "hello"
 	if display, _, _, active := rebuilt.compositionDisplay(state); !active || display != "hello世界" {
 		t.Fatalf("rebuilt preview=%q active=%v", display, active)
 	}
-	if !rebuilt.EndComposition("", state) || rebuilt.Text != "hello" {
-		t.Fatalf("cancel mutated text to %q", rebuilt.Text)
+	if !rebuilt.EndComposition("", state) || rebuilt.Value != "hello" {
+		t.Fatalf("cancel mutated text to %q", rebuilt.Value)
 	}
 }
 

@@ -252,7 +252,7 @@ func BuildDashboard(state *render.ApplicationState) []render.Component {
 		s.StatusText = "Core engine reboot requested."
 	})
 	reboot.Rect = image.Rect(110, 370, 380, 414)
-	reboot.Variant = render.VariantDestructive
+	reboot.Variant = render.VariantDanger
 	volume := render.NewSlider("sld_vol", 0, 100, state.Volume, func(value float32, s *render.ApplicationState) {
 		s.Volume = value
 	})

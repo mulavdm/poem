@@ -123,6 +123,12 @@ func (s *ApplicationState) OpenOverlay(id string, component Component, modal, di
 	s.openOverlay(id, component, modal, dismissOnEscape, modal, false, nil)
 }
 
+// OpenModal opens a modal overlay that owns keyboard focus, traps Tab
+// navigation to its own subtree, and closes on Escape by default.
+func (s *ApplicationState) OpenModal(id string, component Component, onDismiss func(*ApplicationState)) {
+	s.openOverlay(id, component, true, true, true, false, onDismiss)
+}
+
 // OpenAnchoredOverlay opens a non-modal popup whose lifetime is tied to its
 // current focus owner, such as a combo-box list or calendar.
 func (s *ApplicationState) OpenAnchoredOverlay(id string, component Component, dismissOnEscape bool) {
