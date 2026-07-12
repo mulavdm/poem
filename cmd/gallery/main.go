@@ -3,7 +3,7 @@ package main
 import (
 	"image"
 
-	"go_native_gpu_gui/pkg/render"
+	"github.com/mulavdm/poem/pkg/render"
 )
 
 var (

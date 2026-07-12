@@ -2,6 +2,6 @@
 
 package render
 
-import "go_native_gpu_gui/pkg/render/platform"
+import "github.com/mulavdm/poem/pkg/render/platform"
 
 func withDefaultPlatformServices(services platform.Services) platform.Services { return services }

@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"go_native_gpu_gui/pkg/render"
-	"go_native_gpu_gui/pkg/render/theme"
+	"github.com/mulavdm/poem/pkg/render"
+	"github.com/mulavdm/poem/pkg/render/theme"
 )
 
 func TestGalleryBuildsProfessionalComponentTrees(t *testing.T) {

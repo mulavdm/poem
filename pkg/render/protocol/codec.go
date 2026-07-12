@@ -7,7 +7,11 @@ import (
 	"io"
 )
 
-const maxProtocolByteVector = 256 << 20
+const (
+	maxProtocolByteVector = 256 << 20
+	maxProtocolEvents     = 100_000
+	maxProtocolCommands   = 1_000_000
+)
 
 func EncodeInitEngine(msg InitEngine) ([]byte, error) {
 	return encodeFontPayload(MessageInitEngine, msg)
@@ -580,6 +584,9 @@ func DecodeEventBatch(payload []byte) (EventBatch, error) {
 	if err != nil {
 		return EventBatch{}, err
 	}
+	if count > maxProtocolEvents {
+		return EventBatch{}, fmt.Errorf("event count %d exceeds limit", count)
+	}
 	events := make([]Event, 0, count)
 	for i := uint32(0); i < count; i++ {
 		t, err := readByte(r)
@@ -681,6 +688,9 @@ func DecodeRenderFrame(payload []byte) (RenderFrame, error) {
 	count, err := readUint32(r)
 	if err != nil {
 		return RenderFrame{}, err
+	}
+	if count > maxProtocolCommands {
+		return RenderFrame{}, fmt.Errorf("draw command count %d exceeds limit", count)
 	}
 
 	commands := make([]DrawCommand, 0, count)

@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"time"
 
-	"go_native_gpu_gui/pkg/render"
+	"github.com/mulavdm/poem/pkg/render"
 )
 
 type RaycasterDemo struct {

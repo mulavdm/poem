@@ -6,7 +6,7 @@ import (
 	"image/color"
 	"math"
 
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 // LineChart is a premium vector component that plots historical data curves in real-time

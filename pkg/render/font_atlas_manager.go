@@ -11,8 +11,8 @@ import (
 	"golang.org/x/image/font"
 	"golang.org/x/image/math/fixed"
 
-	"go_native_gpu_gui/pkg/render/draw"
-	"go_native_gpu_gui/pkg/render/protocol"
+	"github.com/mulavdm/poem/pkg/render/draw"
+	"github.com/mulavdm/poem/pkg/render/protocol"
 )
 
 type fontAtlasManager struct {

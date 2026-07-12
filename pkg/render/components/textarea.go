@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"go_native_gpu_gui/pkg/render/semantics"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 type textareaStyledChar struct {

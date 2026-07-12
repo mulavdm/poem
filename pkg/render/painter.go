@@ -4,7 +4,7 @@ import (
 	"image"
 	"image/color"
 
-	"go_native_gpu_gui/pkg/render/protocol"
+	"github.com/mulavdm/poem/pkg/render/protocol"
 )
 
 type ProtocolPainter struct {

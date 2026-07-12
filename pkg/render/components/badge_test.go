@@ -4,7 +4,7 @@ import (
 	"image/color"
 	"testing"
 
-	"go_native_gpu_gui/pkg/render/theme"
+	"github.com/mulavdm/poem/pkg/render/theme"
 )
 
 func TestBadgeVisualGivesDistinctColorsForSemanticVariants(t *testing.T) {

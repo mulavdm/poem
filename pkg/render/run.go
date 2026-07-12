@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync"
@@ -22,15 +23,15 @@ import (
 	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 
-	"go_native_gpu_gui/internal/win32"
-	"go_native_gpu_gui/pkg/render/components"
-	"go_native_gpu_gui/pkg/render/events"
-	"go_native_gpu_gui/pkg/render/platform"
-	"go_native_gpu_gui/pkg/render/protocol"
-	"go_native_gpu_gui/pkg/render/semantics"
-	"go_native_gpu_gui/pkg/render/state"
-	"go_native_gpu_gui/pkg/render/theme"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/internal/win32"
+	"github.com/mulavdm/poem/pkg/render/components"
+	"github.com/mulavdm/poem/pkg/render/events"
+	"github.com/mulavdm/poem/pkg/render/platform"
+	"github.com/mulavdm/poem/pkg/render/protocol"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/state"
+	"github.com/mulavdm/poem/pkg/render/theme"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 type AccessibilityConfig struct {
@@ -319,6 +320,7 @@ func Run(config AppConfig) {
 	}
 	fmt.Printf("Spawning native presentation sidecar: %s\n", sidecarPath)
 	sidecarCmd = exec.Command(sidecarPath, config.Title)
+	sidecarCmd.Dir = filepath.Dir(sidecarPath)
 
 	sidecarCmd.Stdout = os.Stdout
 	sidecarCmd.Stderr = os.Stderr
@@ -330,7 +332,17 @@ func Run(config AppConfig) {
 	defer func() {
 		if sidecarCmd.Process != nil {
 			fmt.Println("Terminating native presentation sidecar...")
-			sidecarCmd.Process.Kill()
+			_ = sidecarCmd.Process.Kill()
+			done := make(chan struct{})
+			go func() {
+				_ = sidecarCmd.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				fmt.Println("Timed out waiting for native presentation sidecar to exit")
+			}
 		}
 	}()
 

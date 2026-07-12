@@ -5,7 +5,7 @@ import (
 	"image"
 	"testing"
 
-	"go_native_gpu_gui/pkg/render/draw"
+	"github.com/mulavdm/poem/pkg/render/draw"
 )
 
 func TestFontAtlasAddsObservedUnicodeGlyphs(t *testing.T) {

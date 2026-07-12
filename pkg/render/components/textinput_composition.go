@@ -1,8 +1,8 @@
 package components
 
 import (
-	renderstate "go_native_gpu_gui/pkg/render/state"
-	"go_native_gpu_gui/pkg/render/types"
+	renderstate "github.com/mulavdm/poem/pkg/render/state"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 type textInputComposition struct {

@@ -46,7 +46,7 @@ The public Go API remains stable while the native presentation layer evolves und
 ```go
 package main
 
-import "go_native_gpu_gui/pkg/render"
+import "github.com/mulavdm/poem/pkg/render"
 
 func main() {
 	render.Run(render.AppConfig{
@@ -60,7 +60,7 @@ func main() {
 }
 ```
 
-Consumers keep importing only `go_native_gpu_gui/pkg/render`. They do not need to know whether the native runtime is implemented in C++, Rust, or another sidecar later.
+Consumers keep importing only `github.com/mulavdm/poem/pkg/render`. They do not need to know whether the native runtime is implemented in C++, Rust, or another sidecar later.
 
 ## Automation
 
@@ -141,7 +141,7 @@ At runtime, POEM resolves `poem_cpp_sidecar.exe` in this order:
 3. development build outputs under `cpp_sidecar/build`
 4. an embedded Windows sidecar payload extracted automatically by POEM
 
-This keeps downstream apps simple: a consumer can import `go_native_gpu_gui/pkg/render` and call the Go API without adding project-specific sidecar path setup.
+This keeps downstream apps simple: a consumer can import `github.com/mulavdm/poem/pkg/render` and call the Go API without adding project-specific sidecar path setup.
 
 ## Build
 
@@ -210,3 +210,4 @@ Known follow-up work:
 - [docs/POEM_2_FOUNDATION.md](./docs/POEM_2_FOUNDATION.md)
 - [AGENTS.md](./AGENTS.md)
 - [okf/index.md](./okf/index.md)
+- [RELEASING.md](./RELEASING.md)

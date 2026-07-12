@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"go_native_gpu_gui/pkg/render/components"
-	"go_native_gpu_gui/pkg/render/protocol"
-	renderstate "go_native_gpu_gui/pkg/render/state"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/components"
+	"github.com/mulavdm/poem/pkg/render/protocol"
+	renderstate "github.com/mulavdm/poem/pkg/render/state"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 func TestBuildAutomationSnapshotIncludesChildren(t *testing.T) {

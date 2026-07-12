@@ -120,6 +120,21 @@ func TestCompositionEventRejectsOversizedText(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsUnboundedEventAndCommandCounts(t *testing.T) {
+	eventPayload := wrapEnvelope(MessageEventBatch, []byte{0xff, 0xff, 0xff, 0xff})
+	if _, err := DecodeEventBatch(eventPayload); err == nil {
+		t.Fatal("oversized event count was accepted")
+	}
+	commandPayload := wrapEnvelope(MessageRenderFrame, append([]byte{
+		0, 0, 0, 0, // width
+		0, 0, 0, 0, // height
+		0, // cursor
+	}, []byte{0xff, 0xff, 0xff, 0xff}...))
+	if _, err := DecodeRenderFrame(commandPayload); err == nil {
+		t.Fatal("oversized draw command count was accepted")
+	}
+}
+
 func TestNativeDebugRoundTrip(t *testing.T) {
 	reqPayload, err := EncodeNativeDebugRequest(NativeDebugRequest{
 		CaptureFrame:          true,

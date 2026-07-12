@@ -6,9 +6,9 @@ import (
 	"errors"
 	"image"
 
-	"go_native_gpu_gui/pkg/render/draw"
-	"go_native_gpu_gui/pkg/render/semantics"
-	"go_native_gpu_gui/pkg/render/theme"
+	"github.com/mulavdm/poem/pkg/render/draw"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/theme"
 )
 
 var ErrUnsupported = errors.New("platform capability is not supported")

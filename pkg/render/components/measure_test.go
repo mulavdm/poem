@@ -4,8 +4,8 @@ import (
 	"image"
 	"testing"
 
-	"go_native_gpu_gui/pkg/render/layout"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/layout"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 func TestButtonMeasureReflectsLabelAndPadding(t *testing.T) {

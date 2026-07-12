@@ -4,8 +4,8 @@ import (
 	"image"
 	"image/color"
 
-	"go_native_gpu_gui/pkg/render/semantics"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 // LabeledBox is a reusable wrapper that stacks a text label above one child

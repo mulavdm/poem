@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"go_native_gpu_gui/pkg/render/platform"
-	renderstate "go_native_gpu_gui/pkg/render/state"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/platform"
+	renderstate "github.com/mulavdm/poem/pkg/render/state"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 type memoryClipboard struct {

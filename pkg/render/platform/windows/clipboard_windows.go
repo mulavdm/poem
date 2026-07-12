@@ -33,6 +33,7 @@ var (
 	procGlobalLock       = kernel32.NewProc("GlobalLock")
 	procGlobalUnlock     = kernel32.NewProc("GlobalUnlock")
 	procGlobalSize       = kernel32.NewProc("GlobalSize")
+	procRtlMoveMemory    = kernel32.NewProc("RtlMoveMemory")
 )
 
 type Clipboard struct{}
@@ -87,7 +88,10 @@ func (c *Clipboard) ReadText(ctx context.Context) (string, error) {
 	}
 	defer procGlobalUnlock.Call(handle)
 	units := int(size / 2)
-	buffer := unsafe.Slice((*uint16)(unsafe.Pointer(pointer)), units)
+	buffer := make([]uint16, units)
+	if len(buffer) > 0 {
+		procRtlMoveMemory.Call(uintptr(unsafe.Pointer(&buffer[0])), pointer, uintptr(len(buffer)*2))
+	}
 	length := 0
 	for length < len(buffer) && buffer[length] != 0 {
 		length++
@@ -127,7 +131,9 @@ func (c *Clipboard) WriteText(ctx context.Context, value string) error {
 	if pointer == 0 {
 		return fmt.Errorf("lock clipboard allocation: %w", lockErr)
 	}
-	copy(unsafe.Slice((*uint16)(unsafe.Pointer(pointer)), len(encoded)), encoded)
+	if len(encoded) > 0 {
+		procRtlMoveMemory.Call(pointer, uintptr(unsafe.Pointer(&encoded[0])), uintptr(len(encoded)*2))
+	}
 	procGlobalUnlock.Call(handle)
 	result, _, setErr := procSetClipboardData.Call(cfUnicodeText, handle)
 	if result == 0 {

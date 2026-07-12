@@ -3,7 +3,7 @@ package components
 import (
 	"testing"
 
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 func TestControlledSliderDoesNotRestoreLegacyApplicationValue(t *testing.T) {

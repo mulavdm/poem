@@ -17,7 +17,7 @@ The engine integrates native Go diagnostics to monitor rendering stability.
 ## Performance Benchmarks
 
 - **Location**: `pkg/render/backend/cpu_test.go`
-- **Command**: `go test -v -bench="." go_native_gpu_gui/pkg/render/backend`
+- **Command**: `go test -v -bench="." github.com/mulavdm/poem/pkg/render/backend`
 - **CPU Performance Metrics**:
   - `BenchmarkPaint` (Full 60FPS UI Redraw): ~1.1 ms (exceeds the <10ms standard by nearly 10x)
   - `BenchmarkDrawRoundedRect` (Alpha-blended SDF panels): ~1.4 ms

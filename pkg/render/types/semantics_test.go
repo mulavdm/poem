@@ -4,9 +4,9 @@ import (
 	"image"
 	"testing"
 
-	"go_native_gpu_gui/pkg/render/components"
-	"go_native_gpu_gui/pkg/render/layout"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/components"
+	"github.com/mulavdm/poem/pkg/render/layout"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 func TestBuildSemanticsTreePreservesContainerHierarchy(t *testing.T) {

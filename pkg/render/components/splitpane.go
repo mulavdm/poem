@@ -4,7 +4,7 @@ import (
 	"image"
 	"image/color"
 
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 // SplitPane is a layout container that splits space horizontally between two children.

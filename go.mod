@@ -1,4 +1,4 @@
-module go_native_gpu_gui
+module github.com/mulavdm/poem
 
 go 1.26.3
 

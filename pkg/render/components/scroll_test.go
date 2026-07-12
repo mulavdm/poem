@@ -4,8 +4,8 @@ import (
 	"image"
 	"testing"
 
-	"go_native_gpu_gui/pkg/render/semantics"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 func TestScrollViewPublishesAndAppliesSemanticScrollPercent(t *testing.T) {

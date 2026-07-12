@@ -5,7 +5,7 @@ import (
 	"image/color"
 	"time"
 
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 type styledChar struct {

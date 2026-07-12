@@ -35,7 +35,7 @@ When application-owned state changes from a goroutine after IO, model work, or a
 
 The library uses the Inversion of Control (IoC) pattern through `render.Run(AppConfig)`. External consumers do not have to write native Win32 window callbacks, event routers, thread locking, or frame tickers.
 
-To instantiate the UI, host projects import `"go_native_gpu_gui/pkg/render"` and declare their component layout tree inside the `BuildPagesFn` callback, which the library automatically manages and updates dynamically.
+To instantiate the UI, host projects import `"github.com/mulavdm/poem/pkg/render"` and declare their component layout tree inside the `BuildPagesFn` callback, which the library automatically manages and updates dynamically.
 
 ## See also
 - [Architecture Overview](/concepts/architecture/overview.md)

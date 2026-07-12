@@ -3,8 +3,8 @@ package types
 import (
 	"time"
 
-	"go_native_gpu_gui/pkg/render/platform"
-	"go_native_gpu_gui/pkg/render/theme"
+	"github.com/mulavdm/poem/pkg/render/platform"
+	"github.com/mulavdm/poem/pkg/render/theme"
 )
 
 // RenderContext is the platform-neutral snapshot used while measuring,

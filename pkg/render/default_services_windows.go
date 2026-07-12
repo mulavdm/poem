@@ -3,8 +3,8 @@
 package render
 
 import (
-	"go_native_gpu_gui/pkg/render/platform"
-	platformwindows "go_native_gpu_gui/pkg/render/platform/windows"
+	"github.com/mulavdm/poem/pkg/render/platform"
+	platformwindows "github.com/mulavdm/poem/pkg/render/platform/windows"
 )
 
 func withDefaultPlatformServices(services platform.Services) platform.Services {

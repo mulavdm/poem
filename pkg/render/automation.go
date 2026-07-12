@@ -25,13 +25,13 @@ import (
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
 
-	"go_native_gpu_gui/internal/win32"
-	"go_native_gpu_gui/pkg/render/components"
-	"go_native_gpu_gui/pkg/render/events"
-	"go_native_gpu_gui/pkg/render/layout"
-	"go_native_gpu_gui/pkg/render/protocol"
-	"go_native_gpu_gui/pkg/render/semantics"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/internal/win32"
+	"github.com/mulavdm/poem/pkg/render/components"
+	"github.com/mulavdm/poem/pkg/render/events"
+	"github.com/mulavdm/poem/pkg/render/layout"
+	"github.com/mulavdm/poem/pkg/render/protocol"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 var nativeDebugRequest = requestNativeDebugWithOptions

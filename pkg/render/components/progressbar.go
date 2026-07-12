@@ -6,8 +6,8 @@ import (
 	"image/color"
 	"time"
 
-	"go_native_gpu_gui/pkg/render/semantics"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 // ProgressBar displays a completion percentage or an indeterminate loading state.

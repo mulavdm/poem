@@ -6,11 +6,11 @@ import (
 	"math"
 	"time"
 
-	"go_native_gpu_gui/pkg/render/events"
-	"go_native_gpu_gui/pkg/render/platform"
-	"go_native_gpu_gui/pkg/render/semantics"
-	renderstate "go_native_gpu_gui/pkg/render/state"
-	"go_native_gpu_gui/pkg/render/theme"
+	"github.com/mulavdm/poem/pkg/render/events"
+	"github.com/mulavdm/poem/pkg/render/platform"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	renderstate "github.com/mulavdm/poem/pkg/render/state"
+	"github.com/mulavdm/poem/pkg/render/theme"
 )
 
 // UIRenderer defines the structural contract both engines must fulfill

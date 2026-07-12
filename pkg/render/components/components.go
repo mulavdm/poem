@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"go_native_gpu_gui/pkg/render/semantics"
-	"go_native_gpu_gui/pkg/render/theme"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/theme"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 // Panel is a simple container with a background color

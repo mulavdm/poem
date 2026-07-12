@@ -3,7 +3,7 @@ package types
 import (
 	"testing"
 
-	"go_native_gpu_gui/pkg/render/theme"
+	"github.com/mulavdm/poem/pkg/render/theme"
 )
 
 func TestReducedMotionCompletesTransitionImmediately(t *testing.T) {

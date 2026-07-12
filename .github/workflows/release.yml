@@ -1,0 +1,40 @@
+name: POEM Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: lukka/get-cmake@latest
+      - run: cmake -S cpp_sidecar -B cpp_sidecar/build
+      - run: cmake --build cpp_sidecar/build --config Release
+      - name: Verify embedded sidecar provenance
+        shell: pwsh
+        run: |
+          $embedded = (Get-FileHash pkg/render/assets/windows_amd64/poem_cpp_sidecar.exe -Algorithm SHA256).Hash
+          $built = (Get-FileHash cpp_sidecar/build/Release/poem_cpp_sidecar.exe -Algorithm SHA256).Hash
+          if ($embedded -ne $built) { throw "embedded sidecar hash $embedded does not match Release build $built" }
+      - run: go test ./...
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go mod verify
+      - run: go build -o POEM_gallery.exe ./cmd/gallery
+      - run: Compress-Archive -Force -Path POEM_gallery.exe,cpp_sidecar/build/Release/poem_cpp_sidecar.exe -DestinationPath POEM-${env:GITHUB_REF_NAME}-windows-amd64.zip
+      - run: gh release create "$env:GITHUB_REF_NAME" --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: gh release upload "$env:GITHUB_REF_NAME" POEM-${env:GITHUB_REF_NAME}-windows-amd64.zip --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

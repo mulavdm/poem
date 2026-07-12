@@ -7,7 +7,7 @@ timestamp: 2026-07-10T00:00:00Z
 ---
 # Public API Surface
 
-Downstream apps import `go_native_gpu_gui/pkg/render` and call `render.Run(render.AppConfig{...})`. This is POEM's one stable public contract; consumers do not need to know whether native presentation is implemented in C++, Rust, or another sidecar underneath it.
+Downstream apps import `github.com/mulavdm/poem/pkg/render` and call `render.Run(render.AppConfig{...})`. This is POEM's one stable public contract; consumers do not need to know whether native presentation is implemented in C++, Rust, or another sidecar underneath it.
 
 `pkg/render` re-exports subpackage types, constants, and options via Go type aliasing (`render.go`) so consumers never import subpackages (`components`, `layout`, `types`, `protocol`, `state`) directly.
 

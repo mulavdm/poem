@@ -2,7 +2,7 @@
 type: Decision
 title: GopherWeb Parity
 description: POEM and GopherWeb converge naming and shape wherever their public component APIs solve the same problem, but stay two separate codebases rather than merging into a shared UI representation.
-tags: [architecture, decisions, gopherweb, components, cross-project]
+tags: [architecture, decisions, github.com/mulavdm/gopherweb, components, cross-project]
 timestamp: 2026-07-10T00:00:00Z
 ---
 # GopherWeb Parity
@@ -100,5 +100,5 @@ blockers above, not naming drift.
   enough to justify its own narrow shared package, without touching either project's stateful
   or trust-boundary-crossing majority.
 
-See also: `../GopherWeb/okf/decisions/gopherweb-parity.md` for the matching record on the
+See also: `../GopherWeb/okf/decisions/github.com/mulavdm/gopherweb-parity.md` for the matching record on the
 GopherWeb side.

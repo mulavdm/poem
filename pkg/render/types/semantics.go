@@ -3,7 +3,7 @@ package types
 import (
 	"reflect"
 
-	"go_native_gpu_gui/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/semantics"
 )
 
 // SemanticComponent is the incremental accessibility contract. It remains

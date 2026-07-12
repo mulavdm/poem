@@ -1,13 +1,13 @@
 package render
 
 import (
-	"go_native_gpu_gui/pkg/render/components"
-	"go_native_gpu_gui/pkg/render/layout"
-	"go_native_gpu_gui/pkg/render/platform"
-	"go_native_gpu_gui/pkg/render/semantics"
-	renderstate "go_native_gpu_gui/pkg/render/state"
-	"go_native_gpu_gui/pkg/render/theme"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/components"
+	"github.com/mulavdm/poem/pkg/render/layout"
+	"github.com/mulavdm/poem/pkg/render/platform"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	renderstate "github.com/mulavdm/poem/pkg/render/state"
+	"github.com/mulavdm/poem/pkg/render/theme"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 func NewThemeManager(initial theme.Theme) *theme.Manager { return theme.NewManager(initial) }

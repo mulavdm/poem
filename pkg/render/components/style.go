@@ -5,8 +5,8 @@ import (
 	"image/color"
 	"math"
 
-	"go_native_gpu_gui/pkg/render/theme"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/theme"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 type ControlSize uint8

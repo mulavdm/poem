@@ -6,8 +6,8 @@ import (
 	"image/color"
 	"math"
 
-	"go_native_gpu_gui/pkg/render/semantics"
-	"go_native_gpu_gui/pkg/render/types"
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/types"
 )
 
 // ScrollView is a container that clips its children to its bounding box
