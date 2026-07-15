@@ -7,13 +7,10 @@ import (
 	"image"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 	"unicode"
 
@@ -23,7 +20,6 @@ import (
 	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 
-	"github.com/mulavdm/poem/internal/win32"
 	"github.com/mulavdm/poem/pkg/render/components"
 	"github.com/mulavdm/poem/pkg/render/events"
 	"github.com/mulavdm/poem/pkg/render/platform"
@@ -94,10 +90,6 @@ var (
 	nativeDialogRespCh      chan protocol.NativeDialogResponse
 )
 
-const (
-	pipeNameGoToSidecar = `\\.\pipe\poem_ipc_go_to_sidecar`
-	pipeNameSidecarToGo = `\\.\pipe\poem_ipc_sidecar_to_go`
-)
 
 func resolveSystemTheme(config AccessibilityConfig, mode theme.Mode) theme.Theme {
 	if config.SystemThemeResolver != nil {
@@ -173,6 +165,39 @@ func pollSystemPreferences(service platform.SystemPreferences, interval time.Dur
 
 func Run(config AppConfig) {
 	config.Services = withDefaultPlatformServices(config.Services)
+	manager, preferenceUpdates, stopPreferencePolling := prepareEngineState(config)
+	if stopPreferencePolling != nil {
+		defer close(stopPreferencePolling)
+	}
+
+	// Connect the platform presenter (on Windows: spawn the native sidecar
+	// and bind its named pipes) and drive it until it disconnects.
+	toPresenter, fromPresenter, cleanupPresenter := connectPresenter(config)
+	defer cleanupPresenter()
+
+	runEngine(config, manager, preferenceUpdates, toPresenter, fromPresenter)
+}
+
+// RunHosted drives an already-connected presenter over a caller-owned
+// transport instead of spawning a sidecar process. It exists for embedding
+// hosts where the presenter lives in the same process as the engine — the
+// Android engine, where the C++ presenter and this Go orchestration share one
+// APK and exchange the same POEM byte protocol over an in-process pipe pair.
+// The caller owns both transports and closes them to stop the engine.
+func RunHosted(config AppConfig, toPresenter io.ReadWriteCloser, fromPresenter io.ReadWriteCloser) {
+	config.Services = withDefaultPlatformServices(config.Services)
+	manager, preferenceUpdates, stopPreferencePolling := prepareEngineState(config)
+	if stopPreferencePolling != nil {
+		defer close(stopPreferencePolling)
+	}
+	runEngine(config, manager, preferenceUpdates, toPresenter, fromPresenter)
+}
+
+// prepareEngineState resolves theme/typography/accessibility configuration
+// and initializes the global application state shared by every presenter
+// transport. It returns the theme manager plus the system-preference polling
+// channel (and its stop channel, nil when polling is disabled).
+func prepareEngineState(config AppConfig) (*theme.Manager, <-chan platform.PreferenceSnapshot, chan struct{}) {
 	manager := config.Theme
 	if manager == nil {
 		manager = theme.NewManager(theme.ModernDark())
@@ -270,96 +295,22 @@ func Run(config AppConfig) {
 	var stopPreferencePolling chan struct{}
 	if (config.Accessibility.FollowSystemTheme || config.Accessibility.FollowReducedMotion) && config.Services.Preferences != nil {
 		preferenceUpdates, stopPreferencePolling = pollSystemPreferences(config.Services.Preferences, time.Second)
-		defer close(stopPreferencePolling)
 	}
 
 	if globalBuildPages != nil {
 		globalBuildPages(globalState)
 	}
+	return manager, preferenceUpdates, stopPreferencePolling
+}
 
-	// 3. Create Windows named pipes (separate directions avoid duplex blocking deadlocks)
-	pipeNameGoToSidecarUTF16, _ := syscall.UTF16PtrFromString(pipeNameGoToSidecar)
-	pipeHandleGoToSidecar, err := win32.CreateNamedPipe(
-		pipeNameGoToSidecarUTF16,
-		win32.PIPE_ACCESS_DUPLEX,
-		win32.PIPE_TYPE_BYTE|win32.PIPE_READMODE_BYTE|win32.PIPE_WAIT,
-		win32.PIPE_UNLIMITED_INSTANCES,
-		1024*1024, // 1MB Output buffer
-		1024*1024, // 1MB Input buffer
-		0,
-		0,
-	)
-	if err != nil || pipeHandleGoToSidecar == 0 {
-		panic(fmt.Sprintf("orchestrator failed to create Go->sidecar IPC pipe: %v", err))
-	}
-	defer win32.CloseHandle(pipeHandleGoToSidecar)
-
-	pipeNameSidecarToGoUTF16, _ := syscall.UTF16PtrFromString(pipeNameSidecarToGo)
-	pipeHandleSidecarToGo, err := win32.CreateNamedPipe(
-		pipeNameSidecarToGoUTF16,
-		win32.PIPE_ACCESS_DUPLEX,
-		win32.PIPE_TYPE_BYTE|win32.PIPE_READMODE_BYTE|win32.PIPE_WAIT,
-		win32.PIPE_UNLIMITED_INSTANCES,
-		1024*1024,
-		1024*1024,
-		0,
-		0,
-	)
-	if err != nil || pipeHandleSidecarToGo == 0 {
-		panic(fmt.Sprintf("orchestrator failed to create sidecar->Go IPC pipe: %v", err))
-	}
-	defer win32.CloseHandle(pipeHandleSidecarToGo)
-
-	fmt.Println("IPC named pipes created. Awaiting native presentation sidecar connection...")
-
-	// 4. Spawn the native presentation engine child process
-	var sidecarCmd *exec.Cmd
-	sidecarPath, err := resolveSidecarPath()
-	if err != nil {
-		panic(fmt.Sprintf("failed to locate native presentation sidecar: %v", err))
-	}
-	fmt.Printf("Spawning native presentation sidecar: %s\n", sidecarPath)
-	sidecarCmd = exec.Command(sidecarPath, config.Title)
-	sidecarCmd.Dir = filepath.Dir(sidecarPath)
-
-	sidecarCmd.Stdout = os.Stdout
-	sidecarCmd.Stderr = os.Stderr
-	if err := sidecarCmd.Start(); err != nil {
-		panic(fmt.Sprintf("failed to spawn native presentation sidecar: %v", err))
-	}
-
-	// Clean shutdown zombie mitigation
-	defer func() {
-		if sidecarCmd.Process != nil {
-			fmt.Println("Terminating native presentation sidecar...")
-			_ = sidecarCmd.Process.Kill()
-			done := make(chan struct{})
-			go func() {
-				_ = sidecarCmd.Wait()
-				close(done)
-			}()
-			select {
-			case <-done:
-			case <-time.After(2 * time.Second):
-				fmt.Println("Timed out waiting for native presentation sidecar to exit")
-			}
-		}
-	}()
-
-	// 5. Establish Named Pipe client links
-	connected1, err := win32.ConnectNamedPipe(pipeHandleGoToSidecar, 0)
-	if err != nil || !connected1 {
-		panic(fmt.Sprintf("failed to lock client connection on Go->sidecar named pipe: %v", err))
-	}
-	connected2, err := win32.ConnectNamedPipe(pipeHandleSidecarToGo, 0)
-	if err != nil || !connected2 {
-		panic(fmt.Sprintf("failed to lock client connection on sidecar->Go named pipe: %v", err))
-	}
-	fmt.Println("IPC handshake synchronized. Native presentation core bound successfully.")
-
-	// Wrap our raw pipe handles in io.ReadWriter
-	pipeConnGoToSidecar := &pipeReadWriteCloser{handle: pipeHandleGoToSidecar}
-	pipeConnSidecarToGo := &pipeReadWriteCloser{handle: pipeHandleSidecarToGo}
+// runEngine drives an already-connected presenter: it transmits the font
+// atlas bootstrap and every subsequent frame over toPresenter, and consumes
+// the presenter's event stream from fromPresenter until it closes. It is
+// platform-neutral — Run hands it named pipes bound to the Windows sidecar,
+// RunHosted hands it whatever in-process transport the embedding host owns.
+func runEngine(config AppConfig, manager *theme.Manager, preferenceUpdates <-chan platform.PreferenceSnapshot, toPresenter io.ReadWriteCloser, fromPresenter io.ReadWriteCloser) {
+	pipeConnGoToSidecar := toPresenter
+	pipeConnSidecarToGo := fromPresenter
 	globalRenderConn = pipeConnGoToSidecar
 
 	globalState.PlaySoundFn = func(soundType int8) {
@@ -677,39 +628,6 @@ func readMessage(conn io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	return payload, nil
-}
-
-// Named Pipe wrapper implementing io.ReadWriteCloser
-type pipeReadWriteCloser struct {
-	handle uintptr
-}
-
-func (p *pipeReadWriteCloser) Read(b []byte) (int, error) {
-	var read uint32
-	// Use Win32 ReadFile API under the hood
-	err := syscall.ReadFile(syscall.Handle(p.handle), b, &read, nil)
-	if err != nil {
-		if err == syscall.ERROR_BROKEN_PIPE {
-			return 0, io.EOF
-		}
-		return 0, err
-	}
-	return int(read), nil
-}
-
-func (p *pipeReadWriteCloser) Write(b []byte) (int, error) {
-	var written uint32
-	err := syscall.WriteFile(syscall.Handle(p.handle), b, &written, nil)
-	if err != nil {
-		return 0, err
-	}
-	return int(written), nil
-}
-
-func (p *pipeReadWriteCloser) Close() error {
-	win32.DisconnectNamedPipe(p.handle)
-	win32.CloseHandle(p.handle)
-	return nil
 }
 
 type fontCharInfo struct {

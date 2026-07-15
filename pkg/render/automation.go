@@ -17,7 +17,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	xdraw "golang.org/x/image/draw"
@@ -25,7 +24,6 @@ import (
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
 
-	"github.com/mulavdm/poem/internal/win32"
 	"github.com/mulavdm/poem/pkg/render/components"
 	"github.com/mulavdm/poem/pkg/render/events"
 	"github.com/mulavdm/poem/pkg/render/layout"
@@ -253,38 +251,6 @@ func startAutomationServer(cfg AutomationConfig) {
 	default:
 		startHTTPAutomationServer(cfg)
 	}
-}
-
-func startPipeAutomationServer(cfg AutomationConfig) {
-	go func() {
-		for {
-			pipeNameUTF16, _ := syscall.UTF16PtrFromString(cfg.PipeName)
-			handle, err := win32.CreateNamedPipe(
-				pipeNameUTF16,
-				win32.PIPE_ACCESS_DUPLEX,
-				win32.PIPE_TYPE_BYTE|win32.PIPE_READMODE_BYTE|win32.PIPE_WAIT,
-				win32.PIPE_UNLIMITED_INSTANCES,
-				1024*1024,
-				1024*1024,
-				0,
-				0,
-			)
-			if err != nil || handle == 0 {
-				fmt.Printf("POEM automation pipe create failed: %v\n", err)
-				return
-			}
-
-			connected, err := win32.ConnectNamedPipe(handle, 0)
-			if err != nil || !connected {
-				win32.CloseHandle(handle)
-				continue
-			}
-
-			conn := &pipeReadWriteCloser{handle: handle}
-			handleAutomationConnection(conn, cfg)
-			_ = conn.Close()
-		}
-	}()
 }
 
 func startHTTPAutomationServer(cfg AutomationConfig) {
