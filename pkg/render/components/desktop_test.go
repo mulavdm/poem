@@ -57,6 +57,39 @@ func TestTabsKeyboardNavigationSkipsDisabledAndSurvivesRebuild(t *testing.T) {
 	}
 }
 
+func TestTabsControlledSelectionHonorsApplicationChange(t *testing.T) {
+	state := &types.ApplicationState{TransientState: renderstate.NewStore()}
+	items := []TabItem{{ID: "one", Label: "One"}, {ID: "two", Label: "Two"}, {ID: "three", Label: "Three"}}
+	selected := "one"
+	newTabs := func() *Tabs {
+		return NewTabs("views", items, selected, func(id string, _ *types.ApplicationState) { selected = id })
+	}
+
+	// The user clicks "three": the roving position moves and the application
+	// applies the requested selection, so both agree on the next rebuild.
+	clicked := newTabs()
+	clicked.Rect = image.Rect(0, 0, 300, 36)
+	third := clicked.itemRects(state)[2]
+	if !clicked.OnMouseDown(third.Min.Add(image.Pt(2, 2)), state) || !clicked.OnMouseUp(third.Min.Add(image.Pt(2, 2)), state) {
+		t.Fatal("tab click was not handled")
+	}
+	if selected != "three" {
+		t.Fatalf("click requested %q, want three", selected)
+	}
+	if rebuilt := newTabs(); rebuilt.activeIndex(state) != 2 {
+		t.Fatalf("after click+apply, active = %d, want 2", rebuilt.activeIndex(state))
+	}
+
+	// Now the application moves the selection on its own — no click, no key —
+	// the way a "jump to this tab after saving" flow would. The stale roving
+	// position ("three") must not shadow it.
+	selected = "one"
+	programmatic := newTabs()
+	if got := programmatic.activeIndex(state); got != 0 {
+		t.Fatalf("application-driven selection ignored: active = %d, want 0", got)
+	}
+}
+
 func TestTabsSemanticFocusTargetsActiveTab(t *testing.T) {
 	state := &types.ApplicationState{TransientState: renderstate.NewStore()}
 	tabs := NewTabs("views", []TabItem{{ID: "one", Label: "One"}, {ID: "two", Label: "Two"}}, "one", nil)

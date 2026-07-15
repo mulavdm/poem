@@ -125,6 +125,59 @@ func (a *Accordion) storeInteraction(state *types.ApplicationState, interaction 
 	}
 	renderstate.StoreValue(state.TransientState, a.interactionKey(), interaction)
 }
+
+// accordionExpansion is the uncontrolled expansion state persisted in the
+// transient store, keyed separately from the keyboard-focus interaction so
+// navigating headers and toggling sections never clobber each other.
+type accordionExpansion struct {
+	Expanded map[string]bool
+}
+
+func (a *Accordion) expansionKey() string { return a.CompID + "/accordion-expanded" }
+
+// hydrate keeps a.Expanded — the single source every read path already uses —
+// current across rebuilds when the Accordion is uncontrolled. A controlled
+// Accordion (OnToggle set) owns its own Expanded map through the application,
+// so this is a no-op there. An uncontrolled one is rebuilt from scratch every
+// frame (both POEM's own BuildPagesFn and the Trellis runtime work this way),
+// which would otherwise drop every toggle; persisting expansion in the
+// ApplicationState-owned transient store — exactly how Tabs and Select persist
+// their own uncontrolled UI state — lets it survive. On first sight the
+// incoming Expanded map (an author's initial/default open set) seeds the store;
+// after that the store is authoritative.
+func (a *Accordion) hydrate(state *types.ApplicationState) {
+	if a.OnToggle != nil || state == nil {
+		return
+	}
+	if state.TransientState == nil {
+		state.TransientState = renderstate.NewStore()
+	}
+	if stored, ok := renderstate.Load[accordionExpansion](state.TransientState, a.expansionKey()); ok {
+		a.Expanded = cloneExpanded(stored.Expanded)
+		return
+	}
+	renderstate.StoreValue(state.TransientState, a.expansionKey(), accordionExpansion{Expanded: cloneExpanded(a.Expanded)})
+}
+
+// persist writes a.Expanded back to the transient store after an uncontrolled
+// toggle, so the next rebuild rehydrates it.
+func (a *Accordion) persist(state *types.ApplicationState) {
+	if a.OnToggle != nil || state == nil {
+		return
+	}
+	if state.TransientState == nil {
+		state.TransientState = renderstate.NewStore()
+	}
+	renderstate.StoreValue(state.TransientState, a.expansionKey(), accordionExpansion{Expanded: cloneExpanded(a.Expanded)})
+}
+
+func cloneExpanded(m map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for id, open := range m {
+		out[id] = open
+	}
+	return out
+}
 func (a *Accordion) contentHeight(item AccordionItem, width int, state *types.ApplicationState) int {
 	if item.Content == nil {
 		return 0
@@ -141,6 +194,7 @@ func (a *Accordion) contentHeight(item AccordionItem, width int, state *types.Ap
 	return activeTheme(state).Controls.Large
 }
 func (a *Accordion) rebuildLayout(state *types.ApplicationState) []accordionLayoutItem {
+	a.hydrate(state)
 	if cap(a.layout) < len(a.Items) {
 		a.layout = make([]accordionLayoutItem, len(a.Items))
 	} else {
@@ -164,6 +218,7 @@ func (a *Accordion) rebuildLayout(state *types.ApplicationState) []accordionLayo
 	return a.layout
 }
 func (a *Accordion) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
+	a.hydrate(state)
 	th := activeTheme(state)
 	width := avail.X
 	if width <= 0 {
@@ -234,17 +289,19 @@ func (a *Accordion) toggle(index int, state *types.ApplicationState) bool {
 		return false
 	}
 	item := a.Items[index]
-	next := !a.Expanded[item.ID]
 	if a.OnToggle != nil {
-		a.OnToggle(item.ID, next, state)
+		a.OnToggle(item.ID, !a.Expanded[item.ID], state)
 		return true
 	}
+	a.hydrate(state)
+	next := !a.Expanded[item.ID]
 	if next && !a.Multiple {
 		for id := range a.Expanded {
 			a.Expanded[id] = false
 		}
 	}
 	a.Expanded[item.ID] = next
+	a.persist(state)
 	return true
 }
 func (a *Accordion) OnKey(key uint32, _ rune, state *types.ApplicationState) bool {

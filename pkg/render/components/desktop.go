@@ -89,7 +89,14 @@ type TabItem struct {
 }
 
 type tabsInteraction struct {
+	// ActiveID is the roving position: the tab last moved to by pointer or
+	// keyboard. It survives rebuilds so navigation continues where it left off.
 	ActiveID string
+	// SelectedID snapshots the application's SelectedID at the moment ActiveID
+	// was stored. A controlled Tabs compares it against the current SelectedID
+	// to tell "the application moved the selection itself" apart from "the user
+	// moved the roving position" — see activeIndex.
+	SelectedID string
 }
 
 type Tabs struct {
@@ -113,6 +120,20 @@ func (t *Tabs) activeIndex(state *types.ApplicationState) int {
 	if state != nil && state.TransientState != nil {
 		if interaction, ok := renderstate.Load[tabsInteraction](state.TransientState, t.interactionKey()); ok {
 			activeID = interaction.ActiveID
+			// A controlled Tabs (OnChange set) does not own its selection — the
+			// application does. interaction.SelectedID snapshots what the
+			// application's selection was when the roving position was stored,
+			// so a difference means the application has moved the selection
+			// since (rather than the user roving), and it wins. Adopt it and
+			// resync the snapshot: without the resync, a later application
+			// change back to the previously snapshotted value would look
+			// unchanged and the stale roving position would shadow it. Storing
+			// on this read path mirrors how Accordion.interaction seeds its own
+			// default, and only ever touches transient UI state.
+			if t.OnChange != nil && interaction.SelectedID != t.SelectedID {
+				activeID = t.SelectedID
+				renderstate.StoreValue(state.TransientState, t.interactionKey(), tabsInteraction{ActiveID: t.SelectedID, SelectedID: t.SelectedID})
+			}
 		}
 	}
 	if activeID == "" {
@@ -137,7 +158,7 @@ func (t *Tabs) storeActive(index int, state *types.ApplicationState) {
 	if state.TransientState == nil {
 		state.TransientState = renderstate.NewStore()
 	}
-	renderstate.StoreValue(state.TransientState, t.interactionKey(), tabsInteraction{ActiveID: t.Items[index].ID})
+	renderstate.StoreValue(state.TransientState, t.interactionKey(), tabsInteraction{ActiveID: t.Items[index].ID, SelectedID: t.SelectedID})
 }
 func (t *Tabs) selectIndex(index int, state *types.ApplicationState) bool {
 	if index < 0 || index >= len(t.Items) || t.Items[index].Disabled {

@@ -43,6 +43,62 @@ func TestAccordionControlledToggle(t *testing.T) {
 	}
 }
 
+func TestAccordionUncontrolledExpansionSurvivesRebuild(t *testing.T) {
+	state := accordionTestState()
+	items := []AccordionItem{{ID: "general", Title: "General"}, {ID: "advanced", Title: "Advanced"}}
+
+	// An uncontrolled accordion (nil OnToggle) rebuilt from scratch every frame
+	// must not lose a toggle: expansion lives in the transient store, keyed by
+	// CompID, exactly like Tabs/Select persist their own uncontrolled state.
+	first := NewAccordion("settings", items, map[string]bool{}, nil)
+	first.Rect = image.Rect(0, 0, 320, 200)
+	first.rebuildLayout(state)
+	if !first.toggle(1, state) {
+		t.Fatal("toggle was not handled")
+	}
+	if !first.Expanded["advanced"] {
+		t.Fatal("first instance did not record expansion")
+	}
+
+	// A fresh instance with the same CompID and a fresh (empty) initial map —
+	// what a rebuild produces — must see the persisted expansion.
+	rebuilt := NewAccordion("settings", items, map[string]bool{}, nil)
+	rebuilt.Rect = image.Rect(0, 0, 320, 200)
+	rebuilt.rebuildLayout(state)
+	if !rebuilt.Expanded["advanced"] {
+		t.Fatalf("rebuilt instance lost expansion: %+v", rebuilt.Expanded)
+	}
+
+	// Toggling it back off must likewise persist.
+	if !rebuilt.toggle(1, state) {
+		t.Fatal("second toggle was not handled")
+	}
+	again := NewAccordion("settings", items, map[string]bool{}, nil)
+	again.Rect = image.Rect(0, 0, 320, 200)
+	again.rebuildLayout(state)
+	if again.Expanded["advanced"] {
+		t.Fatalf("collapse did not persist across rebuild: %+v", again.Expanded)
+	}
+}
+
+func TestAccordionInitialExpandedSeedsUncontrolledStore(t *testing.T) {
+	state := accordionTestState()
+	items := []AccordionItem{{ID: "general", Title: "General"}, {ID: "advanced", Title: "Advanced"}}
+
+	// The author's initial open set seeds the store on first sight, then a
+	// rebuild that passes an empty map must still show the seeded section open.
+	first := NewAccordion("settings", items, map[string]bool{"general": true}, nil)
+	first.Rect = image.Rect(0, 0, 320, 200)
+	first.rebuildLayout(state)
+
+	rebuilt := NewAccordion("settings", items, map[string]bool{}, nil)
+	rebuilt.Rect = image.Rect(0, 0, 320, 200)
+	rebuilt.rebuildLayout(state)
+	if !rebuilt.Expanded["general"] {
+		t.Fatalf("seeded default-open lost across rebuild: %+v", rebuilt.Expanded)
+	}
+}
+
 func TestAccordionKeyboardHeaderSurvivesRebuild(t *testing.T) {
 	state := accordionTestState()
 	state.FocusedID = "settings"

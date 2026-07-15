@@ -1,5 +1,13 @@
 # OKF Bundle Update Log
 
+## 2026-07-12 (tabs controlled selection)
+
+- Fixed `components.Tabs` ignoring application-driven selection changes when **controlled**. `activeIndex` preferred the roving position stored in `TransientState` over `SelectedID` unconditionally, so once a user had clicked any tab, an application that later set `SelectedID` itself — without a click or keypress — was silently overridden by the stale roving position. That defeats the entire point of a controlled component: an app cannot programmatically move the selection (a "jump to this tab after saving" flow). `tabsInteraction` now also snapshots the application's `SelectedID` at the moment a roving position is stored, so `activeIndex` can tell "the application moved the selection" (snapshot differs from the current `SelectedID` → adopt it and resync the snapshot) from "the user roved" (snapshot matches → keep the roving position). The resync matters: without it, an application changing back to a previously snapshotted value would look unchanged and be shadowed again. Uncontrolled `Tabs` are unaffected. Added a regression test covering click-then-apply and application-driven change; the existing roving-survives-rebuild test still passes unchanged. Unblocked the sibling Trellis project's `TabsNode`, whose selection is application-owned.
+
+## 2026-07-12 (accordion uncontrolled persistence)
+
+- `components.Accordion` now persists **uncontrolled** expansion (`OnToggle == nil`) in the `ApplicationState` transient store, keyed by `CompID`, instead of only mutating the instance's `Expanded` map. Previously an uncontrolled accordion rebuilt from scratch each frame — which is how `BuildPagesFn` and the downstream Trellis runtime both drive rendering — silently dropped every toggle, because the mutated map was discarded on the next rebuild. It now hydrates `Expanded` from the transient store (seeded from the author's initial open set on first sight) at each state-aware entry point and writes back on toggle, exactly how `Tabs` selection and `Select` popups already survive rebuilds. Controlled accordions (`OnToggle` set) are unchanged — the application still owns their `Expanded` map. Added rebuild-persistence and default-open-seeding regression tests; all existing accordion tests still pass. This unblocked the sibling Trellis project's `AccordionNode` (backend-local expand/collapse chrome, no `App[S]` involvement).
+
 ## 2026-07-12
 
 - Hardened the Windows clipboard transfer path to use bounded native memory copies without vet-reported unsafe-pointer misuse. The production gate now requires clean Go vet output in addition to Go/race tests and a Release sidecar build.
