@@ -34,9 +34,16 @@ jobs:
       - uses: lukka/get-cmake@latest
       - run: cmake -S cpp_sidecar -B cpp_sidecar/build
       - run: cmake --build cpp_sidecar/build --config Release
+      # The embedded sidecar must have been built from the current cpp_sidecar
+      # sources. The check fingerprints the committed sources (git blob hashes,
+      # deterministic on any checkout) against the manifest recorded when the
+      # binary was embedded. Bit-comparing the exe against a fresh runner build
+      # is NOT viable: MSVC updates on the runner image change codegen, so that
+      # comparison has never passed on CI (v0.1.0 and v0.3.0 both failed on it).
       - name: Verify embedded sidecar provenance
         shell: pwsh
         run: |
-          $embedded = (Get-FileHash pkg/render/assets/windows_amd64/poem_cpp_sidecar.exe -Algorithm SHA256).Hash
-          $built = (Get-FileHash cpp_sidecar/build/Release/poem_cpp_sidecar.exe -Algorithm SHA256).Hash
-          if ($embedded -ne $built) { throw "embedded sidecar hash $embedded does not match Release build $built" }
+          $current = (git ls-files -s cpp_sidecar) -join "`n"
+          $fingerprint = (Get-FileHash -InputStream ([IO.MemoryStream][Text.Encoding]::UTF8.GetBytes($current)) -Algorithm SHA256).Hash
+          $manifest = (Get-Content pkg/render/assets/windows_amd64/poem_cpp_sidecar.provenance -Raw).Trim()
+          if ($fingerprint -ne $manifest) { throw "cpp_sidecar sources ($fingerprint) do not match the embedded sidecar's provenance manifest ($manifest); rebuild and re-embed per RELEASING.md" }
