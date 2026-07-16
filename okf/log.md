@@ -1,5 +1,11 @@
 # OKF Bundle Update Log
 
+## 2026-07-16 (Android Phase 4: IME)
+
+- Added `SetImeVisible` (engine→presenter message type 6, one bool) — the first protocol addition of the Android port. The engine emits it from the frame loop when keyboard focus enters or leaves a text-entry component (`TextInput`/`TextArea`/`Autocomplete`, resolved via `libFindComponent`), gated on hosted mode so the Windows sidecar's strict decoder never sees an unknown type. Both protocol implementations updated together per the repo-owned-protocol rule.
+- The Android presenter acts on it over JNI: `ime_jni.cpp` drives `InputMethodManager.showSoftInput(decorView, SHOW_FORCED)`/`hideSoftInputFromWindow` (the reliable NativeActivity path — `ANativeActivity_showSoftInput` is widely ignored on modern Android), attaching to the JVM per call so the transport thread can invoke it. Key events now translate to the engine's Win32 VK vocabulary (backspace/delete/arrows/home/end/enter/escape/tab/space) with printable characters resolved through `KeyEvent.getUnicodeChar` and delivered as `KeyChar`, mirroring the WM_KEYDOWN/WM_CHAR split the editing components expect.
+- Verified on the API 36 emulator with the preferences example (all 16 Node kinds rendering): tapping the Notes `TextArea` summoned the keyboard (`ime visible -> 1`), typed text with spaces landed, two backspaces removed trailing characters, and tapping a checkbox dismissed the keyboard (`ime visible -> 0`).
+
 ## 2026-07-16 (post-consolidation documentation truth pass)
 
 - Rewrote `README.md` app-first: one application API (`pkg/app`) over three targets, the layer model, updated project layout, Android build instructions, and a truthful Current Runtime Status (the "cross-platform sidecars are a later step" claim was stale — the Android presenter exists). Preserved the still-accurate automation, layout-measurement, and sidecar-resolution sections.

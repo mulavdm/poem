@@ -58,6 +58,6 @@ otherwise swallows taps near the top edge).
 
 ## Known gaps
 
-Tracked in `TASK.md`: IME/soft keyboard (needs an engine→presenter protocol addition), audio
+Tracked in `TASK.md`: audio
 (`PlaySound` ignored), accessibility bridge (`SemanticTree` dropped; the UIA sidecar is the
 reference), activity-lifecycle hardening, arm64 on-device verification.

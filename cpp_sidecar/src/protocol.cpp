@@ -169,6 +169,13 @@ PlaySound DecodePlaySound(const std::vector<std::uint8_t>& body) {
     return out;
 }
 
+SetImeVisible DecodeSetImeVisible(const std::vector<std::uint8_t>& body) {
+    Reader r(body);
+    SetImeVisible out;
+    out.visible = r.Read<std::uint8_t>() != 0;
+    return out;
+}
+
 SemanticTree DecodeSemanticTree(const std::vector<std::uint8_t>& body) {
     Reader r(body);
     SemanticTree out;

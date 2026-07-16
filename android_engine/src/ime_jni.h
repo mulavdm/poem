@@ -1,0 +1,22 @@
+#pragma once
+
+// JNI bridges for text input on the Android presenter. Zero Java ships in the
+// APK, but a NativeActivity still carries a JavaVM and an Activity instance,
+// which is enough to drive InputMethodManager (the reliable way to summon the
+// soft keyboard — ANativeActivity_showSoftInput is notoriously ignored on
+// modern Android) and KeyEvent.getUnicodeChar (keycode+meta → codepoint,
+// covering the layouts a hardcoded table would get wrong).
+
+struct ANativeActivity;
+
+namespace poem {
+
+// SetSoftKeyboardVisible shows or hides the IME. Safe to call from any
+// thread; attaches to the JVM as needed.
+void SetSoftKeyboardVisible(ANativeActivity* activity, bool visible);
+
+// UnicodeCharForKey resolves an Android keycode + meta state to the Unicode
+// codepoint KeyEvent would produce, or 0 for non-printing keys.
+int UnicodeCharForKey(ANativeActivity* activity, int keyCode, int metaState);
+
+} // namespace poem

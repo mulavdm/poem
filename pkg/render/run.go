@@ -184,6 +184,7 @@ func Run(config AppConfig) {
 // APK and exchange the same POEM byte protocol over an in-process pipe pair.
 // The caller owns both transports and closes them to stop the engine.
 func RunHosted(config AppConfig, toPresenter io.ReadWriteCloser, fromPresenter io.ReadWriteCloser) {
+	globalHostedMode = true
 	config.Services = withDefaultPlatformServices(config.Services)
 	manager, preferenceUpdates, stopPreferencePolling := prepareEngineState(config)
 	if stopPreferencePolling != nil {
@@ -418,6 +419,7 @@ func runEngine(config AppConfig, manager *theme.Manager, preferenceUpdates <-cha
 				atlasChanged := triggerRepaintFrame(pipeConnGoToSidecar, painter)
 				globalState.NeedsRepaint = atlasChanged
 			}
+			updateImeVisibility(pipeConnGoToSidecar)
 			stateMutex.Unlock()
 		}
 	}()
@@ -1454,6 +1456,47 @@ func performSemanticAction(target string, action semantics.Action, value string)
 		return component.OnKey(key, 0, globalState)
 	}
 	return false
+}
+
+// globalHostedMode is true when the engine runs inside a presenter's process
+// (RunHosted — the Android APK). Some engine→presenter messages only make
+// sense there and would confuse the Windows sidecar's strict decoder, so
+// their emission is gated on it.
+var globalHostedMode bool
+
+// imeLastFocus / imeShown track the text-entry focus state most recently
+// reconciled with the presenter, guarded by stateMutex like the focus itself.
+var (
+	imeLastFocus string
+	imeShown     bool
+)
+
+// updateImeVisibility tells a hosted presenter to summon or dismiss the
+// platform text-input method whenever keyboard focus enters or leaves a
+// text-entry component. Called from the frame loop with stateMutex held; it
+// only walks the tree when the focused ID actually changed.
+func updateImeVisibility(conn io.Writer) {
+	if !globalHostedMode || globalState == nil {
+		return
+	}
+	if globalState.FocusedID == imeLastFocus {
+		return
+	}
+	imeLastFocus = globalState.FocusedID
+	wants := false
+	if comp := libFindComponent(imeLastFocus); comp != nil {
+		switch comp.(type) {
+		case *components.TextInput, *components.TextArea, *components.Autocomplete:
+			wants = true
+		}
+	}
+	if wants == imeShown {
+		return
+	}
+	imeShown = wants
+	if payload, err := protocol.EncodeSetImeVisible(protocol.SetImeVisible{Visible: wants}); err == nil {
+		_ = writeMessage(conn, payload)
+	}
 }
 
 func libFindComponent(id string) types.Component {

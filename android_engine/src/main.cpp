@@ -19,6 +19,7 @@
 #include <thread>
 #include <vector>
 
+#include "ime_jni.h"
 #include "protocol.h"
 #include "renderer_gles.h"
 
@@ -144,6 +145,12 @@ void TransportLoop() {
                 g_host.latestFrame = std::move(frame);
                 break;
             }
+            case poem::protocol::MessageType::SetImeVisible: {
+                const auto ime = poem::protocol::DecodeSetImeVisible(envelope.body);
+                HLOGI("ime visible -> %d", ime.visible ? 1 : 0);
+                poem::SetSoftKeyboardVisible(g_host.app->activity, ime.visible);
+                break;
+            }
             case poem::protocol::MessageType::PlaySound:
             case poem::protocol::MessageType::SemanticTree:
                 break; // no audio / accessibility bridge on this presenter yet
@@ -256,7 +263,66 @@ void HandleCmd(android_app* app, int32_t cmd) {
     }
 }
 
+// VkForAndroidKey maps the editing/navigation keys the engine's text
+// components act on (Win32 virtual-key vocabulary, matching what the Windows
+// sidecar delivers) from Android keycodes. Returns 0 for keys with no mapping.
+std::uint32_t VkForAndroidKey(std::int32_t keyCode) {
+    switch (keyCode) {
+    case AKEYCODE_DEL: return 0x08;          // backspace -> VK_BACK
+    case AKEYCODE_TAB: return 0x09;          // VK_TAB (focus cycling)
+    case AKEYCODE_ENTER:
+    case AKEYCODE_NUMPAD_ENTER: return 0x0D; // VK_RETURN
+    case AKEYCODE_ESCAPE: return 0x1B;       // VK_ESCAPE
+    case AKEYCODE_SPACE: return 0x20;        // VK_SPACE (button activation)
+    case AKEYCODE_MOVE_END: return 0x23;     // VK_END
+    case AKEYCODE_MOVE_HOME: return 0x24;    // VK_HOME
+    case AKEYCODE_DPAD_LEFT: return 0x25;    // VK_LEFT
+    case AKEYCODE_DPAD_UP: return 0x26;      // VK_UP
+    case AKEYCODE_DPAD_RIGHT: return 0x27;   // VK_RIGHT
+    case AKEYCODE_DPAD_DOWN: return 0x28;    // VK_DOWN
+    case AKEYCODE_FORWARD_DEL: return 0x2E;  // VK_DELETE
+    default: return 0;
+    }
+}
+
+int32_t HandleKey(android_app* app, AInputEvent* event) {
+    const auto action = AKeyEvent_getAction(event);
+    const auto keyCode = AKeyEvent_getKeyCode(event);
+    if (keyCode == AKEYCODE_BACK) return 0; // leave system back navigation alone
+
+    const auto vk = VkForAndroidKey(keyCode);
+    if (action == AKEY_EVENT_ACTION_DOWN) {
+        if (vk != 0) {
+            poem::protocol::Event down;
+            down.type = poem::protocol::EventType::KeyDown;
+            down.keycode = vk;
+            QueueEvent(down);
+        }
+        // Printable characters travel as KeyChar, mirroring WM_CHAR. The
+        // engine inserts text from KeyChar and edits from virtual keys, and
+        // it already dedupes Enter arriving as both.
+        const int codepoint =
+            poem::UnicodeCharForKey(app->activity, keyCode, AKeyEvent_getMetaState(event));
+        if (codepoint >= 32) {
+            poem::protocol::Event ch;
+            ch.type = poem::protocol::EventType::KeyChar;
+            ch.ch = static_cast<std::uint32_t>(codepoint);
+            QueueEvent(ch);
+        }
+        return 1;
+    }
+    if (action == AKEY_EVENT_ACTION_UP && vk != 0) {
+        poem::protocol::Event up;
+        up.type = poem::protocol::EventType::KeyUp;
+        up.keycode = vk;
+        QueueEvent(up);
+        return 1;
+    }
+    return 0;
+}
+
 int32_t HandleInput(android_app* app, AInputEvent* event) {
+    if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_KEY) return HandleKey(app, event);
     if (AInputEvent_getType(event) != AINPUT_EVENT_TYPE_MOTION) return 0;
     const auto action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
     Host* host = static_cast<Host*>(app->userData);

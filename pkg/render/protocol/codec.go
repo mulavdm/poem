@@ -77,6 +77,12 @@ func EncodePlaySound(msg PlaySound) ([]byte, error) {
 	return wrapEnvelope(MessagePlaySound, body.Bytes()), nil
 }
 
+func EncodeSetImeVisible(msg SetImeVisible) ([]byte, error) {
+	var body bytes.Buffer
+	writeBool(&body, msg.Visible)
+	return wrapEnvelope(MessageSetImeVisible, body.Bytes()), nil
+}
+
 func EncodeSemanticTree(msg SemanticTree) ([]byte, error) {
 	var body bytes.Buffer
 	_ = binary.Write(&body, binary.LittleEndian, msg.Revision)

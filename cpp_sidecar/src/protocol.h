@@ -15,6 +15,7 @@ enum class MessageType : std::uint16_t {
     PlaySound = 3,
     SemanticTree = 4,
     FontAtlas = 5,
+    SetImeVisible = 6,
     EventBatch = 101,
     NativeDebugRequest = 201,
     NativeDebugResponse = 202,
@@ -108,6 +109,10 @@ struct RenderFrame {
     std::int32_t height{};
     std::uint8_t cursor{};
     std::vector<DrawCommand> commands;
+};
+
+struct SetImeVisible {
+    bool visible{};
 };
 
 struct PlaySound {
@@ -239,6 +244,7 @@ Envelope DecodeEnvelope(const std::vector<std::uint8_t>& payload);
 InitEngine DecodeInitEngine(const std::vector<std::uint8_t>& body);
 RenderFrame DecodeRenderFrame(const std::vector<std::uint8_t>& body);
 PlaySound DecodePlaySound(const std::vector<std::uint8_t>& body);
+SetImeVisible DecodeSetImeVisible(const std::vector<std::uint8_t>& body);
 SemanticTree DecodeSemanticTree(const std::vector<std::uint8_t>& body);
 NativeDebugRequest DecodeNativeDebugRequest(const std::vector<std::uint8_t>& body);
 NativeDialogRequest DecodeNativeDialogRequest(const std::vector<std::uint8_t>& body);

@@ -7,10 +7,12 @@ The counter milestone (2026-07-16) proved the chain: Trellis Go `App[S]` →
 verified on the API 36 emulator. These are the known, deliberate gaps left
 open at that gate:
 
-- [ ] **IME / soft keyboard**: summon and dismiss the keyboard when the engine
-      focuses a text field, and forward committed characters as `KeyChar`
-      events. Needs a small engine→presenter protocol addition (a
-      show/hide-keyboard command) — the first schema change of the port.
+- [x] **IME / soft keyboard** (2026-07-16): `SetImeVisible` (protocol message
+      6) fires on text-entry focus change (hosted mode only); the presenter
+      summons/dismisses the keyboard via JNI InputMethodManager and translates
+      key events (Win32 VK vocabulary + `KeyChar` via `KeyEvent.getUnicodeChar`).
+      Verified on emulator: focus→keyboard, typing with spaces, backspace
+      editing, unfocus→dismiss.
 - [ ] **Audio**: `PlaySound` messages are currently ignored; wire them to
       AAudio/Oboe or keep a documented silent stub.
 - [ ] **Accessibility bridge**: the presenter drops `SemanticTree` messages;

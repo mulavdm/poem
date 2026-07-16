@@ -13,6 +13,7 @@ const (
 	MessagePlaySound            MessageType = 3
 	MessageSemanticTree         MessageType = 4
 	MessageFontAtlas            MessageType = 5
+	MessageSetImeVisible        MessageType = 6
 	MessageEventBatch           MessageType = 101
 	MessageNativeDebugRequest   MessageType = 201
 	MessageNativeDebugResponse  MessageType = 202
@@ -111,6 +112,13 @@ type RenderFrame struct {
 
 type PlaySound struct {
 	Type SoundType
+}
+
+// SetImeVisible asks the presenter to show or hide the platform text-input
+// method (the soft keyboard on Android). Presenters without an IME concept
+// ignore it; the engine only emits it in hosted mode.
+type SetImeVisible struct {
+	Visible bool
 }
 
 type SemanticNode struct {
