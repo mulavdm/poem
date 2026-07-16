@@ -1,5 +1,12 @@
 # OKF Bundle Update Log
 
+## 2026-07-16 (Android Phase 4: full touch sweep + engine mouse-up fix)
+
+- **All 16 `Node` kinds verified by touch on the Android emulator** (preferences + settings examples): checkbox/switch/radio toggles, slider drag with live `ProgressBar` tracking, `Select` popup open/pick/close through the overlay path, `TextArea` + IME, accordion expand with a nested checkbox dispatching through `Update`, `App[S]`-owned tab switching, and `Modal` — opened via `OverlayManager`, nested checkbox dispatched (status text updated behind the dialog while the modal's own snapshot stayed as documented), dismissed with the back gesture.
+- The sweep caught a **latent engine bug, not an Android bug**: `Slider.OnMouseUp` consumed every mouse release unconditionally and wiped `ActiveID`, so in any tree where a slider sits later than the tapped control, the FlexBox mouse-up broadcast never reached the real target — every up-driven control (checkbox/switch/radio/accordion headers) was dead. Never noticed on Windows because `pkg/app` desktop trees had only ever been verified by draw output, and the gallery's hand-built pages never put a slider after a clicked control. Reproduced first in a plain Go test (`pkg/app/desktop`), fixed with the same ActiveID ownership guard every sibling component uses, and pinned by two tests: a full-dispatch regression (tap toggles the preferences checkbox through the exact run.go sequence) and an invariant test (only the subtree owning the active target may consume or clear a mouse-up).
+- Android back gesture now maps to `VK_ESCAPE` (POEM's overlay-dismiss key); the manifest opts out of predictive back (`enableOnBackInvokedCallback="false"`, default-on at targetSdk 36) so `KEYCODE_BACK` actually reaches the presenter instead of the system finishing the activity — found when back closed the whole app instead of the modal.
+- Known cosmetic follow-up recorded in `TASK.md`: accordion expansion can overlap later siblings after relayout.
+
 ## 2026-07-16 (Android Phase 4: IME)
 
 - Added `SetImeVisible` (engine→presenter message type 6, one bool) — the first protocol addition of the Android port. The engine emits it from the frame loop when keyboard focus enters or leaves a text-entry component (`TextInput`/`TextArea`/`Autocomplete`, resolved via `libFindComponent`), gated on hosted mode so the Windows sidecar's strict decoder never sees an unknown type. Both protocol implementations updated together per the repo-owned-protocol rule.

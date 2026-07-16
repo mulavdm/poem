@@ -916,6 +916,13 @@ func (s *Slider) OnMouseDown(pt image.Point, state *types.ApplicationState) bool
 }
 
 func (s *Slider) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
+	// Only the slider that owns the press ends it. Without this guard the
+	// FlexBox mouse-up broadcast let any slider consume a release aimed at a
+	// sibling control (and wipe ActiveID before the real target saw it) —
+	// found when Android touch drove the first slider-bearing pkg/app tree.
+	if state.ActiveID != s.CompID {
+		return false
+	}
 	state.ActiveID = ""
 	return true
 }

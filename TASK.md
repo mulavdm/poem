@@ -24,11 +24,17 @@ open at that gate:
 - [ ] **arm64 on-device verification**: the arm64 build compiles but only the
       x86_64 emulator has been exercised; run the counter on a physical
       device.
-- [ ] **All-16-kinds sweep**: build the Trellis preferences example for
-      Android and exercise every Node kind by touch (Select popups, Slider
-      drag, TextArea + IME, Modal, Accordion, Tabs).
+- [x] **All-16-kinds sweep** (2026-07-16): every Node kind exercised by touch
+      on the emulator via the preferences and settings examples - checkbox,
+      switch, radio, slider drag, Select popup, TextArea+IME, accordion
+      expand with nested dispatch, App[S]-owned tab switch, modal open/
+      nested-dispatch/back-dismiss. Found and fixed a latent engine bug
+      (Slider.OnMouseUp consumed every release and wiped ActiveID, killing
+      all up-driven controls in slider-bearing trees; regression + invariant
+      tests in pkg/app/desktop). Back maps to Escape (overlay dismiss);
+      manifest opts out of predictive back so the key event is delivered.
 - [ ] **Parity matrix Android column**: extend
-      `Trellis/okf/architecture/component-parity.md` with per-kind Android
+      `okf/concepts/app/component-parity.md` with per-kind Android
       status once the sweep runs.
 - [ ] **CI story**: decide how the Android presenter builds in CI (NDK
       toolchain on a Windows or Linux runner; APK artifact for the release
@@ -38,3 +44,6 @@ open at that gate:
       high-density screens; re-rasterize the atlas at physical size (the
       `FontAtlas` message type exists for exactly this).
 - [ ] **OKF bundle validation test**: port the markdown frontmatter/link validator (previously Trellis/GopherWeb ./okf Go tests) to validate POEM's okf bundle in CI.
+- [ ] **Accordion expansion overlap**: expanding a section pushes content down
+      but later siblings (About content / Save) can overlap after relayout on
+      Android — reproduce on desktop and fix in FlexBox/Accordion measure.

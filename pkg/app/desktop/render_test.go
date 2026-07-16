@@ -5,6 +5,7 @@ import (
 
 	"github.com/mulavdm/poem/pkg/render"
 
+	"github.com/mulavdm/poem/examples/preferences"
 	"github.com/mulavdm/poem/pkg/app"
 )
 
@@ -296,5 +297,94 @@ func TestBuildContainerAssignsStablePaths(t *testing.T) {
 	}
 	if got := flex.Children[1].ID(); got != "root/1" {
 		t.Fatalf("second child ID = %q, want root/1", got)
+	}
+}
+
+// TestFullMouseDispatchTogglesCheckbox replicates run.go's mouse dispatch
+// against the real preferences example tree — the exact sequence a tap
+// produces on Android (Move context omitted; Down sets ActiveID via the
+// root hit test, Up routes through the root's OnMouseUp broadcast). It
+// reproduces the emulator finding that up-driven controls never toggle.
+func TestFullMouseDispatchTogglesCheckbox(t *testing.T) {
+	rstate := &render.ApplicationState{WindowWidth: 411, WindowHeight: 914}
+	config := Configure(preferences.App, render.AppConfig{Title: "t"})
+	config.BuildPagesFn(rstate)
+	root := rstate.Pages["trellis-root"][0]
+
+	// Locate the checkbox (first child) by its laid-out bounds.
+	var checkbox *render.Checkbox
+	root.Walk(func(c render.Component) {
+		if cb, ok := c.(*render.Checkbox); ok && checkbox == nil {
+			checkbox = cb
+		}
+	})
+	if checkbox == nil {
+		t.Fatal("no checkbox in preferences tree")
+	}
+	pt := checkbox.Bounds().Min.Add(checkbox.Bounds().Size().Div(2))
+
+	// MouseDown path: hit test resolves the target, ActiveID records it.
+	rstate.ActiveID = root.HitTest(pt)
+	if rstate.ActiveID != checkbox.ID() {
+		t.Fatalf("down hit %q, want %q (pt=%v bounds=%v)", rstate.ActiveID, checkbox.ID(), pt, checkbox.Bounds())
+	}
+	root.OnMouseDown(pt, rstate)
+
+	// MouseUp path: the root broadcast, exactly as run.go dispatches it.
+	handled := root.OnMouseUp(pt, rstate)
+	rstate.ActiveID = ""
+
+	// Rebuild from (possibly updated) app state and check the checkbox.
+	config.BuildPagesFn(rstate)
+	var rebuilt *render.Checkbox
+	rstate.Pages["trellis-root"][0].Walk(func(c render.Component) {
+		if cb, ok := c.(*render.Checkbox); ok && rebuilt == nil {
+			rebuilt = cb
+		}
+	})
+	if !rebuilt.Checked {
+		t.Fatalf("checkbox did not toggle through full dispatch (up handled=%v)", handled)
+	}
+}
+
+// TestOnlyActiveTargetConsumesMouseUp asserts the invariant the FlexBox
+// mouse-up broadcast depends on: a release aimed at one control (ActiveID)
+// must pass through every other sibling untouched — only the subtree owning
+// the active target may consume it. Slider violated this (it swallowed every
+// up and wiped ActiveID), which made all up-driven controls dead in any tree
+// with a slider later than them; found by Android touch, reproduced here.
+func TestOnlyActiveTargetConsumesMouseUp(t *testing.T) {
+	rstate := &render.ApplicationState{WindowWidth: 411, WindowHeight: 914}
+	config := Configure(preferences.App, render.AppConfig{Title: "t"})
+	config.BuildPagesFn(rstate)
+	root := rstate.Pages["trellis-root"][0].(*render.FlexBox)
+	var checkbox *render.Checkbox
+	root.Walk(func(c render.Component) {
+		if cb, ok := c.(*render.Checkbox); ok && checkbox == nil {
+			checkbox = cb
+		}
+	})
+	pt := checkbox.Bounds().Min.Add(checkbox.Bounds().Size().Div(2))
+	target := root.HitTest(pt)
+	if target != checkbox.ID() {
+		t.Fatalf("hit test found %q, want %q", target, checkbox.ID())
+	}
+
+	for i := len(root.Children) - 1; i >= 0; i-- {
+		child := root.Children[i]
+		rstate.ActiveID = target
+		consumed := child.OnMouseUp(pt, rstate)
+		ownsTarget := false
+		child.Walk(func(c render.Component) {
+			if c.ID() == target {
+				ownsTarget = true
+			}
+		})
+		if consumed && !ownsTarget {
+			t.Fatalf("child %d (%T id=%q) consumed an up aimed at %q", i, child, child.ID(), target)
+		}
+		if rstate.ActiveID != target && !ownsTarget {
+			t.Fatalf("child %d (%T id=%q) cleared ActiveID aimed at %q", i, child, child.ID(), target)
+		}
 	}
 }

@@ -272,6 +272,10 @@ std::uint32_t VkForAndroidKey(std::int32_t keyCode) {
     case AKEYCODE_TAB: return 0x09;          // VK_TAB (focus cycling)
     case AKEYCODE_ENTER:
     case AKEYCODE_NUMPAD_ENTER: return 0x0D; // VK_RETURN
+    // The system back gesture maps to Escape: POEM dismisses overlays
+    // (modals, popups) on Escape, which is what back means inside an app
+    // whose whole surface is one activity. Exiting is home/recents.
+    case AKEYCODE_BACK: return 0x1B;         // back -> VK_ESCAPE
     case AKEYCODE_ESCAPE: return 0x1B;       // VK_ESCAPE
     case AKEYCODE_SPACE: return 0x20;        // VK_SPACE (button activation)
     case AKEYCODE_MOVE_END: return 0x23;     // VK_END
@@ -288,8 +292,6 @@ std::uint32_t VkForAndroidKey(std::int32_t keyCode) {
 int32_t HandleKey(android_app* app, AInputEvent* event) {
     const auto action = AKeyEvent_getAction(event);
     const auto keyCode = AKeyEvent_getKeyCode(event);
-    if (keyCode == AKEYCODE_BACK) return 0; // leave system back navigation alone
-
     const auto vk = VkForAndroidKey(keyCode);
     if (action == AKEY_EVENT_ACTION_DOWN) {
         if (vk != 0) {
