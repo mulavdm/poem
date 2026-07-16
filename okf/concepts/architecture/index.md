@@ -1,6 +1,7 @@
 # Architecture Concepts
 
 * [Overview](/concepts/architecture/overview.md) — portability boundary and modular polylith topology
+* [Android Presenter](/concepts/architecture/android-presenter.md) — the C++/GLES2 in-process presenter, `pkg/mobile` transport, density model, and startup contract
 * [Thread Locking](/concepts/architecture/thread-locking.md) — Go runtime vs. the OS thread
 * [Win32 Syscall Stabilization](/concepts/architecture/win32-syscalls.md) — the "success" trap
 * [Process Isolation Comparison](/concepts/architecture/process-isolation-comparison.md) — GDI/OpenGL vs. Go+C++ sidecar

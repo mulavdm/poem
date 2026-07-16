@@ -1,82 +1,84 @@
 # POEM
 
-> **POEM 2.0 is in incremental development.** The current milestone introduces
-> portable theme, drawing, event, semantic, and platform-service contracts plus
-> protocol v2. Windows/D3D11 is the only implemented backend; public contracts do
-> not expose Win32 types. See [the POEM 2.0 foundation guide](docs/POEM_2_FOUNDATION.md).
+POEM is a Go UI framework with **one application API and three targets**: an application is
+written once as a `pkg/app` `App[S]` — serializable state, a pure `View` producing a `Node`
+tree, a pure `Update` reducer — and runs as a native Windows desktop app, a server-rendered
+web app, or an Android app from the same definition.
 
-The Windows backend can optionally follow live system light/dark/high-contrast
-and reduced-motion preferences through platform-neutral configuration.
+```go
+type State struct{ Count int }
 
-POEM is a frameworkless desktop UI engine for Go applications. The public API lives in `pkg/render`, where consumers call `render.Run(render.AppConfig{...})` and build pages declaratively from Go. Native presentation is handled by a separate sidecar process so layout, state, focus, and input semantics stay in Go while the window, GPU rendering, and local audio stay native.
+var App = app.App[State]{
+	Init: State{},
+	View: func(s State) app.Node {
+		return app.Container(app.Vertical, 12,
+			app.Text("Count: "+strconv.Itoa(s.Count)),
+			app.Button("Increment", app.Msg{Name: "increment"}),
+		)
+	},
+	Update: func(s State, m app.Msg) State {
+		if m.Name == "increment" {
+			s.Count++
+		}
+		return s
+	},
+}
+```
 
-The active runtime today is:
+Run it (see `examples/counter/` for all three mains):
 
-- Go orchestrator for state, layout, page rebuilds, hit-testing, focus, automation semantics, and draw-command generation
-- Windows C++ sidecar for Win32 windowing, D3D11 rendering, live Unicode font-atlas updates, UI Automation, cursor updates, DPI handling, and native capture hooks
-- local IPC over two Windows named pipes
-- repo-owned binary protocol in `pkg/render/protocol`
+```go
+desktop.Run(App, render.AppConfig{Title: "Counter"})   // native Windows window
+web.Run(App, "127.0.0.1:8090", "Counter")              // stateful web server, no JS required
+// Android: examples/counter/android + android_engine/build_apk.sh → installable APK
+```
 
-The public Go API remains stable while the native presentation layer evolves underneath it.
+As of 2026-07-16 the former sibling projects **Trellis** (the app layer) and **GopherWeb**
+(the web component library) are merged into this repository — see
+[okf/concepts/decisions/consolidation.md](okf/concepts/decisions/consolidation.md).
+
+## Layers
+
+- **`pkg/app`** — the public application API: `App[S]`, serializable `Msg`s, and a closed set
+  of `Node` kinds (16 today) that every target renders. Drivers: `pkg/app/desktop`,
+  `pkg/app/web`; Android launches through `pkg/mobile`.
+- **`pkg/render`** — the engine layer: the component/theme/layout/semantics runtime, the
+  binary presenter protocol (`pkg/render/protocol`), and `render.Run`/`render.RunHosted`.
+  Public and usable directly for advanced native apps (see `cmd/gallery`), but its event
+  handlers are Go closures — they cannot cross the web target's HTTP boundary, which is why
+  `pkg/app` is the one application API (see the consolidation decision).
+- **`pkg/web`** — the server-rendered HTML component library and HTTP middleware the web
+  driver renders through (formerly GopherWeb; `poem-*` CSS classes, no-JS baseline).
+- **Presenters** — native hosts that draw the engine's frames and feed input back over the
+  protocol: `cpp_sidecar/` (the active Windows presenter: Win32, D3D11, UI Automation),
+  `android_engine/` (Android: C++/EGL/GLES2 in a zero-Java NativeActivity APK), and
+  `rust_engine/` (legacy Windows/OpenGL reference, no longer the active runtime path).
 
 ## Project Layout
 
 ```text
 .
-|-- cmd/engine/            # Demo entrypoint that exercises the library
-|-- cpp_sidecar/           # Windows-first native presentation sidecar (Win32 + D3D11)
-|-- docs/                  # Focused reference docs (POEM 2.0 foundation guide)
-|-- internal/win32/        # Private Win32 syscall wrappers used by the Go side
-|-- pkg/render/            # Public Go UI library
-|   |-- components/        # Declarative UI primitives
-|   |-- layout/            # Layout helpers
-|   |-- protocol/          # Custom binary wire protocol
-|   |-- state/             # Stable-ID transient interaction state
-|   |-- types/             # Shared state, interfaces, and contracts
-|   |-- painter.go         # Draw-command capture and frame serialization
-|   `-- run.go             # Sidecar launch, IPC, and event/render orchestration
-|-- okf/                   # Local OKF knowledge bundle (architecture, API, protocol, automation concepts)
-`-- AGENTS.md              # Project-specific agent guidance
+|-- pkg/app/               # Public application API (App[S], Msg, Node) + desktop/web drivers
+|-- pkg/render/            # Engine layer: components, layout, protocol, state, engine loop
+|-- pkg/web/               # Server-rendered HTML components + HTTP middleware
+|-- pkg/mobile/            # Android in-process engine<->presenter transport (c-shared exports)
+|-- cpp_sidecar/           # Active Windows presenter (Win32 + D3D11 + UIA)
+|-- android_engine/        # Android presenter (EGL/GLES2) + no-Gradle APK build script
+|-- rust_engine/           # Legacy Windows presenter (OpenGL), reference only
+|-- examples/              # counter, preferences, settings — one App[S], three targets each
+|-- cmd/engine, cmd/gallery# Engine-layer demos (component API directly, desktop only)
+|-- okf/                   # Living documentation bundle (start at okf/index.md)
+|-- schema/                # Legacy FlatBuffers schema (superseded by pkg/render/protocol)
+`-- TASK.md                # Tracked follow-up work (Android Phase 4, CI, docs)
 ```
-
-`rust_engine/` is still present as legacy reference material during the port, but it is no longer the active runtime path.
-
-## Using POEM
-
-```go
-package main
-
-import "github.com/mulavdm/poem/pkg/render"
-
-func main() {
-	render.Run(render.AppConfig{
-		Title:  "POEM App",
-		Width:  1024,
-		Height: 768,
-		BuildPagesFn: func(state *render.ApplicationState) {
-			// Build or rebuild your page tree here.
-		},
-	})
-}
-```
-
-Consumers keep importing only `github.com/mulavdm/poem/pkg/render`. They do not need to know whether the native runtime is implemented in C++, Rust, or another sidecar later.
 
 ## Automation
 
-POEM includes a shared automation layer for downstream native apps. When enabled through `render.AutomationConfig`, it can expose:
-
-- component tree snapshots
-- click/focus/text/key commands
-- direct PNG frame capture
-- shared performance snapshots and action measurement helpers
-- native window-action measurement for latency debugging
-- native window state
-- dedicated inspection captures:
-  - `self-frame`
-  - `window-frame`
-  - `desktop-frame`
-- a shared `inspect-frame` endpoint that chooses the safest inspection source automatically
+The engine layer includes a shared automation surface for native apps, exposing component
+tree snapshots, click/focus/text/key commands, direct PNG frame capture
+(`self-frame`/`window-frame`/`desktop-frame`, plus a shared `inspect-frame` endpoint that
+chooses the safest inspection source automatically), performance snapshots and action
+measurement helpers, and native window state.
 
 Minimal example:
 
@@ -132,7 +134,7 @@ This means downstream apps should not assume "declare children and forget it" br
 
 See [okf/concepts/architecture/layout-measurement.md](./okf/concepts/architecture/layout-measurement.md) for the downstream migration pattern.
 
-## Sidecar Resolution
+## Sidecar Resolution (Windows)
 
 At runtime, POEM resolves `poem_cpp_sidecar.exe` in this order:
 
@@ -141,36 +143,19 @@ At runtime, POEM resolves `poem_cpp_sidecar.exe` in this order:
 3. development build outputs under `cpp_sidecar/build`
 4. an embedded Windows sidecar payload extracted automatically by POEM
 
-This keeps downstream apps simple: a consumer can import `github.com/mulavdm/poem/pkg/render` and call the Go API without adding project-specific sidecar path setup.
+This keeps downstream apps simple: a consumer can import the Go API and run without
+project-specific sidecar path setup. The embedded payload's provenance is verified in CI
+against the committed sidecar sources (see [RELEASING.md](./RELEASING.md)).
 
 ## Build
 
-Build the sidecar:
+Windows sidecar and demos:
 
 ```powershell
 cmake -S cpp_sidecar -B cpp_sidecar\build
 cmake --build cpp_sidecar\build --config Release
-```
-
-Build the POEM 2.0 component gallery:
-
-```powershell
-go build ./cmd/gallery
-```
-
-`cmd/gallery` is the preferred visual acceptance surface for professional
-theme-native controls, overlays, semantics, and responsive layouts.
-
-Build the legacy runtime smoke demo:
-
-```powershell
-go build ./cmd/engine
-```
-
-Run the legacy runtime smoke demo:
-
-```powershell
-.\engine.exe
+go build ./cmd/gallery    # component-gallery acceptance surface
+go build ./cmd/engine     # legacy runtime smoke demo
 ```
 
 For a Windows GUI binary without a console window:
@@ -179,35 +164,31 @@ For a Windows GUI binary without a console window:
 go build -ldflags="-s -w -H=windowsgui" -o POEM.exe ./cmd/engine
 ```
 
-For custom packaging, you can still place `poem_cpp_sidecar.exe` next to the built Go executable or override it with `POEM_SIDECAR_PATH`, but POEM now also carries an embedded Windows fallback for downstream consumers.
+Android APK (NDK clang + aapt2 + apksigner, no Gradle):
+
+```bash
+android_engine/build_apk.sh examples/counter/android com.trellis.counter Counter counter.apk x86_64
+```
 
 ## Current Runtime Status
 
-The active C++ sidecar supports the current core path:
+The active Windows sidecar supports the current core path: spawn/shutdown, bootstrap atlas
+upload, render frames over the protocol, mouse/wheel/keyboard/resize/DPI events, portable
+shortcuts and UIA-visible mnemonics, DPI-aware startup sizing, cursor switching, core draw
+commands with text atlas and clipping, sound triggers, HTTP automation transport, native
+foreground activation and window state, and the self/window/desktop capture modes.
 
-- sidecar spawn and shutdown
-- bootstrap atlas upload
-- render frames over the custom protocol
-- mouse, wheel, keyboard, resize, and DPI events
-- normalized portable shortcuts and UIA-visible button mnemonics
-- startup sizing that uses the target monitor DPI and launches within a conservative work-area fraction
-- cursor switching
-- core draw commands, text atlas rendering, clipping, and sound triggers
-- HTTP automation transport
-- stronger native foreground activation for automation and inspection flows
-- native window state reporting
-- self/window/desktop capture modes
-- shared inspection fallback flow for agents and tests
-
-Known follow-up work:
-
-- Rust-specific special rendering paths such as raycaster or billboard sentinel handling are not fully ported yet
-- glass and blur are currently functional approximations, not full parity with the old renderer
-- cross-platform sidecars are a later step; the current native runtime is Windows-first
+The Android presenter covers surface bring-up, density-scaled rendering of the core draw
+commands, touch input, and the in-process engine transport. Known follow-up work (tracked in
+`TASK.md`): IME/soft keyboard, audio, an accessibility bridge, activity-lifecycle hardening,
+and atlas re-rasterization at density. On Windows, raycaster/billboard special paths are not
+fully ported from the legacy renderer, and glass/blur are functional approximations.
 
 ## Docs
 
-- [docs/POEM_2_FOUNDATION.md](./docs/POEM_2_FOUNDATION.md)
+- [okf/index.md](./okf/index.md) — living documentation bundle (architecture, app layer, web
+  engine, protocol, automation, decisions)
+- [docs/POEM_2_FOUNDATION.md](./docs/POEM_2_FOUNDATION.md) — the POEM 2.0 foundation guide
 - [AGENTS.md](./AGENTS.md)
-- [okf/index.md](./okf/index.md)
 - [RELEASING.md](./RELEASING.md)
+- [TASK.md](./TASK.md)

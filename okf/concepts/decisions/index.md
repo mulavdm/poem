@@ -1,4 +1,5 @@
 # Decisions
 
-* [GopherWeb Parity](/concepts/decisions/github.com/mulavdm/gopherweb-parity.md) — why POEM and GopherWeb stay two mirrored codebases instead of merging into a shared UI representation, and the ongoing practice that keeps their public component APIs converged where it's cheap and correct to do so
-- [Consolidation](/concepts/decisions/consolidation.md) — GopherWeb and Trellis merged into POEM; one public application API (App[S]/Node) over the component engine layer
+* [Consolidation](/concepts/decisions/consolidation.md) — GopherWeb and Trellis merged into POEM (2026-07-16); one public application API (`App[S]`/`Node`) over the component engine layer
+* [Composite Components](/concepts/decisions/composite-components.md) — how composite `Node` kinds resolve open/selected state (backend-local chrome vs. `App[S]`-owned), and which catalog components are intentionally excluded
+* [GopherWeb Parity](/concepts/decisions/gopherweb-parity.md) — **superseded by Consolidation**; retained because its two structural findings (state model, trust boundary) still shape the layering
