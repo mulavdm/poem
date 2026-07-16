@@ -14,21 +14,21 @@ type mockComponent struct {
 	bounds image.Rectangle
 }
 
-func (m *mockComponent) ID() string                            { return m.id }
-func (m *mockComponent) GetID() string                         { return m.id }
-func (m *mockComponent) Bounds() image.Rectangle               { return m.bounds }
-func (m *mockComponent) SetBounds(r image.Rectangle)           { m.bounds = r }
+func (m *mockComponent) ID() string                                      { return m.id }
+func (m *mockComponent) GetID() string                                   { return m.id }
+func (m *mockComponent) Bounds() image.Rectangle                         { return m.bounds }
+func (m *mockComponent) SetBounds(r image.Rectangle)                     { m.bounds = r }
 func (m *mockComponent) Draw(p types.Painter, s *types.ApplicationState) {}
 func (m *mockComponent) Measure(avail image.Point, s *types.ApplicationState) types.MeasureResult {
 	return types.MeasureResult{Preferred: m.pref, Min: m.pref}
 }
-func (m *mockComponent) HitTest(pt image.Point) string         { return "" }
-func (m *mockComponent) Focusable() bool                       { return false }
-func (m *mockComponent) Walk(fn func(types.Component))         { fn(m) }
+func (m *mockComponent) HitTest(pt image.Point) string                               { return "" }
+func (m *mockComponent) Focusable() bool                                             { return false }
+func (m *mockComponent) Walk(fn func(types.Component))                               { fn(m) }
 func (m *mockComponent) OnKey(key uint32, char rune, s *types.ApplicationState) bool { return false }
-func (m *mockComponent) OnMouseDown(pt image.Point, s *types.ApplicationState) bool { return false }
-func (m *mockComponent) OnMouseUp(pt image.Point, s *types.ApplicationState) bool { return false }
-func (m *mockComponent) OnMouseMove(pt image.Point, s *types.ApplicationState) bool { return false }
+func (m *mockComponent) OnMouseDown(pt image.Point, s *types.ApplicationState) bool  { return false }
+func (m *mockComponent) OnMouseUp(pt image.Point, s *types.ApplicationState) bool    { return false }
+func (m *mockComponent) OnMouseMove(pt image.Point, s *types.ApplicationState) bool  { return false }
 
 func TestGridSizingFixedAndStar(t *testing.T) {
 	c1 := &mockComponent{id: "c1", pref: image.Pt(50, 40)}

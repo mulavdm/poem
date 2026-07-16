@@ -90,7 +90,6 @@ var (
 	nativeDialogRespCh      chan protocol.NativeDialogResponse
 )
 
-
 func resolveSystemTheme(config AccessibilityConfig, mode theme.Mode) theme.Theme {
 	if config.SystemThemeResolver != nil {
 		return config.SystemThemeResolver(mode)
