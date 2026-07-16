@@ -1,0 +1,645 @@
+:root {
+  --poem-surface: #ffffff;
+  --poem-surface-muted: #f4f6f8;
+  --poem-text: #151922;
+  --poem-muted: #647084;
+  --poem-line: #dce2ea;
+  --poem-primary: #176b5d;
+  --poem-secondary: #3d556f;
+  --poem-danger: #b42318;
+  --poem-success: #067647;
+  --poem-warning: #b54708;
+  --poem-neutral: #49515f;
+  --poem-focus: #d98a16;
+}
+
+.poem-button {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 700;
+  justify-content: center;
+  min-height: 2.5rem;
+  text-decoration: none;
+}
+
+.poem-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.poem-button--small {
+  font-size: 0.875rem;
+  padding: 0.4rem 0.7rem;
+}
+
+.poem-button--medium {
+  padding: 0.55rem 0.9rem;
+}
+
+.poem-button--large {
+  font-size: 1.05rem;
+  padding: 0.75rem 1.1rem;
+}
+
+.poem-button--primary {
+  background: var(--poem-primary);
+  color: #ffffff;
+}
+
+.poem-button--secondary {
+  background: var(--poem-secondary);
+  color: #ffffff;
+}
+
+.poem-button--danger {
+  background: var(--poem-danger);
+  color: #ffffff;
+}
+
+.poem-button--success {
+  background: var(--poem-success);
+  color: #ffffff;
+}
+
+.poem-button--warning {
+  background: var(--poem-warning);
+  color: #ffffff;
+}
+
+.poem-button--neutral {
+  background: var(--poem-surface);
+  border-color: var(--poem-line);
+  color: var(--poem-text);
+}
+
+.poem-badge {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+}
+
+.poem-badge--primary {
+  background: #9cc9c0;
+  color: var(--poem-primary);
+}
+
+.poem-badge--secondary {
+  background: #b0bdcb;
+  color: var(--poem-secondary);
+}
+
+.poem-badge--danger {
+  background: #f4b6b1;
+  color: var(--poem-danger);
+}
+
+.poem-badge--success {
+  background: #9dd7bd;
+  color: var(--poem-success);
+}
+
+.poem-badge--warning {
+  background: #f7c681;
+  color: var(--poem-warning);
+}
+
+.poem-badge--neutral {
+  background: var(--poem-surface-muted);
+  color: var(--poem-neutral);
+}
+
+.poem-alert,
+.poem-card,
+.poem-empty,
+.poem-modal__panel,
+.poem-stat,
+.poem-command,
+.poem-table-wrap,
+.poem-disclosure,
+.poem-toast {
+  background: var(--poem-surface);
+  border: 1px solid var(--poem-line);
+  border-radius: 8px;
+}
+
+.poem-alert {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  position: relative;
+}
+
+.poem-alert--primary,
+.poem-toast--primary {
+  border-color: #9cc9c0;
+}
+
+.poem-alert--secondary,
+.poem-toast--secondary {
+  border-color: #b0bdcb;
+}
+
+.poem-alert--danger,
+.poem-toast--danger {
+  border-color: #f4b6b1;
+}
+
+.poem-alert--success,
+.poem-toast--success {
+  border-color: #9dd7bd;
+}
+
+.poem-alert--warning,
+.poem-toast--warning {
+  border-color: #f7c681;
+}
+
+.poem-alert--neutral,
+.poem-toast--neutral {
+  border-color: var(--poem-line);
+}
+
+.poem-alert__title {
+  display: block;
+}
+
+.poem-alert__body {
+  color: var(--poem-muted);
+  margin: 0;
+}
+
+.poem-alert__dismiss,
+.poem-modal__close,
+.poem-toast__dismiss {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  position: absolute;
+  right: 0.6rem;
+  top: 0.5rem;
+}
+
+.poem-card {
+  overflow: hidden;
+}
+
+.poem-card__header,
+.poem-card__body,
+.poem-card__footer {
+  padding: 1rem;
+}
+
+.poem-card__header {
+  border-bottom: 1px solid var(--poem-line);
+}
+
+.poem-card__header h3,
+.poem-card__header p {
+  margin: 0;
+}
+
+.poem-card__header p,
+.poem-field__help,
+.poem-stat small {
+  color: var(--poem-muted);
+}
+
+.poem-card__footer {
+  background: var(--poem-surface-muted);
+  border-top: 1px solid var(--poem-line);
+}
+
+.poem-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.poem-field__label {
+  font-weight: 700;
+}
+
+.poem-field__error {
+  color: var(--poem-danger);
+  font-size: 0.9rem;
+}
+
+.poem-input,
+.poem-textarea,
+.poem-select {
+  border: 1px solid var(--poem-line);
+  border-radius: 6px;
+  color: var(--poem-text);
+  font: inherit;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.7rem;
+  width: 100%;
+}
+
+.poem-input:disabled,
+.poem-textarea:disabled,
+.poem-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.poem-checkbox {
+  align-items: start;
+  display: grid;
+  gap: 0.25rem 0.5rem;
+  grid-template-columns: auto 1fr;
+}
+
+.poem-checkbox input:disabled {
+  cursor: not-allowed;
+}
+
+.poem-checkbox:has(input:disabled) {
+  opacity: 0.55;
+}
+
+.poem-checkbox small {
+  color: var(--poem-muted);
+  grid-column: 2;
+}
+
+.poem-switch {
+  align-items: center;
+  display: grid;
+  gap: 0.25rem 0.5rem;
+  grid-template-columns: auto 1fr;
+}
+
+.poem-switch input {
+  grid-row: 1;
+  height: 0;
+  opacity: 0;
+  position: absolute;
+  width: 0;
+}
+
+.poem-switch__track {
+  background: var(--poem-border);
+  border-radius: 999px;
+  display: inline-block;
+  grid-column: 1;
+  grid-row: 1;
+  height: 1.25rem;
+  position: relative;
+  transition: background 0.15s ease;
+  width: 2.25rem;
+}
+
+.poem-switch__track::after {
+  background: var(--poem-surface);
+  border-radius: 50%;
+  content: "";
+  height: 0.95rem;
+  left: 0.15rem;
+  position: absolute;
+  top: 0.15rem;
+  transition: transform 0.15s ease;
+  width: 0.95rem;
+}
+
+.poem-switch input:checked + .poem-switch__track {
+  background: var(--poem-primary);
+}
+
+.poem-switch input:checked + .poem-switch__track::after {
+  transform: translateX(1rem);
+}
+
+.poem-switch input:focus-visible + .poem-switch__track {
+  outline: 2px solid var(--poem-primary);
+  outline-offset: 2px;
+}
+
+.poem-switch__label {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.poem-switch input:disabled + .poem-switch__track {
+  cursor: not-allowed;
+}
+
+.poem-switch:has(input:disabled) {
+  opacity: 0.55;
+}
+
+.poem-switch small {
+  color: var(--poem-muted);
+  grid-column: 2;
+}
+
+.poem-radiogroup {
+  border: 1px solid var(--poem-border);
+  border-radius: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem 0.65rem;
+}
+
+.poem-radiogroup__legend {
+  color: var(--poem-muted);
+  font-size: 0.85rem;
+  padding: 0 0.25rem;
+}
+
+.poem-radio {
+  align-items: center;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: auto 1fr;
+}
+
+.poem-radio input:disabled {
+  cursor: not-allowed;
+}
+
+.poem-radiogroup:has(input:disabled) {
+  opacity: 0.55;
+}
+
+.poem-range {
+  accent-color: var(--poem-primary);
+  cursor: pointer;
+  width: 100%;
+}
+
+.poem-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.poem-progress {
+  appearance: none;
+  block-size: 0.5rem;
+  border: none;
+  border-radius: 999px;
+  inline-size: 100%;
+  overflow: hidden;
+}
+
+.poem-progress::-webkit-progress-bar {
+  background: var(--poem-border);
+  border-radius: 999px;
+}
+
+.poem-progress::-webkit-progress-value {
+  background: var(--poem-primary);
+  border-radius: 999px;
+}
+
+.poem-progress::-moz-progress-bar {
+  background: var(--poem-primary);
+  border-radius: 999px;
+}
+
+.poem-progress:not([value]) {
+  background: var(--poem-border);
+}
+
+.poem-form-actions,
+.poem-toolbar,
+.poem-navbar,
+.poem-navbar__items,
+.poem-toolbar__actions,
+.poem-tabs__list,
+.poem-pagination {
+  align-items: center;
+  display: flex;
+  gap: 0.65rem;
+}
+
+.poem-form-actions,
+.poem-toolbar,
+.poem-navbar {
+  justify-content: space-between;
+}
+
+.poem-navbar {
+  background: var(--poem-surface);
+  border: 1px solid var(--poem-line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.poem-navbar__brand {
+  color: var(--poem-primary);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.poem-navbar__item,
+.poem-breadcrumbs a,
+.poem-pagination a {
+  color: var(--poem-secondary);
+  text-decoration: none;
+}
+
+.poem-breadcrumbs ol {
+  display: flex;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.poem-breadcrumbs li + li::before {
+  color: var(--poem-muted);
+  content: "/";
+  margin-right: 0.5rem;
+}
+
+.poem-tabs {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.poem-tabs__tab {
+  background: var(--poem-surface);
+  border: 1px solid var(--poem-line);
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  padding: 0.45rem 0.8rem;
+}
+
+.poem-tabs__tab[aria-selected="true"] {
+  background: var(--poem-primary);
+  color: #ffffff;
+}
+
+.poem-tabs__panel {
+  border: 1px solid var(--poem-line);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.poem-modal {
+  background: rgb(0 0 0 / 0.42);
+  inset: 0;
+  padding: 2rem;
+  position: fixed;
+  z-index: 10;
+}
+
+.poem-modal__panel {
+  margin: 10vh auto 0;
+  max-width: 520px;
+  padding: 1rem;
+  position: relative;
+}
+
+.poem-modal__body {
+  color: var(--poem-muted);
+}
+
+.poem-disclosure {
+  padding: 0.75rem 1rem;
+}
+
+.poem-disclosure summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.poem-table-wrap {
+  overflow-x: auto;
+  padding: 1rem;
+}
+
+.poem-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.poem-table caption {
+  color: var(--poem-muted);
+  margin-bottom: 0.5rem;
+  text-align: left;
+}
+
+.poem-table th,
+.poem-table td {
+  border-bottom: 1px solid var(--poem-line);
+  padding: 0.65rem;
+  text-align: left;
+}
+
+.poem-table th button {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0;
+}
+
+.poem-table-filter {
+  display: block;
+  margin-bottom: 0.75rem;
+}
+
+.poem-pagination a {
+  border: 1px solid var(--poem-line);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+}
+
+.poem-pagination__ellipsis {
+  color: var(--poem-muted);
+  padding: 0.35rem 0.2rem;
+}
+
+.poem-pagination [aria-current="page"] {
+  background: var(--poem-primary);
+  color: #ffffff;
+}
+
+.poem-toast {
+  bottom: 1rem;
+  box-shadow: 0 20px 40px rgb(0 0 0 / 0.16);
+  padding: 0.85rem 1rem;
+  position: fixed;
+  right: 1rem;
+  z-index: 11;
+}
+
+.poem-command {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.poem-command ul {
+  display: grid;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.poem-command button {
+  background: var(--poem-surface-muted);
+  border: 1px solid var(--poem-line);
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  padding: 0.5rem;
+  text-align: left;
+  width: 100%;
+}
+
+.poem-command [role="option"][hidden] {
+  display: none;
+}
+
+.poem-button[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.poem-empty {
+  padding: 2rem;
+  text-align: center;
+}
+
+.poem-stat {
+  display: grid;
+  gap: 0.3rem;
+  padding: 1rem;
+}
+
+.poem-stat strong {
+  font-size: 2rem;
+}
+
+.poem-button:focus-visible,
+.poem-input:focus,
+.poem-textarea:focus,
+.poem-select:focus,
+.poem-tabs__tab:focus-visible {
+  outline: 3px solid var(--poem-focus);
+  outline-offset: 2px;
+}
+
+.poem-alert__dismiss:focus-visible,
+.poem-modal__close:focus-visible,
+.poem-toast__dismiss:focus-visible,
+.poem-table th button:focus-visible,
+.poem-command button:focus-visible,
+.poem-pagination a:focus-visible {
+  outline: 3px solid var(--poem-focus);
+  outline-offset: 2px;
+}

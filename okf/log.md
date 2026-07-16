@@ -1,5 +1,9 @@
 # OKF Bundle Update Log
 
+## 2026-07-16 (consolidation: one repo, one app API)
+
+- Merged GopherWeb and Trellis into POEM per [Consolidation](/concepts/decisions/consolidation.md): GopherWeb components/middleware → `pkg/web` (branding stripped, `gw-`→`poem-`); Trellis `core` → `pkg/app` (the single public application API: `App[S]`/`Msg`/16 `Node` kinds), drivers → `pkg/app/desktop` and `pkg/app/web`; examples (counter/preferences/settings) → `examples/` running on all three targets from one Go definition. All migrated test suites pass in-module (driver, CSRF/session/FileStateStore, component families). Verified post-move: web counter serves with `poem-*` classes; Android counter APK rebuilt from the new import paths and a real tap advanced Count on the emulator. Supersedes `gopherweb-parity.md` (banner added) and Trellis's sister-project decision; the state-model finding (closures can't cross HTTP or serialize) is exactly why `App[S]` — not the component API — became the one public API. Follow-up: port the OKF bundle-validation Go test (lived in the dissolved repos).
+
 ## 2026-07-16 (Android presenter: counter milestone passed)
 
 - Added `android_engine/`: a third POEM presenter — C++ / EGL / GLES2, hosted in a `NativeActivity` APK with **zero Java** (built by `build_apk.sh` with NDK clang + aapt2 + apksigner, no Gradle). It compiles `cpp_sidecar/src/protocol.cpp` directly and mirrors `RendererD3D11`'s command interpretation: SDF rounded rects, glyph quads from the Go-supplied atlas, scissor clip, offset, shadow/glow companion quads. Density scaling follows the Windows presenters' DPI split: the engine lays out in logical pixels (surface/density), the renderer scales geometry ×density; touch divides back. The host sends the initial `WindowSize` event after startup — the engine arms `NeedsRepaint` from it, exactly like the Windows sidecar (a black screen otherwise).

@@ -5,6 +5,8 @@ description: POEM and GopherWeb converge naming and shape wherever their public 
 tags: [architecture, decisions, github.com/mulavdm/gopherweb, components, cross-project]
 timestamp: 2026-07-10T00:00:00Z
 ---
+> **Superseded 2026-07-16** by [Consolidation](/concepts/decisions/consolidation.md): the two repos merged into this one. The structural findings below (state model, trust boundary) remain true and shaped the consolidation.
+
 # GopherWeb Parity
 
 POEM (this repo, a native GPU desktop UI engine) has a sibling project, GopherWeb
