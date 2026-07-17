@@ -357,7 +357,9 @@ func TestOnlyActiveTargetConsumesMouseUp(t *testing.T) {
 	rstate := &render.ApplicationState{WindowWidth: 411, WindowHeight: 914}
 	config := Configure(preferences.App, render.AppConfig{Title: "t"})
 	config.BuildPagesFn(rstate)
-	root := rstate.Pages["trellis-root"][0].(*render.FlexBox)
+	// The page root is the driver's ScrollView wrapper; the broadcast
+	// invariant under test lives on the FlexBox inside it.
+	root := rstate.Pages["trellis-root"][0].(*render.ScrollView).Children[0].(*render.FlexBox)
 	var checkbox *render.Checkbox
 	root.Walk(func(c render.Component) {
 		if cb, ok := c.(*render.Checkbox); ok && checkbox == nil {

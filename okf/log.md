@@ -1,5 +1,10 @@
 # OKF Bundle Update Log
 
+## 2026-07-17 (touch scrolling with fling, tuned on-device)
+
+- Pages scroll on every target: the `pkg/app` desktop driver wraps each page root in a `ScrollView` (no scrollbar and no effect when content fits, so short pages are unchanged; tests unwrap one level). `ScrollView.OnMouseWheel` now scales with the delta magnitude — a Windows notch (±120) keeps its historical 100px step, while pixel-accurate sources land 1:1.
+- The Android presenter grew a touch gesture model, iterated three times against a physical device: a press is Undecided until it crosses a 14-logical-px slop; clearly vertical movement becomes a pixel-accurate Scroll (each move streams a wheel event of the finger delta ×1.2); decisively horizontal movement or a 220ms hold becomes a Drag (deferred MouseDown at the press point, so sliders anchor and grab reliably); a clean release is a Tap. A fast scroll release becomes a **fling** — release velocity (sampled over the drag) ×1.4, capped at 10k px/s, decaying exponentially with τ=0.3s, stepped as per-frame wheel events with fractional-pixel carry; touching a moving page stops it and consumes the tap, exactly like a platform list view. Device feedback drove the constants: the first cut (quantized 60px notches) felt slow and janky, 1:1 tracking lacked inertia, and the final quick-launch/quick-settle tuning was approved by hand.
+
 ## 2026-07-17 (arm64 on-device verification + system-bar insets)
 
 - **First run on physical hardware** (Xiaomi 2407FPN8EG, arm64-v8a, API 36, 520dpi): rendering, touch, IME typing, AAudio feedback, and rotation all verified by hand — the arm64 build path and execution are both proven.

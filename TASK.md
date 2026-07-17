@@ -64,12 +64,16 @@ open at that gate:
 - [ ] **Accordion expansion overlap**: expanding a section pushes content down
       but later siblings (About content / Save) can overlap after relayout on
       Android — reproduce on desktop and fix in FlexBox/Accordion measure.
-- [ ] **Touch scrolling (device finding, 2026-07-17)**: pages taller than the
-      viewport are unreachable on Android — there is no page-level ScrollView
-      and a vertical finger drag hits controls instead of scrolling. Fix:
-      presenter translates vertical drags (past a touch slop) into MouseWheel
-      events instead of Move, and the pkg/app desktop driver wraps the root
-      in render.ScrollView when content exceeds the window.
+- [x] **Touch scrolling** (2026-07-17, tuned on-device): the pkg/app driver
+      wraps every page root in a ScrollView (neutral when content fits, all
+      targets), ScrollView wheel handling scales with delta magnitude
+      (Windows ±120 keeps its 100px notch; pixel sources track 1:1), and the
+      presenter classifies touches - tap (with wobble slop 14dp, suppressed
+      when catching a fling), vertical drag = pixel-accurate scroll streamed
+      as wheel events, horizontal drag or 220ms hold-to-grab = real drag for
+      sliders, and fast release = fling (velocity ×1.4 capped 10k px/s,
+      exponential decay τ=0.3s, tap-to-stop). Feel approved on the physical
+      device.
 - [ ] **Keyboard obscures focused field (device finding, 2026-07-17)**: set
       android:windowSoftInputMode="adjustResize" so the IME shrinks the
       surface (the per-frame geometry check will relayout), and scroll the

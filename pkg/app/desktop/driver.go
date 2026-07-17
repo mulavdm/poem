@@ -35,8 +35,16 @@ func Configure[S any](a app.App[S], config render.AppConfig) render.AppConfig {
 		w, h := rstate.GetWindowSize()
 		root.SetBounds(image.Rect(0, 0, w, h))
 
+		// The page scrolls when the app's content is taller than the window:
+		// a ScrollView wraps the root on every target (wheel on desktop,
+		// drag-to-scroll translated to wheel events by the Android presenter).
+		// With content that fits it has no scrollbar and scrolls nothing, so
+		// short pages behave exactly as before.
+		scroll := render.NewScrollView(rootPage+"/scroll", root)
+		scroll.SetBounds(image.Rect(0, 0, w, h))
+
 		rstate.CurrentPage = rootPage
-		rstate.Pages = map[string][]render.Component{rootPage: {root}}
+		rstate.Pages = map[string][]render.Component{rootPage: {scroll}}
 	}
 	return config
 }

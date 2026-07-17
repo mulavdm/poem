@@ -14,6 +14,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <optional>
@@ -49,6 +52,37 @@ struct Host {
     int logicalW = 0, logicalH = 0;
     int insetX = 0, insetY = 0;   // applied content origin (system bars)
     int pendingInsets[4] = {0, 0, 0, 0}; // l,t,r,b from getRootWindowInsets
+
+    // Touch gesture classification (logical px): a press is Undecided until
+    // it moves past the slop; mostly-vertical movement becomes a Scroll
+    // (drag translates to wheel events), other movement becomes a Drag
+    // (deferred MouseDown at the start point, then moves — sliders), and a
+    // release while still Undecided is a Tap (move+down+up).
+    enum class Touch { None, Undecided, Scroll, Drag };
+    Touch touch = Touch::None;
+    int touchStartX = 0, touchStartY = 0;
+    int lastTouchX = 0, lastTouchY = 0;
+    std::chrono::steady_clock::time_point touchDownAt{};
+
+    // Velocity samples for fling: recent (time, y) pairs from the live drag.
+    static constexpr int kVelocitySamples = 4;
+    struct VelocitySample {
+        std::chrono::steady_clock::time_point at;
+        int y;
+    };
+    VelocitySample velocity[kVelocitySamples]{};
+    int velocityHead = 0;
+
+    // Fling state: after a fast release the page keeps scrolling with
+    // exponentially decaying velocity (px/s, positive = scroll down),
+    // stepped every frame by StepFling. A touch during a fling stops it and
+    // is consumed (standard Android: the tap that catches a moving list
+    // does not click anything).
+    bool flinging = false;
+    float flingVelocity = 0.0f;
+    float flingRemainder = 0.0f;
+    bool eatNextTap = false;
+    std::chrono::steady_clock::time_point flingLastStep{};
     bool animating = false;
     bool engineStarted = false;
 
@@ -414,34 +448,130 @@ int32_t HandleInput(android_app* app, AInputEvent* event) {
     const auto x = static_cast<std::int32_t>((AMotionEvent_getX(event, 0) - host->insetX) / host->scale);
     const auto y = static_cast<std::int32_t>((AMotionEvent_getY(event, 0) - host->insetY) / host->scale);
 
-    poem::protocol::Event out;
-    out.x = x;
-    out.y = y;
-    switch (action) {
-    case AMOTION_EVENT_ACTION_DOWN: {
-        // A touch has no hover phase; synthesize the move so hit-testing sees
-        // the pointer where the press lands, exactly as a mouse would.
+    auto queueMove = [](int mx, int my) {
         poem::protocol::Event move;
         move.type = poem::protocol::EventType::MouseMove;
-        move.x = x;
-        move.y = y;
+        move.x = mx;
+        move.y = my;
         QueueEvent(move);
-        out.type = poem::protocol::EventType::MouseDown;
-        out.button = 1;
-        break;
+    };
+    auto queueButton = [](poem::protocol::EventType type, int bx, int by) {
+        poem::protocol::Event button;
+        button.type = type;
+        button.x = bx;
+        button.y = by;
+        button.button = 1;
+        QueueEvent(button);
+    };
+
+    // Slop is generous (≈14 logical px): at high densities a firm tap wobbles
+    // more physical pixels than a mouse ever would, and a wobble that
+    // classifies as Scroll shifts the page out from under the tap.
+    constexpr int kSlop = 14;
+
+    auto recordVelocitySample = [host](int sy) {
+        host->velocity[host->velocityHead % Host::kVelocitySamples] =
+            Host::VelocitySample{std::chrono::steady_clock::now(), sy};
+        host->velocityHead++;
+    };
+
+    switch (action) {
+    case AMOTION_EVENT_ACTION_DOWN:
+        // Nothing is forwarded yet: a press only becomes a tap, drag, or
+        // scroll once we see how it moves — or holds (hold-to-grab below).
+        // Catching a fling stops it and consumes the tap.
+        host->eatNextTap = host->flinging;
+        host->flinging = false;
+        host->touch = Host::Touch::Undecided;
+        host->touchStartX = x;
+        host->touchStartY = y;
+        host->lastTouchX = x;
+        host->lastTouchY = y;
+        host->touchDownAt = std::chrono::steady_clock::now();
+        host->velocityHead = 0;
+        recordVelocitySample(y);
+        return 1;
+
+    case AMOTION_EVENT_ACTION_MOVE: {
+        if (host->touch == Host::Touch::Undecided) {
+            const int dx = x - host->touchStartX;
+            const int dy = y - host->touchStartY;
+            // Scroll needs a clearly vertical intent; anything decisively
+            // horizontal is a drag (sliders). Held presses become drags via
+            // PromoteHeldTouch before ever moving.
+            if (std::abs(dy) > kSlop && std::abs(dy) > std::abs(dx) * 3 / 2) {
+                host->touch = Host::Touch::Scroll;
+                host->lastTouchY = y;
+            } else if (std::abs(dx) > kSlop) {
+                host->touch = Host::Touch::Drag;
+                queueMove(host->touchStartX, host->touchStartY);
+                queueButton(poem::protocol::EventType::MouseDown, host->touchStartX, host->touchStartY);
+            } else {
+                return 1;
+            }
+        }
+        if (host->touch == Host::Touch::Scroll) {
+            // Pixel-accurate: every move streams its own wheel event whose
+            // delta is the finger movement ×1.2 (the engine scales ×100/120
+            // back to pixels), so the content tracks the finger 1:1.
+            const int dy = host->lastTouchY - y; // finger up = positive = scroll down
+            host->lastTouchX = x;
+            host->lastTouchY = y;
+            recordVelocitySample(y);
+            if (dy != 0) {
+                queueMove(x, y); // wheel routing targets the component under the pointer
+                poem::protocol::Event wheel;
+                wheel.type = poem::protocol::EventType::MouseWheel;
+                wheel.x = x;
+                wheel.y = y;
+                wheel.delta = -dy * 120 / 100; // engine: delta<0 scrolls down
+                if (wheel.delta == 0) wheel.delta = dy > 0 ? -1 : 1;
+                QueueEvent(wheel);
+            }
+        } else if (host->touch == Host::Touch::Drag) {
+            queueMove(x, y);
+        }
+        return 1;
     }
-    case AMOTION_EVENT_ACTION_MOVE:
-        out.type = poem::protocol::EventType::MouseMove;
-        break;
+
     case AMOTION_EVENT_ACTION_UP:
-        out.type = poem::protocol::EventType::MouseUp;
-        out.button = 1;
-        break;
+    case AMOTION_EVENT_ACTION_CANCEL:
+        if (host->touch == Host::Touch::Undecided && action == AMOTION_EVENT_ACTION_UP) {
+            if (!host->eatNextTap) {
+                // A clean tap: the full click sequence at the press point.
+                queueMove(host->touchStartX, host->touchStartY);
+                queueButton(poem::protocol::EventType::MouseDown, host->touchStartX, host->touchStartY);
+                queueButton(poem::protocol::EventType::MouseUp, host->touchStartX, host->touchStartY);
+            }
+        } else if (host->touch == Host::Touch::Drag) {
+            queueButton(poem::protocol::EventType::MouseUp, x, y);
+        } else if (host->touch == Host::Touch::Scroll && action == AMOTION_EVENT_ACTION_UP) {
+            // Release velocity (px/s over the recent sample window) becomes a
+            // fling: the page keeps moving and decays frame by frame.
+            const auto now = std::chrono::steady_clock::now();
+            const int samples = std::min(host->velocityHead, Host::kVelocitySamples);
+            for (int i = samples; i > 0; --i) {
+                const auto& oldest = host->velocity[(host->velocityHead - i) % Host::kVelocitySamples];
+                const float dt = std::chrono::duration<float>(now - oldest.at).count();
+                if (dt > 0.02f && dt < 0.25f) {
+                    const float v = static_cast<float>(oldest.y - y) / dt; // finger up = scroll down
+                    if (std::abs(v) > 180.0f) {
+                        host->flinging = true;
+                        host->flingVelocity = std::min(std::max(v * 1.4f, -10000.0f), 10000.0f);
+                        host->flingRemainder = 0.0f;
+                        host->flingLastStep = now;
+                    }
+                    break;
+                }
+            }
+        }
+        host->eatNextTap = false;
+        host->touch = Host::Touch::None;
+        return 1;
+
     default:
         return 0;
     }
-    QueueEvent(out);
-    return 1;
 }
 
 } // namespace
@@ -469,6 +599,54 @@ void android_main(android_app* app) {
                 TermDisplay(&g_host);
                 return;
             }
+        }
+        // Fling: after a fast scroll release the page keeps moving, slowing
+        // exponentially (τ≈0.3s; release velocity ×1.4 so flicks launch fast and settle fast) — the standard Android inertia feel. Each
+        // frame converts the elapsed motion into one wheel event; fractional
+        // pixels carry in flingRemainder so slow tails still move.
+        if (g_host.flinging) {
+            const auto now = std::chrono::steady_clock::now();
+            float dt = std::chrono::duration<float>(now - g_host.flingLastStep).count();
+            if (dt > 0.05f) dt = 0.05f;
+            g_host.flingLastStep = now;
+            const float travel = g_host.flingVelocity * dt + g_host.flingRemainder;
+            const int whole = static_cast<int>(travel);
+            g_host.flingRemainder = travel - static_cast<float>(whole);
+            if (whole != 0) {
+                poem::protocol::Event move;
+                move.type = poem::protocol::EventType::MouseMove;
+                move.x = g_host.lastTouchX;
+                move.y = g_host.lastTouchY;
+                QueueEvent(move);
+                poem::protocol::Event wheel;
+                wheel.type = poem::protocol::EventType::MouseWheel;
+                wheel.x = g_host.lastTouchX;
+                wheel.y = g_host.lastTouchY;
+                wheel.delta = -whole * 120 / 100;
+                if (wheel.delta == 0) wheel.delta = whole > 0 ? -1 : 1;
+                QueueEvent(wheel);
+            }
+            g_host.flingVelocity *= std::exp(-dt / 0.3f);
+            if (std::abs(g_host.flingVelocity) < 80.0f) g_host.flinging = false;
+        }
+
+        // Hold-to-grab: a press held past ~220ms without crossing the slop
+        // becomes a Drag — the deferred MouseDown lands, the control (e.g. a
+        // slider) grabs, and later movement drags it instead of scrolling.
+        if (g_host.touch == Host::Touch::Undecided &&
+            std::chrono::steady_clock::now() - g_host.touchDownAt > std::chrono::milliseconds(220)) {
+            g_host.touch = Host::Touch::Drag;
+            poem::protocol::Event move;
+            move.type = poem::protocol::EventType::MouseMove;
+            move.x = g_host.touchStartX;
+            move.y = g_host.touchStartY;
+            QueueEvent(move);
+            poem::protocol::Event down;
+            down.type = poem::protocol::EventType::MouseDown;
+            down.x = g_host.touchStartX;
+            down.y = g_host.touchStartY;
+            down.button = 1;
+            QueueEvent(down);
         }
         if (g_host.animating) {
             FlushEvents();

@@ -414,9 +414,18 @@ func (s *ScrollView) OnMouseWheel(pt image.Point, delta int, state *types.Applic
 		s.ScrollY = state.ScrollPositions[s.CompID]
 	}
 
-	// delta > 0 is scrolling up; delta < 0 is scrolling down
-	// Scroll speed: 100px per notch
-	scrollAmount := 100
+	// delta > 0 is scrolling up; delta < 0 is scrolling down. The distance
+	// scales with the delta magnitude so pixel-accurate sources track 1:1:
+	// a Windows wheel notch (±120) keeps its historical 100px step, while
+	// the Android presenter streams per-move touch deltas (finger px ×1.2)
+	// that land back as exactly the dragged distance.
+	scrollAmount := delta * 100 / 120
+	if scrollAmount < 0 {
+		scrollAmount = -scrollAmount
+	}
+	if scrollAmount < 1 {
+		scrollAmount = 1
+	}
 	if delta > 0 {
 		s.ScrollY -= scrollAmount
 	} else {
