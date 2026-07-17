@@ -1,7 +1,7 @@
 ---
 type: concept
 title: Component Parity
-description: What Trellis's Node IR covers of the POEM and GopherWeb component catalogs, and which components are portable, engine-blocked, or deliberately backend-specific.
+description: What the pkg/app Node set covers across desktop, web, and Android — per-kind status including the Android touch-sweep verification — and which catalog components are portable, excluded, or backend-specific.
 tags: [architecture, parity, node, roadmap]
 timestamp: 2026-07-12T00:00:00Z
 ---
@@ -9,37 +9,44 @@ timestamp: 2026-07-12T00:00:00Z
 > **Ported from the Trellis/GopherWeb bundles at the 2026-07-16 consolidation.** Historical names map as: "Trellis" = `pkg/app`; "GopherWeb" = `pkg/web` (CSS prefix now `poem-`); "POEM" as a sibling project = the `pkg/render` engine layer. All are now this repository.
 # Component Parity
 
-Trellis's promise is write-once-run-on-both, and that promise is only as wide as the
-`Node` IR (`pkg/app/node.go`). This concept is the honest measure of how wide that is: a
-`Node` kind exists only when *both* backends can render it (see
-[Overview](/concepts/app/overview.md) — "There is no partial-coverage state"), so parity
-here is the intersection of what POEM and GopherWeb each offer, not the union.
+The `pkg/app` promise is write-once-run-everywhere, and that promise is only as wide as the
+`Node` set (`pkg/app/node.go`). This concept is the honest measure of how wide that is: a
+`Node` kind exists only when *every* target can render it (see
+[Overview](/concepts/app/overview.md) — "There is no partial-coverage state").
 
-This is a living document. Adding a `Node` kind means moving a row from **Portable** to
-**Ported** in the same change that adds it to `pkg/app/node.go` and both `render.go` files.
+The targets are not symmetrical in what a kind costs them. Desktop and Android share the
+`pkg/render` component built by `pkg/app/desktop/render.go` — the Android presenter draws the
+same engine components over the wire, so a new kind needs **no Android-specific rendering
+work**. What Android *does* need per kind is interaction verification (touch instead of a
+mouse, IME instead of WM_CHAR, back-gesture instead of Escape). The web target needs its own
+`pkg/web` renderer per kind. Adding a kind therefore means: the node in `pkg/app/node.go`,
+cases in both drivers' `render.go`, and a touch pass on Android.
+
+This is a living document; move rows in the same change that moves the code.
 
 ## Ported
 
-These `Node` kinds run on both backends today.
+These `Node` kinds run on all three targets today. "Android" records the touch-sweep
+verification of 2026-07-16 (API 36 emulator, preferences/settings examples).
 
-| Node kind        | POEM component      | GopherWeb component | Notes |
-| :--------------- | :------------------ | :------------------ | :---- |
-| `TextNode`       | `Label`             | `<p>`               | |
-| `ButtonNode`     | `Button`            | `action.Button`     | |
-| `TextInputNode`  | `TextInput`         | `form.Input`        | |
-| `TextAreaNode`   | `TextArea`          | `form.Textarea`     | Multi-line sibling of `TextInputNode`. |
-| `CheckboxNode`   | `Checkbox`          | `form.Checkbox`     | First `bool` payload — see Overview. |
-| `SwitchNode`     | `Switch`            | `form.Switch`       | `bool`, same posting mechanics as `CheckboxNode`; `form.Switch` was added to GopherWeb to unblock it (see below). |
-| `SelectNode`     | `Select`            | `form.Select`       | |
-| `RadioGroupNode` | `Radio` (one per option) | `form.RadioGroup` | Single-choice-from-a-list, reuses `Option`; `form.RadioGroup` added to GopherWeb to unblock it. |
-| `SliderNode`     | `Slider`            | `form.Range`        | First **float** payload — `FloatPayload`/`Msg.Float`; `form.Range` added to GopherWeb to unblock it. |
-| `BadgeNode`      | `Badge`             | `feedback.Badge`    | First `Variant`-carrying kind; non-interactive. |
-| `ProgressBarNode`| `ProgressBar`       | `feedback.Progress` | Display-only; no payload; supports indeterminate. `feedback.Progress` added to GopherWeb to unblock it. |
-| `TableNode`      | `DataTable`         | `data.Table`        | Read-only display; row selection/sorting deliberately not surfaced yet (see "Not a clean fit"). |
-| `AccordionNode`  | `Accordion`         | `widget.Disclosure` | Composite, resolved the ModalNode way — expand state is backend-local chrome, not `App[S]`. Required a POEM engine change (see below). |
-| `TabsNode`       | `Tabs` (controlled) | `widget.FormTabs`   | Composite, resolved the **other** way — selection is `App[S]`-owned so the app can set it, costing a round trip per tab click on web. Required a POEM controlled-selection fix and a new GopherWeb posting tab strip. |
-| `ContainerNode`  | `FlexBox`           | `<div>` flex        | |
-| `ModalNode`      | `Modal` (overlay)   | `widget.Modal`      | Open state is not `App[S]` — see Overview. |
+| Node kind        | Engine component (desktop + Android) | Web renderer (`pkg/web`) | Android touch status | Notes |
+| :--------------- | :------------------ | :------------------ | :---- | :---- |
+| `TextNode`       | `Label`             | `<p>`               | ✅ renders | |
+| `ButtonNode`     | `Button`            | `action.Button`     | ✅ tap (counter milestone) | |
+| `TextInputNode`  | `TextInput`         | `form.Input`        | ✅ focus summons IME; typed/backspace via key events | |
+| `TextAreaNode`   | `TextArea`          | `form.Textarea`     | ✅ same IME path, multi-line | Multi-line sibling of `TextInputNode`. |
+| `CheckboxNode`   | `Checkbox`          | `form.Checkbox`     | ✅ tap toggles | First `bool` payload — see Overview. Tap exposed the `Slider.OnMouseUp` engine bug (fixed). |
+| `SwitchNode`     | `Switch`            | `form.Switch`       | ✅ tap toggles | `bool`, same posting mechanics as `CheckboxNode`. |
+| `SelectNode`     | `Select`            | `form.Select`       | ✅ popup opens via overlay, option pick closes | |
+| `RadioGroupNode` | `Radio` (one per option) | `form.RadioGroup` | ✅ tap selects | Single-choice-from-a-list, reuses `Option`. |
+| `SliderNode`     | `Slider`            | `form.Range`        | ✅ touch drag; `ProgressBar` tracked live | First **float** payload — `FloatPayload`/`Msg.Float`. |
+| `BadgeNode`      | `Badge`             | `feedback.Badge`    | ✅ renders, variant color correct | First `Variant`-carrying kind; non-interactive. |
+| `ProgressBarNode`| `ProgressBar`       | `feedback.Progress` | ✅ renders, live-updates | Display-only; supports indeterminate. |
+| `TableNode`      | `DataTable`         | `data.Table`        | ✅ renders read-only | Row selection/sorting deliberately not surfaced yet. |
+| `AccordionNode`  | `Accordion`         | `widget.Disclosure` | ✅ header tap expands; nested control dispatches | Expand state is backend-local chrome, not `App[S]`. Known cosmetic overlap after expansion (TASK.md). |
+| `TabsNode`       | `Tabs` (controlled) | `widget.FormTabs`   | ✅ tab tap switches panel | Selection is `App[S]`-owned so the app can set it. |
+| `ContainerNode`  | `FlexBox`           | `<div>` flex        | ✅ layout correct at density | |
+| `ModalNode`      | `Modal` (overlay)   | `widget.Modal`      | ✅ trigger opens overlay; nested control dispatches; back gesture (→Escape) dismisses | Open state is not `App[S]`; content is an open-time snapshot — verified visibly on Android. |
 
 ## Portable
 

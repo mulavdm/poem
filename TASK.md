@@ -18,9 +18,16 @@ open at that gate:
 - [ ] **Accessibility bridge**: the presenter drops `SemanticTree` messages;
       map them to Android accessibility nodes (the cpp_sidecar UIA bridge is
       the reference implementation).
-- [ ] **Activity lifecycle hardening**: pause/resume, surface recreation, and
-      rotation (rotation should re-send `WindowSize` and relayout; atlas
-      re-upload already handled).
+- [x] **Activity lifecycle hardening** (2026-07-17): rotation detected by
+      per-frame surface-size comparison (which app-cmd announces it varies),
+      re-sending logical WindowSize for relayout; APP_CMD_PAUSE/RESUME/STOP
+      stop/resume presentation while the engine keeps running; destroy no
+      longer kills the engine or transport (Android can relaunch the activity
+      into the same process - re-entry is INIT_WINDOW + atlas restore);
+      eglSwapBuffers failure drops the surface gracefully. Verified on
+      emulator: rotate to landscape (relayout 914x411 logical), tap in
+      landscape (input mapping correct), rotate back, home, relaunch - all
+      state intact in the same engine process.
 - [ ] **arm64 on-device verification**: the arm64 build compiles but only the
       x86_64 emulator has been exercised; run the counter on a physical
       device.
@@ -33,7 +40,7 @@ open at that gate:
       all up-driven controls in slider-bearing trees; regression + invariant
       tests in pkg/app/desktop). Back maps to Escape (overlay dismiss);
       manifest opts out of predictive back so the key event is delivered.
-- [ ] **Parity matrix Android column**: extend
+- [x] **Parity matrix Android column** (2026-07-16): extend
       `okf/concepts/app/component-parity.md` with per-kind Android
       status once the sweep runs.
 - [ ] **CI story**: decide how the Android presenter builds in CI (NDK

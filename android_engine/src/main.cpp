@@ -59,7 +59,6 @@ struct Host {
     std::vector<poem::protocol::Event> pendingEvents;
 
     std::mutex writeMutex;
-    std::thread transportThread;
     std::atomic<bool> transportRunning{false};
 };
 
@@ -200,7 +199,7 @@ void InitDisplay(Host* host) {
         host->engineStarted = true;
         PoemAndroidStart(host->logicalW, host->logicalH);
         host->transportRunning.store(true);
-        host->transportThread = std::thread(TransportLoop);
+        std::thread(TransportLoop).detach(); // process-lifetime thread
         HLOGI("Go engine started");
     } else {
         // Surface was recreated while the engine kept running: restore the atlas.
@@ -231,8 +230,33 @@ void TermDisplay(Host* host) {
     host->context = EGL_NO_CONTEXT;
 }
 
+// CheckSurfaceSize detects the surface changing under us — rotation with
+// configChanges declared resizes the window without recreating the activity,
+// and which app-cmd announces it varies by version, so the render loop simply
+// compares every frame. On change the renderer adopts the new physical size
+// and the engine gets a WindowSize event (in logical pixels) to relayout.
+void CheckSurfaceSize(Host* host) {
+    if (host->display == EGL_NO_DISPLAY) return;
+    EGLint w = 0, h = 0;
+    eglQuerySurface(host->display, host->surface, EGL_WIDTH, &w);
+    eglQuerySurface(host->display, host->surface, EGL_HEIGHT, &h);
+    if ((w == host->width && h == host->height) || w <= 0 || h <= 0) return;
+    host->width = w;
+    host->height = h;
+    host->logicalW = static_cast<int>(w / host->scale);
+    host->logicalH = static_cast<int>(h / host->scale);
+    host->renderer.Resize(w, h);
+    HLOGI("surface resized to %dx%d => logical %dx%d", w, h, host->logicalW, host->logicalH);
+    poem::protocol::Event resize;
+    resize.type = poem::protocol::EventType::WindowSize;
+    resize.width = host->logicalW;
+    resize.height = host->logicalH;
+    QueueEvent(resize);
+}
+
 void DrawFrame(Host* host) {
     if (host->display == EGL_NO_DISPLAY) return;
+    CheckSurfaceSize(host);
     std::optional<poem::protocol::InitEngine> atlas;
     std::optional<poem::protocol::RenderFrame> frame;
     {
@@ -242,7 +266,12 @@ void DrawFrame(Host* host) {
     }
     if (atlas) host->renderer.UploadAtlas(*atlas);
     if (frame) host->renderer.Render(*frame);
-    eglSwapBuffers(host->display, host->surface);
+    if (!eglSwapBuffers(host->display, host->surface)) {
+        // EGL_BAD_SURFACE etc. — the surface died under us (seen during
+        // aggressive lifecycle churn); tear down and wait for INIT_WINDOW.
+        HLOGE("eglSwapBuffers failed (0x%x), dropping surface", eglGetError());
+        TermDisplay(host);
+    }
 }
 
 void HandleCmd(android_app* app, int32_t cmd) {
@@ -254,10 +283,19 @@ void HandleCmd(android_app* app, int32_t cmd) {
     case APP_CMD_TERM_WINDOW:
         TermDisplay(host);
         break;
+    case APP_CMD_CONFIG_CHANGED:
+        // Rotation with configChanges declared: same activity, new geometry.
+        CheckSurfaceSize(host);
+        break;
     case APP_CMD_GAINED_FOCUS:
+    case APP_CMD_RESUME:
         host->animating = host->display != EGL_NO_DISPLAY;
         break;
     case APP_CMD_LOST_FOCUS:
+    case APP_CMD_PAUSE:
+    case APP_CMD_STOP:
+        // Background: stop presenting. The engine keeps running (its state is
+        // the app's state); frames simply stop being drawn until resume.
         host->animating = false;
         break;
     }
@@ -377,13 +415,14 @@ void android_main(android_app* app) {
         while (ALooper_pollOnce(g_host.animating ? 0 : -1, nullptr, &events, (void**)&source) >= 0) {
             if (source) source->process(app, source);
             if (app->destroyRequested) {
-                poem::protocol::Event close;
-                close.type = poem::protocol::EventType::WindowClose;
-                QueueEvent(close);
-                FlushEvents();
-                g_host.transportRunning.store(false);
+                // The activity is going away but the PROCESS may be reused:
+                // Android can relaunch the activity into this process, which
+                // re-enters android_main. The Go engine and its transport
+                // thread deliberately stay alive (globals survive), so the
+                // relaunch path is just INIT_WINDOW → restore atlas → resize
+                // event. Sending WindowClose here would kill the engine and
+                // leave any reused process permanently black.
                 TermDisplay(&g_host);
-                if (g_host.transportThread.joinable()) g_host.transportThread.detach();
                 return;
             }
         }

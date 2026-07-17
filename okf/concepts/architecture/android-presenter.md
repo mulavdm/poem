@@ -60,4 +60,4 @@ otherwise swallows taps near the top edge).
 
 Tracked in `TASK.md`: audio
 (`PlaySound` ignored), accessibility bridge (`SemanticTree` dropped; the UIA sidecar is the
-reference), activity-lifecycle hardening, arm64 on-device verification.
+reference), arm64 on-device verification. Lifecycle: rotation/pause/resume/process-reuse are handled (see log 2026-07-17).

@@ -1,5 +1,10 @@
 # OKF Bundle Update Log
 
+## 2026-07-17 (Android lifecycle hardening + parity matrix Android column)
+
+- Extended [Component Parity](/concepts/app/component-parity.md) with the Android reality: desktop and Android share the engine components (a new `Node` kind needs no Android-specific rendering, only touch verification), the web target needs its own renderer per kind, and the Ported table now carries a per-kind Android touch-status column recording the 2026-07-16 sweep.
+- Hardened the Android presenter lifecycle: rotation is detected by comparing the EGL surface size every frame (which app-cmd announces a resize varies by Android version) and re-sends a logical `WindowSize` so the engine relayouts; pause/stop halt presentation while the engine keeps running; activity destroy no longer sends `WindowClose` or stops the transport — Android may relaunch the activity into the same process, where the surviving engine re-attaches via INIT_WINDOW + atlas restore (previously a reused process would have been permanently black); a failed `eglSwapBuffers` drops the surface and waits for recreation. Verified on the emulator: landscape relayout, correct touch mapping while rotated, rotate back, home, relaunch — state intact throughout one engine process.
+
 ## 2026-07-16 (Android Phase 4: full touch sweep + engine mouse-up fix)
 
 - **All 16 `Node` kinds verified by touch on the Android emulator** (preferences + settings examples): checkbox/switch/radio toggles, slider drag with live `ProgressBar` tracking, `Select` popup open/pick/close through the overlay path, `TextArea` + IME, accordion expand with a nested checkbox dispatching through `Update`, `App[S]`-owned tab switching, and `Modal` — opened via `OverlayManager`, nested checkbox dispatched (status text updated behind the dialog while the modal's own snapshot stayed as documented), dismissed with the back gesture.
