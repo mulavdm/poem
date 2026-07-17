@@ -74,10 +74,19 @@ open at that gate:
       sliders, and fast release = fling (velocity ×1.4 capped 10k px/s,
       exponential decay τ=0.3s, tap-to-stop). Feel approved on the physical
       device.
-- [ ] **Keyboard obscures focused field (device finding, 2026-07-17)**: set
-      android:windowSoftInputMode="adjustResize" so the IME shrinks the
-      surface (the per-frame geometry check will relayout), and scroll the
-      focused text field into view — depends on touch scrolling above.
+- [~] **Keyboard obscures focused field** (2026-07-17, SHELVED half-done):
+      WORKS ON EMULATOR/AOSP - the IME inset folds into the geometry pipeline
+      (captured once per session when SetImeVisible fires, held until hide;
+      42%-of-surface estimate fallback), the viewport shrinks/restores, and
+      the engine scrolls the focused field into view (ensureFocusedVisible,
+      runs while IME shown). BROKEN ON HYPEROS/MIUI and shelved after five
+      rounds: off-UI-thread View-inset JNI reads go stale after seconds,
+      onContentRectChanged never fires for the IME on a fullscreen
+      NativeActivity, windowOptOutEdgeToEdgeEnforcement is ignored, and both
+      legacy SHOW_FORCED and API-30 WindowInsetsController dismissal leave a
+      dead black IME panel. Likely proper fix: a real UI-thread insets
+      listener (needs a tiny Java/DEX shim - abandons the zero-Java APK) or
+      Jetpack-style edge-to-edge handling; revisit with fresh eyes.
 - [ ] **Bottom inset residual (device finding, 2026-07-17)**: with 3-button
       nav some content still renders behind the buttons — verify whether the
       deprecated systemWindowInset accessors under-report on MIUI/HyperOS and

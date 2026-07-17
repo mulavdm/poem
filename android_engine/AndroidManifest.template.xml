@@ -14,6 +14,7 @@
     <activity android:name="android.app.NativeActivity"
         android:exported="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+        android:windowSoftInputMode="adjustResize"
         android:configChanges="orientation|screenSize|keyboardHidden">
       <meta-data android:name="android.app.lib_name" android:value="poemhost" />
       <intent-filter>

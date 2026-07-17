@@ -420,6 +420,9 @@ func runEngine(config AppConfig, manager *theme.Manager, preferenceUpdates <-cha
 				globalState.NeedsRepaint = atlasChanged
 			}
 			updateImeVisibility(pipeConnGoToSidecar)
+			if imeShown {
+				ensureFocusedVisible()
+			}
 			stateMutex.Unlock()
 		}
 	}()
@@ -1496,6 +1499,64 @@ func updateImeVisibility(conn io.Writer) {
 	imeShown = wants
 	if payload, err := protocol.EncodeSetImeVisible(protocol.SetImeVisible{Visible: wants}); err == nil {
 		_ = writeMessage(conn, payload)
+	}
+}
+
+// ensureFocusedVisible scrolls the ScrollView containing the focused
+// component until the component sits inside the viewport. Called from the
+// frame loop (stateMutex held) while the IME is up: when the soft keyboard
+// shrinks the viewport, the field being edited must not be left underneath
+// it. ScrollView children keep content-space bounds anchored at the viewport
+// origin, so a component is visible iff bounds−ScrollY falls within Rect.
+func ensureFocusedVisible() {
+	if globalState == nil || globalState.FocusedID == "" || globalState.ScrollPositions == nil {
+		return
+	}
+	focused := libFindComponent(globalState.FocusedID)
+	if focused == nil {
+		return
+	}
+	fb := focused.Bounds()
+	if fb.Empty() {
+		return
+	}
+	for _, root := range interactionRoots() {
+		root.Walk(func(c types.Component) {
+			sv, ok := c.(*components.ScrollView)
+			if !ok || sv.ContentH <= sv.Rect.Dy() {
+				return
+			}
+			contains := false
+			for _, child := range sv.Children {
+				child.Walk(func(cc types.Component) {
+					if cc.ID() == globalState.FocusedID {
+						contains = true
+					}
+				})
+			}
+			if !contains {
+				return
+			}
+			const margin = 12
+			scrollY := globalState.ScrollPositions[sv.CompID]
+			target := scrollY
+			if fb.Max.Y-target > sv.Rect.Max.Y-margin {
+				target = fb.Max.Y - sv.Rect.Max.Y + margin
+			}
+			if fb.Min.Y-target < sv.Rect.Min.Y+margin {
+				target = fb.Min.Y - sv.Rect.Min.Y - margin
+			}
+			if max := sv.ContentH - sv.Rect.Dy(); target > max {
+				target = max
+			}
+			if target < 0 {
+				target = 0
+			}
+			if target != scrollY {
+				globalState.ScrollPositions[sv.CompID] = target
+				globalState.NeedsRepaint = true
+			}
+		})
 	}
 }
 

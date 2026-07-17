@@ -28,3 +28,10 @@ namespace poem {
 // insets are unavailable (pre-attach); out = {left, top, right, bottom}.
 bool GetSystemInsets(ANativeActivity* activity, int out[4]);
 } // namespace poem
+
+namespace poem {
+// GetImeInset returns the soft keyboard's current bottom inset in physical
+// px (0 when hidden, or on pre-API-30 devices where adjustResize resizes the
+// surface instead).
+int GetImeInset(ANativeActivity* activity);
+} // namespace poem

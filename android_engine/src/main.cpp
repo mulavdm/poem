@@ -51,6 +51,12 @@ struct Host {
     float scale = 1.0f;          // display density (physical px per logical px)
     int logicalW = 0, logicalH = 0;
     int insetX = 0, insetY = 0;   // applied content origin (system bars)
+    std::atomic<bool> imeVisible{false}; // set by SetImeVisible on the transport thread
+    int imeBottom = 0;            // current IME inset (physical px), render-loop owned
+    // contentBottom is the window's visible content bottom (physical px) as
+    // reported by onContentRectChanged — the framework's own UI-thread signal
+    // for adjustResize/IME geometry. 0 = never reported.
+    std::atomic<int> contentBottom{0};
     int pendingInsets[4] = {0, 0, 0, 0}; // l,t,r,b from getRootWindowInsets
 
     // Touch gesture classification (logical px): a press is Undecided until
@@ -185,6 +191,7 @@ void TransportLoop() {
             case poem::protocol::MessageType::SetImeVisible: {
                 const auto ime = poem::protocol::DecodeSetImeVisible(envelope.body);
                 HLOGI("ime visible -> %d", ime.visible ? 1 : 0);
+                g_host.imeVisible.store(ime.visible);
                 poem::SetSoftKeyboardVisible(g_host.app->activity, ime.visible);
                 break;
             }
@@ -302,10 +309,39 @@ void CheckSurfaceSize(Host* host) {
             host->pendingInsets[3] = raw[3];
         }
     }
+
+    // The soft keyboard is one more bottom inset: on edge-to-edge Android
+    // (API 35+) adjustResize no longer shrinks the surface, so the viewport
+    // must shrink by the IME inset instead; it replaces the nav-bar inset
+    // while larger (the keyboard covers the nav bar). The engine's
+    // SetImeVisible is the authoritative "keyboard up" signal — the polled
+    // inset flakes to 0 transiently on some OEMs (seen on HyperOS, where it
+    // briefly reported 0 mid-session and the viewport snapped back under the
+    // keyboard) — so while visible we keep the last non-zero reading and
+    // only accept 0 once it is sustained (~0.5s: the user dismissed the IME
+    // with the system chevron, which bypasses our focus tracking).
+    // IME inset strategy, learned the hard way on HyperOS: View-inset JNI
+    // reads from the render thread are only trustworthy immediately after
+    // the keyboard opens — seconds later they flake to zero/stale, and the
+    // framework's onContentRectChanged never fires for the IME on a
+    // fullscreen NativeActivity. So the inset is captured ONCE per IME
+    // session (first frames after our own SetImeVisible, the one moment the
+    // reading is fresh) and held until the engine says the keyboard is gone;
+    // if even the first reading fails, a 42%-of-surface estimate is close
+    // enough for every mainstream keyboard.
+    if (host->imeVisible.load()) {
+        if (host->imeBottom == 0) {
+            const int polled = poem::GetImeInset(host->app->activity);
+            host->imeBottom = polled > 0 ? polled : static_cast<int>(h * 0.42f);
+        }
+    } else {
+        host->imeBottom = 0;
+    }
     const int insetX = host->pendingInsets[0];
     const int insetY = host->pendingInsets[1];
+    const int bottomInset = std::max(host->pendingInsets[3], host->imeBottom);
     const int contentW = std::max(1, w - insetX - host->pendingInsets[2]);
-    const int contentH = std::max(1, h - insetY - host->pendingInsets[3]);
+    const int contentH = std::max(1, h - insetY - bottomInset);
 
     const int logicalW = static_cast<int>(contentW / host->scale);
     const int logicalH = static_cast<int>(contentH / host->scale);
@@ -360,9 +396,18 @@ void HandleCmd(android_app* app, int32_t cmd) {
     case APP_CMD_TERM_WINDOW:
         TermDisplay(host);
         break;
-    case APP_CMD_CONFIG_CHANGED:
     case APP_CMD_CONTENT_RECT_CHANGED:
-        // Rotation or system-bar change: same activity, new geometry.
+        // The framework's UI-thread signal for adjustResize geometry (the
+        // IME opening/closing, system-bar changes). Polling View insets from
+        // the render thread proved unreliable on HyperOS; this is
+        // authoritative when present.
+        HLOGI("content rect: %d,%d-%d,%d", app->contentRect.left, app->contentRect.top,
+              app->contentRect.right, app->contentRect.bottom);
+        host->contentBottom.store(app->contentRect.bottom);
+        CheckSurfaceSize(host);
+        break;
+    case APP_CMD_CONFIG_CHANGED:
+        // Rotation: same activity, new geometry.
         CheckSurfaceSize(host);
         break;
     case APP_CMD_GAINED_FOCUS:

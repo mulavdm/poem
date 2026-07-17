@@ -75,11 +75,28 @@ void SetSoftKeyboardVisible(ANativeActivity* activity, bool visible) {
     jmethodID getDecorView = env->GetMethodID(windowClass, "getDecorView", "()Landroid/view/View;");
     jobject decorView = env->CallObjectMethod(window, getDecorView);
 
+    // API 30+: WindowInsetsController is the sanctioned IME toggle — the
+    // legacy SHOW_FORCED path leaves a dead black IME window behind on
+    // HyperOS fullscreen activities. Falls back to InputMethodManager on
+    // older devices.
+    jmethodID getController = env->GetMethodID(windowClass, "getInsetsController", "()Landroid/view/WindowInsetsController;");
+    if (!ClearException(env) && getController) {
+        jobject controller = env->CallObjectMethod(window, getController);
+        jclass typeClass = controller ? env->FindClass("android/view/WindowInsets$Type") : nullptr;
+        if (!ClearException(env) && controller && typeClass) {
+            jmethodID imeType = env->GetStaticMethodID(typeClass, "ime", "()I");
+            const jint mask = env->CallStaticIntMethod(typeClass, imeType);
+            jclass controllerClass = env->GetObjectClass(controller);
+            jmethodID toggle = env->GetMethodID(controllerClass, visible ? "show" : "hide", "(I)V");
+            if (!ClearException(env) && toggle) {
+                env->CallVoidMethod(controller, toggle, mask);
+                if (!ClearException(env)) return;
+            }
+        }
+    }
+
     jclass immClass = env->GetObjectClass(imm);
     if (visible) {
-        // SHOW_FORCED: the decor view is not an editable widget, so the
-        // implicit variant refuses; forced is the established NativeActivity
-        // pattern.
         jmethodID showSoftInput = env->GetMethodID(immClass, "showSoftInput", "(Landroid/view/View;I)Z");
         env->CallBooleanMethod(imm, showSoftInput, decorView, 2 /* SHOW_FORCED */);
     } else {
@@ -140,6 +157,46 @@ bool GetSystemInsets(ANativeActivity* activity, int out[4]) {
     out[2] = env->CallIntMethod(insets, r);
     out[3] = env->CallIntMethod(insets, b);
     return !ClearException(env);
+}
+
+} // namespace poem
+
+namespace poem {
+
+int GetImeInset(ANativeActivity* activity) {
+    AttachedEnv scoped(activity);
+    JNIEnv* env = scoped.get();
+    if (!env) return 0;
+    jobject activityObj = activity->clazz;
+    jclass activityClass = env->GetObjectClass(activityObj);
+    jmethodID getWindow = env->GetMethodID(activityClass, "getWindow", "()Landroid/view/Window;");
+    jobject window = env->CallObjectMethod(activityObj, getWindow);
+    jclass windowClass = env->GetObjectClass(window);
+    jmethodID getDecorView = env->GetMethodID(windowClass, "getDecorView", "()Landroid/view/View;");
+    jobject decorView = env->CallObjectMethod(window, getDecorView);
+    jclass viewClass = env->GetObjectClass(decorView);
+    jmethodID getInsets = env->GetMethodID(viewClass, "getRootWindowInsets", "()Landroid/view/WindowInsets;");
+    jobject insets = env->CallObjectMethod(decorView, getInsets);
+    if (ClearException(env) || !insets) return 0;
+
+    // API 30+: WindowInsets.getInsets(WindowInsets.Type.ime()).bottom. On
+    // older devices the class/method is missing and this returns 0 — those
+    // devices resize the surface via adjustResize instead, which the
+    // per-frame geometry check already handles.
+    jclass typeClass = env->FindClass("android/view/WindowInsets$Type");
+    if (ClearException(env) || !typeClass) return 0;
+    jmethodID imeType = env->GetStaticMethodID(typeClass, "ime", "()I");
+    if (ClearException(env) || !imeType) return 0;
+    const jint mask = env->CallStaticIntMethod(typeClass, imeType);
+    jclass insetsClass = env->GetObjectClass(insets);
+    jmethodID getTyped = env->GetMethodID(insetsClass, "getInsets", "(I)Landroid/graphics/Insets;");
+    if (ClearException(env) || !getTyped) return 0;
+    jobject imeInsets = env->CallObjectMethod(insets, getTyped, mask);
+    if (ClearException(env) || !imeInsets) return 0;
+    jclass gInsetsClass = env->GetObjectClass(imeInsets);
+    jfieldID bottomField = env->GetFieldID(gInsetsClass, "bottom", "I");
+    const int bottom = env->GetIntField(imeInsets, bottomField);
+    return ClearException(env) ? 0 : bottom;
 }
 
 } // namespace poem
