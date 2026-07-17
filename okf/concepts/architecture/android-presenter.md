@@ -58,6 +58,5 @@ otherwise swallows taps near the top edge).
 
 ## Known gaps
 
-Tracked in `TASK.md`: audio
-(`PlaySound` ignored), accessibility bridge (`SemanticTree` dropped; the UIA sidecar is the
+Audio: `PlaySound` plays via AAudio (short-lived stream per sound, engine-side debounce, opt-in via `AppConfig.Effects.Audio`). Tracked in `TASK.md`: accessibility bridge (`SemanticTree` dropped; the UIA sidecar is the
 reference), arm64 on-device verification. Lifecycle: rotation/pause/resume/process-reuse are handled (see log 2026-07-17).

@@ -45,9 +45,9 @@ echo "==> Go application ($GOARCH)"
 echo "==> C++ presenter"
 "$CC" -c -fPIC -o "$WORK/glue.o" "$GLUE/android_native_app_glue.c" -I"$GLUE"
 "$CXX" -shared -fPIC -std=c++17 -fexceptions -static-libstdc++ -o "$LIBDIR/libpoemhost.so" \
-  "$ENGINE_DIR/src/main.cpp" "$ENGINE_DIR/src/renderer_gles.cpp" "$ENGINE_DIR/src/ime_jni.cpp" "$POEM_DIR/cpp_sidecar/src/protocol.cpp" \
+  "$ENGINE_DIR/src/main.cpp" "$ENGINE_DIR/src/renderer_gles.cpp" "$ENGINE_DIR/src/ime_jni.cpp" "$ENGINE_DIR/src/audio_aaudio.cpp" "$POEM_DIR/cpp_sidecar/src/protocol.cpp" \
   "$WORK/glue.o" -I"$ENGINE_DIR/src" -I"$POEM_DIR/cpp_sidecar/src" -I"$GLUE" \
-  -L"$LIBDIR" -lpoemapp -lEGL -lGLESv2 -landroid -llog -u ANativeActivity_onCreate
+  -L"$LIBDIR" -lpoemapp -lEGL -lGLESv2 -laaudio -landroid -llog -u ANativeActivity_onCreate
 
 echo "==> Manifest + package"
 sed -e "s/__PACKAGE__/$PACKAGE_ID/" -e "s/__LABEL__/$APP_LABEL/" \

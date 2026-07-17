@@ -19,6 +19,7 @@
 #include <thread>
 #include <vector>
 
+#include "audio_aaudio.h"
 #include "ime_jni.h"
 #include "protocol.h"
 #include "renderer_gles.h"
@@ -150,9 +151,13 @@ void TransportLoop() {
                 poem::SetSoftKeyboardVisible(g_host.app->activity, ime.visible);
                 break;
             }
-            case poem::protocol::MessageType::PlaySound:
+            case poem::protocol::MessageType::PlaySound: {
+                static poem::AudioEngineAAudio audio;
+                audio.Play(poem::protocol::DecodePlaySound(envelope.body).type);
+                break;
+            }
             case poem::protocol::MessageType::SemanticTree:
-                break; // no audio / accessibility bridge on this presenter yet
+                break; // no accessibility bridge on this presenter yet
             default:
                 break;
             }

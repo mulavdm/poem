@@ -13,8 +13,13 @@ open at that gate:
       key events (Win32 VK vocabulary + `KeyChar` via `KeyEvent.getUnicodeChar`).
       Verified on emulator: focus→keyboard, typing with spaces, backspace
       editing, unfocus→dismiss.
-- [ ] **Audio**: `PlaySound` messages are currently ignored; wire them to
-      AAudio/Oboe or keep a documented silent stub.
+- [x] **Audio** (2026-07-17): PlaySound plays through AAudio - the presenter
+      synthesizes the same hover/click/success PCM as the Windows sidecar
+      (generators mirrored; cpp_sidecar untouched to preserve the provenance
+      manifest) and fires a short-lived output stream per sound, capped at 4
+      concurrent. Opt-in per app via AppConfig.Effects.Audio (the preferences
+      Android example enables it). Verified on emulator: AAUDIO_OK streams
+      registered by the audio service on tap.
 - [ ] **Accessibility bridge**: the presenter drops `SemanticTree` messages;
       map them to Android accessibility nodes (the cpp_sidecar UIA bridge is
       the reference implementation).
@@ -28,9 +33,11 @@ open at that gate:
       emulator: rotate to landscape (relayout 914x411 logical), tap in
       landscape (input mapping correct), rotate back, home, relaunch - all
       state intact in the same engine process.
-- [ ] **arm64 on-device verification**: the arm64 build compiles but only the
-      x86_64 emulator has been exercised; run the counter on a physical
-      device.
+- [ ] **arm64 on-device verification**: the complete preferences APK now
+      builds for arm64-v8a (engine + presenter with GLES/IME/AAudio, 6MB) -
+      build path fully proven; EXECUTION still needs a physical device
+      (arm64 AVDs are unsupported on x86_64 hosts). Plug in a phone with USB
+      debugging and install android_engine/build/preferences-arm64.apk.
 - [x] **All-16-kinds sweep** (2026-07-16): every Node kind exercised by touch
       on the emulator via the preferences and settings examples - checkbox,
       switch, radio, slider drag, Select popup, TextArea+IME, accordion

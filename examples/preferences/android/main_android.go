@@ -22,7 +22,7 @@ import (
 //
 //export PoemAndroidStart
 func PoemAndroidStart(width, height C.int) {
-	config := desktop.Configure(preferences.App, render.AppConfig{Title: "Preferences"})
+	config := desktop.Configure(preferences.App, render.AppConfig{Title: "Preferences", Effects: render.EffectsConfig{Audio: true}})
 	mobile.Start(config, int(width), int(height))
 }
 

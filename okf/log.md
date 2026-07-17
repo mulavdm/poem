@@ -1,5 +1,10 @@
 # OKF Bundle Update Log
 
+## 2026-07-17 (Android audio + arm64 build)
+
+- `PlaySound` now plays on Android through AAudio (`android_engine/src/audio_aaudio.cpp`): the presenter synthesizes the identical hover/click/success PCM as the Windows sidecar — generators mirrored rather than shared, because `cpp_sidecar` sources are pinned by the provenance manifest — and plays each sound on a short-lived blocking-write output stream, capped at four concurrent so hover bursts degrade by dropping sounds instead of piling up threads. `setUsage` is deliberately omitted (API 28; presenter targets 26). Audio remains opt-in per app via `AppConfig.Effects.Audio`; the preferences Android example enables it. Verified on the emulator: tap → `AAudioStreamBuilder_openStream returns AAUDIO_OK`, stream start/drain/stop/close, and the app registered as an AAudio player with the audio service.
+- The complete preferences APK builds for arm64-v8a (Go engine c-shared under aarch64 NDK clang + full presenter); on-device execution verification still needs physical hardware and stays open in `TASK.md`.
+
 ## 2026-07-17 (Android lifecycle hardening + parity matrix Android column)
 
 - Extended [Component Parity](/concepts/app/component-parity.md) with the Android reality: desktop and Android share the engine components (a new `Node` kind needs no Android-specific rendering, only touch verification), the web target needs its own renderer per kind, and the Ported table now carries a per-kind Android touch-status column recording the 2026-07-16 sweep.
