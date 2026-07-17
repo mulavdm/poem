@@ -1,5 +1,11 @@
 # OKF Bundle Update Log
 
+## 2026-07-17 (arm64 on-device verification + system-bar insets)
+
+- **First run on physical hardware** (Xiaomi 2407FPN8EG, arm64-v8a, API 36, 520dpi): rendering, touch, IME typing, AAudio feedback, and rotation all verified by hand — the arm64 build path and execution are both proven.
+- The device exposed that the presenter ignored system-bar insets: on edge-to-edge Android the glue`s contentRect stays empty (verified on emulator and device), so insets now come from `View.getRootWindowInsets` over JNI, refreshed on surface changes plus a slow heartbeat. The engine lays out in the logical content size, the renderer shifts geometry and scissors by the content origin (`uInset` uniform), and touch translates back. On the device: 138px status-bar top, 156px nav-bar bottom → logical 375×744.
+- Device findings recorded in `TASK.md` for the next pass: touch-drag scrolling (drag currently activates controls; needs drag→wheel translation + a root ScrollView), `adjustResize` for the IME so the keyboard stops covering the focused field, and a possible MIUI under-report of bottom insets via the deprecated accessors.
+
 ## 2026-07-17 (Android audio + arm64 build)
 
 - `PlaySound` now plays on Android through AAudio (`android_engine/src/audio_aaudio.cpp`): the presenter synthesizes the identical hover/click/success PCM as the Windows sidecar — generators mirrored rather than shared, because `cpp_sidecar` sources are pinned by the provenance manifest — and plays each sound on a short-lived blocking-write output stream, capped at four concurrent so hover bursts degrade by dropping sounds instead of piling up threads. `setUsage` is deliberately omitted (API 28; presenter targets 26). Audio remains opt-in per app via `AppConfig.Effects.Audio`; the preferences Android example enables it. Verified on the emulator: tap → `AAudioStreamBuilder_openStream returns AAUDIO_OK`, stream start/drain/stop/close, and the app registered as an AAudio player with the audio service.

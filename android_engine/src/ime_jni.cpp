@@ -108,3 +108,38 @@ int UnicodeCharForKey(ANativeActivity* activity, int keyCode, int metaState) {
 }
 
 } // namespace poem
+
+namespace poem {
+
+bool GetSystemInsets(ANativeActivity* activity, int out[4]) {
+    AttachedEnv scoped(activity);
+    JNIEnv* env = scoped.get();
+    if (!env) return false;
+    jobject activityObj = activity->clazz;
+    jclass activityClass = env->GetObjectClass(activityObj);
+    jmethodID getWindow = env->GetMethodID(activityClass, "getWindow", "()Landroid/view/Window;");
+    jobject window = env->CallObjectMethod(activityObj, getWindow);
+    jclass windowClass = env->GetObjectClass(window);
+    jmethodID getDecorView = env->GetMethodID(windowClass, "getDecorView", "()Landroid/view/View;");
+    jobject decorView = env->CallObjectMethod(window, getDecorView);
+    jclass viewClass = env->GetObjectClass(decorView);
+    jmethodID getInsets = env->GetMethodID(viewClass, "getRootWindowInsets", "()Landroid/view/WindowInsets;");
+    jobject insets = env->CallObjectMethod(decorView, getInsets);
+    if (ClearException(env) || !insets) return false;
+    jclass insetsClass = env->GetObjectClass(insets);
+    // The "system window" accessors are deprecated post-30 but still populated
+    // on every current release, and they exist all the way down to minSdk 26 —
+    // one code path instead of a Type-token reflection dance.
+    jmethodID l = env->GetMethodID(insetsClass, "getSystemWindowInsetLeft", "()I");
+    jmethodID t = env->GetMethodID(insetsClass, "getSystemWindowInsetTop", "()I");
+    jmethodID r = env->GetMethodID(insetsClass, "getSystemWindowInsetRight", "()I");
+    jmethodID b = env->GetMethodID(insetsClass, "getSystemWindowInsetBottom", "()I");
+    if (!l || !t || !r || !b) { ClearException(env); return false; }
+    out[0] = env->CallIntMethod(insets, l);
+    out[1] = env->CallIntMethod(insets, t);
+    out[2] = env->CallIntMethod(insets, r);
+    out[3] = env->CallIntMethod(insets, b);
+    return !ClearException(env);
+}
+
+} // namespace poem

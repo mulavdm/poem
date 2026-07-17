@@ -59,6 +59,7 @@ attribute vec4 aColor;
 attribute vec4 aRect;
 attribute vec4 aMisc; // drawType, glow, isGlass, radius
 uniform vec2 uScreen;
+uniform vec2 uInset;
 varying vec2 vUV;
 varying vec4 vColor;
 varying vec4 vRect;
@@ -70,7 +71,8 @@ void main() {
     vRect = aRect;
     vMisc = aMisc;
     vPixel = aPos;
-    vec2 ndc = vec2(aPos.x / uScreen.x * 2.0 - 1.0, 1.0 - aPos.y / uScreen.y * 2.0);
+    vec2 p = aPos + uInset;
+    vec2 ndc = vec2(p.x / uScreen.x * 2.0 - 1.0, 1.0 - p.y / uScreen.y * 2.0);
     gl_Position = vec4(ndc, 0.0, 1.0);
 }
 )";
@@ -150,6 +152,7 @@ bool RendererGLES::Init(int width, int height, float scale) {
     }
     uScreen_ = glGetUniformLocation(program_, "uScreen");
     uAtlas_ = glGetUniformLocation(program_, "uAtlas");
+    uInset_ = glGetUniformLocation(program_, "uInset");
 
     glGenBuffers(1, &vbo_);
     glGenTextures(1, &atlasTexture_);
@@ -161,6 +164,11 @@ bool RendererGLES::Init(int width, int height, float scale) {
 void RendererGLES::Resize(int width, int height) {
     width_ = width;
     height_ = height;
+}
+
+void RendererGLES::SetInset(int x, int y) {
+    insetX_ = x;
+    insetY_ = y;
 }
 
 void RendererGLES::UploadAtlas(const protocol::InitEngine& init) {
@@ -347,6 +355,7 @@ void RendererGLES::Render(const protocol::RenderFrame& frame) {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, atlasTexture_);
     glUniform1i(uAtlas_, 0);
+    glUniform2f(uInset_, static_cast<float>(insetX_), static_cast<float>(insetY_));
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo_);
     glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)),
@@ -363,7 +372,7 @@ void RendererGLES::Render(const protocol::RenderFrame& frame) {
         if (range.clipEnabled) {
             glEnable(GL_SCISSOR_TEST);
             // Protocol clip rects are top-left origin; GL scissor is bottom-left.
-            glScissor(range.clipX, height_ - (range.clipY + range.clipH), range.clipW, range.clipH);
+            glScissor(range.clipX + insetX_, height_ - (range.clipY + insetY_ + range.clipH), range.clipW, range.clipH);
         } else {
             glDisable(GL_SCISSOR_TEST);
         }

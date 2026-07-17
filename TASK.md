@@ -33,11 +33,14 @@ open at that gate:
       emulator: rotate to landscape (relayout 914x411 logical), tap in
       landscape (input mapping correct), rotate back, home, relaunch - all
       state intact in the same engine process.
-- [ ] **arm64 on-device verification**: the complete preferences APK now
-      builds for arm64-v8a (engine + presenter with GLES/IME/AAudio, 6MB) -
-      build path fully proven; EXECUTION still needs a physical device
-      (arm64 AVDs are unsupported on x86_64 hosts). Plug in a phone with USB
-      debugging and install android_engine/build/preferences-arm64.apk.
+- [x] **arm64 on-device verification** (2026-07-17): preferences ran on a
+      physical Xiaomi (2407FPN8EG, arm64-v8a, API 36, 520dpi): rendering,
+      touch, IME typing, AAudio click, and rotation all confirmed by hand.
+      System-bar insets now come from getRootWindowInsets over JNI (the glue
+      contentRect is empty on edge-to-edge Android); drawing/clipping shift
+      by the content origin and touch translates back. Remaining device
+      findings recorded below (touch scrolling, adjustResize, MIUI inset
+      residual).
 - [x] **All-16-kinds sweep** (2026-07-16): every Node kind exercised by touch
       on the emulator via the preferences and settings examples - checkbox,
       switch, radio, slider drag, Select popup, TextArea+IME, accordion
@@ -61,3 +64,18 @@ open at that gate:
 - [ ] **Accordion expansion overlap**: expanding a section pushes content down
       but later siblings (About content / Save) can overlap after relayout on
       Android — reproduce on desktop and fix in FlexBox/Accordion measure.
+- [ ] **Touch scrolling (device finding, 2026-07-17)**: pages taller than the
+      viewport are unreachable on Android — there is no page-level ScrollView
+      and a vertical finger drag hits controls instead of scrolling. Fix:
+      presenter translates vertical drags (past a touch slop) into MouseWheel
+      events instead of Move, and the pkg/app desktop driver wraps the root
+      in render.ScrollView when content exceeds the window.
+- [ ] **Keyboard obscures focused field (device finding, 2026-07-17)**: set
+      android:windowSoftInputMode="adjustResize" so the IME shrinks the
+      surface (the per-frame geometry check will relayout), and scroll the
+      focused text field into view — depends on touch scrolling above.
+- [ ] **Bottom inset residual (device finding, 2026-07-17)**: with 3-button
+      nav some content still renders behind the buttons — verify whether the
+      deprecated systemWindowInset accessors under-report on MIUI/HyperOS and
+      switch to the Type-based getInsets(systemBars()|displayCutout) API 30
+      path if so.

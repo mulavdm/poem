@@ -12,6 +12,7 @@
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <mutex>
@@ -46,6 +47,8 @@ struct Host {
     int width = 0, height = 0;   // physical surface pixels
     float scale = 1.0f;          // display density (physical px per logical px)
     int logicalW = 0, logicalH = 0;
+    int insetX = 0, insetY = 0;   // applied content origin (system bars)
+    int pendingInsets[4] = {0, 0, 0, 0}; // l,t,r,b from getRootWindowInsets
     bool animating = false;
     bool engineStarted = false;
 
@@ -235,27 +238,62 @@ void TermDisplay(Host* host) {
     host->context = EGL_NO_CONTEXT;
 }
 
-// CheckSurfaceSize detects the surface changing under us — rotation with
-// configChanges declared resizes the window without recreating the activity,
-// and which app-cmd announces it varies by version, so the render loop simply
-// compares every frame. On change the renderer adopts the new physical size
-// and the engine gets a WindowSize event (in logical pixels) to relayout.
+// CheckSurfaceSize reconciles the layout area with reality: the EGL surface
+// can change under us (rotation with configChanges declared; which app-cmd
+// announces it varies by version) and system bars overlap its edges (the
+// content rect from the glue). The engine lays out in the logical CONTENT
+// size; the renderer shifts drawing by the content origin; touch translates
+// back. Compared every frame — the checks are just two eglQuerySurface calls
+// and integer compares.
 void CheckSurfaceSize(Host* host) {
     if (host->display == EGL_NO_DISPLAY) return;
     EGLint w = 0, h = 0;
     eglQuerySurface(host->display, host->surface, EGL_WIDTH, &w);
     eglQuerySurface(host->display, host->surface, EGL_HEIGHT, &h);
-    if ((w == host->width && h == host->height) || w <= 0 || h <= 0) return;
+    if (w <= 0 || h <= 0) return;
+
+    // System-bar insets come from getRootWindowInsets over JNI — on modern
+    // edge-to-edge Android the glue's contentRect stays empty, verified on
+    // both the API 36 emulator and a physical device. The JNI hop costs an
+    // attach, so it runs when the surface changed or on a slow heartbeat
+    // (bars can change without a resize, e.g. nav-mode switches).
+    static int insetTick = 0;
+    const bool sizeChanged = (w != host->width || h != host->height);
+    if (sizeChanged || (insetTick++ % 120) == 0) {
+        int raw[4] = {0, 0, 0, 0};
+        if (poem::GetSystemInsets(host->app->activity, raw)) {
+            host->pendingInsets[0] = raw[0];
+            host->pendingInsets[1] = raw[1];
+            host->pendingInsets[2] = raw[2];
+            host->pendingInsets[3] = raw[3];
+        }
+    }
+    const int insetX = host->pendingInsets[0];
+    const int insetY = host->pendingInsets[1];
+    const int contentW = std::max(1, w - insetX - host->pendingInsets[2]);
+    const int contentH = std::max(1, h - insetY - host->pendingInsets[3]);
+
+    const int logicalW = static_cast<int>(contentW / host->scale);
+    const int logicalH = static_cast<int>(contentH / host->scale);
+    if (w == host->width && h == host->height &&
+        insetX == host->insetX && insetY == host->insetY &&
+        logicalW == host->logicalW && logicalH == host->logicalH) {
+        return;
+    }
     host->width = w;
     host->height = h;
-    host->logicalW = static_cast<int>(w / host->scale);
-    host->logicalH = static_cast<int>(h / host->scale);
+    host->insetX = insetX;
+    host->insetY = insetY;
+    host->logicalW = logicalW;
+    host->logicalH = logicalH;
     host->renderer.Resize(w, h);
-    HLOGI("surface resized to %dx%d => logical %dx%d", w, h, host->logicalW, host->logicalH);
+    host->renderer.SetInset(insetX, insetY);
+    HLOGI("geometry: surface %dx%d, content inset %d,%d => logical %dx%d",
+          w, h, insetX, insetY, logicalW, logicalH);
     poem::protocol::Event resize;
     resize.type = poem::protocol::EventType::WindowSize;
-    resize.width = host->logicalW;
-    resize.height = host->logicalH;
+    resize.width = logicalW;
+    resize.height = logicalH;
     QueueEvent(resize);
 }
 
@@ -289,7 +327,8 @@ void HandleCmd(android_app* app, int32_t cmd) {
         TermDisplay(host);
         break;
     case APP_CMD_CONFIG_CHANGED:
-        // Rotation with configChanges declared: same activity, new geometry.
+    case APP_CMD_CONTENT_RECT_CHANGED:
+        // Rotation or system-bar change: same activity, new geometry.
         CheckSurfaceSize(host);
         break;
     case APP_CMD_GAINED_FOCUS:
@@ -372,8 +411,8 @@ int32_t HandleInput(android_app* app, AInputEvent* event) {
     const auto action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
     Host* host = static_cast<Host*>(app->userData);
     // Touch arrives in physical pixels; the engine hit-tests in logical.
-    const auto x = static_cast<std::int32_t>(AMotionEvent_getX(event, 0) / host->scale);
-    const auto y = static_cast<std::int32_t>(AMotionEvent_getY(event, 0) / host->scale);
+    const auto x = static_cast<std::int32_t>((AMotionEvent_getX(event, 0) - host->insetX) / host->scale);
+    const auto y = static_cast<std::int32_t>((AMotionEvent_getY(event, 0) - host->insetY) / host->scale);
 
     poem::protocol::Event out;
     out.x = x;

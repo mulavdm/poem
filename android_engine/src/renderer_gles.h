@@ -22,6 +22,10 @@ class RendererGLES {
     // for DPI on Windows.
     bool Init(int width, int height, float scale);
     void Resize(int width, int height);
+    // SetInset positions the content area inside the surface (physical px):
+    // system bars overlap the surface edges, so drawing and clipping shift by
+    // the content rect origin while the engine lays out inset-free.
+    void SetInset(int x, int y);
     void UploadAtlas(const protocol::InitEngine& init);
     void Render(const protocol::RenderFrame& frame);
 
@@ -54,6 +58,9 @@ class RendererGLES {
     int width_ = 0;
     int height_ = 0;
     float scale_ = 1.0f;
+    int insetX_ = 0;
+    int insetY_ = 0;
+    GLint uInset_ = -1;
     GLuint program_ = 0;
     GLuint vbo_ = 0;
     GLuint atlasTexture_ = 0;

@@ -20,3 +20,11 @@ void SetSoftKeyboardVisible(ANativeActivity* activity, bool visible);
 int UnicodeCharForKey(ANativeActivity* activity, int keyCode, int metaState);
 
 } // namespace poem
+
+namespace poem {
+// SystemInsets reads the window's system-bar/cutout insets (physical px)
+// via View.getRootWindowInsets — the reliable source on edge-to-edge
+// Android, where the glue's contentRect stays empty. Returns false if the
+// insets are unavailable (pre-attach); out = {left, top, right, bottom}.
+bool GetSystemInsets(ANativeActivity* activity, int out[4]);
+} // namespace poem
