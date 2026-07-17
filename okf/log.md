@@ -1,5 +1,10 @@
 # OKF Bundle Update Log
 
+## 2026-07-17 (web-engine knowledge completed + layout rationale)
+
+- Ported the remaining durable web concepts the consolidation pass under-carried: [Accessibility](/concepts/web/accessibility.md), [Asset Delivery](/concepts/web/component-asset-delivery.md), and [Family Packages](/concepts/web/family-packages.md) join trusted-html under `concepts/web/` (paths and `poem-` prefixes remapped, provenance noted). Deliberately not ported: `downstream-consumption` and `compatibility`, which documented consuming GopherWeb as an external Go module — moot now that it is this repository.
+- Recorded why there is no top-level `web_engine/` directory (asked and answered): the top-level engine dirs exist for foreign-toolchain native presenters of the draw-command protocol; the web target renders component-level HTML in pure Go, so `pkg/web` is the web engine and `pkg/app/web` its driver. Stated in the web index and the README layer model.
+
 ## 2026-07-17 (touch scrolling with fling, tuned on-device)
 
 - Pages scroll on every target: the `pkg/app` desktop driver wraps each page root in a `ScrollView` (no scrollbar and no effect when content fits, so short pages are unchanged; tests unwrap one level). `ScrollView.OnMouseWheel` now scales with the delta magnitude — a Windows notch (±120) keeps its historical 100px step, while pixel-accurate sources land 1:1.

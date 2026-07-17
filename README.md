@@ -53,6 +53,9 @@ As of 2026-07-16 the former sibling projects **Trellis** (the app layer) and **G
   protocol: `cpp_sidecar/` (the active Windows presenter: Win32, D3D11, UI Automation),
   `android_engine/` (Android: C++/EGL/GLES2 in a zero-Java NativeActivity APK), and
   `rust_engine/` (legacy Windows/OpenGL reference, no longer the active runtime path).
+  These live at the top level because they are foreign-toolchain native code; the web
+  target has no presenter directory by design — it never sees draw commands, so its whole
+  engine is the pure-Go `pkg/web` + `pkg/app/web` pair.
 
 ## Project Layout
 
