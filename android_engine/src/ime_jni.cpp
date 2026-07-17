@@ -143,10 +143,37 @@ bool GetSystemInsets(ANativeActivity* activity, int out[4]) {
     jmethodID getInsets = env->GetMethodID(viewClass, "getRootWindowInsets", "()Landroid/view/WindowInsets;");
     jobject insets = env->CallObjectMethod(decorView, getInsets);
     if (ClearException(env) || !insets) return false;
+    // API 30+: Type-based insets EXCLUDING the IME — the deprecated
+    // systemWindowInset accessors merge the keyboard into bottom, which
+    // contaminated the nav inset whenever read while the IME was up (the
+    // half-black-screen-after-dismiss bug). Bars+cutout only, IME is
+    // tracked separately.
+    jclass typeClass2 = env->FindClass("android/view/WindowInsets$Type");
+    if (!ClearException(env) && typeClass2) {
+        jmethodID bars = env->GetStaticMethodID(typeClass2, "systemBars", "()I");
+        jmethodID cut = env->GetStaticMethodID(typeClass2, "displayCutout", "()I");
+        if (!ClearException(env) && bars && cut) {
+            const jint mask = env->CallStaticIntMethod(typeClass2, bars) | env->CallStaticIntMethod(typeClass2, cut);
+            jclass ic = env->GetObjectClass(insets);
+            jmethodID getTyped = env->GetMethodID(ic, "getInsets", "(I)Landroid/graphics/Insets;");
+            if (!ClearException(env) && getTyped) {
+                jobject gi = env->CallObjectMethod(insets, getTyped, mask);
+                if (!ClearException(env) && gi) {
+                    jclass gic = env->GetObjectClass(gi);
+                    out[0] = env->GetIntField(gi, env->GetFieldID(gic, "left", "I"));
+                    out[1] = env->GetIntField(gi, env->GetFieldID(gic, "top", "I"));
+                    out[2] = env->GetIntField(gi, env->GetFieldID(gic, "right", "I"));
+                    out[3] = env->GetIntField(gi, env->GetFieldID(gic, "bottom", "I"));
+                    if (!ClearException(env)) return true;
+                }
+            }
+        }
+        ClearException(env);
+    }
+
     jclass insetsClass = env->GetObjectClass(insets);
-    // The "system window" accessors are deprecated post-30 but still populated
-    // on every current release, and they exist all the way down to minSdk 26 —
-    // one code path instead of a Type-token reflection dance.
+    // Pre-30 fallback: deprecated accessors (include IME; acceptable there
+    // because those devices resize the surface via adjustResize instead).
     jmethodID l = env->GetMethodID(insetsClass, "getSystemWindowInsetLeft", "()I");
     jmethodID t = env->GetMethodID(insetsClass, "getSystemWindowInsetTop", "()I");
     jmethodID r = env->GetMethodID(insetsClass, "getSystemWindowInsetRight", "()I");
