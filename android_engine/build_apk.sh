@@ -5,7 +5,7 @@
 # Usage:
 #   build_apk.sh <app-go-package-dir> <package-id> <app-label> <out.apk> [abi]
 # Example:
-#   build_apk.sh ../../Trellis/examples/counter/android com.trellis.counter Counter counter.apk x86_64
+#   build_apk.sh ../examples/counter/android com.trellis.counter Counter counter.apk x86_64
 #
 # Requires: Android SDK (build-tools 36.1.0, platform android-36.1, NDK
 # 30.0.15729638) at $ANDROID_SDK or %LOCALAPPDATA%/Android/Sdk, Go 1.26+, and
