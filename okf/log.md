@@ -1,5 +1,10 @@
 # OKF Bundle Update Log
 
+## 2026-07-18 (ImageNode — 17th Node kind, driven by the MAPPS map)
+
+- Added `ImageNode` (encoded PNG/JPEG/GIF bytes + alt text): the web driver ships it as a `data:` URI (MIME-sniffed, alt-escaped; the app driver’s CSP now allows `img-src data:`), the desktop driver decodes once per content hash into the existing `ImageView`/`DrawImage` pipeline (a 60fps rebuild must not re-decode), and the GLES presenter gained the missing `DrawImage` path — textured quads with a content-hash texture cache so the per-frame byte resend uploads once per distinct image. Verified end-to-end by the MAPPS route-overview map in the browser and on the Android emulator; the Windows presenter already rendered `DrawImage`.
+- Dogfood finding: the default web CSP (`default-src 'self'`) silently blocked data-URI images (valid PNG, `naturalWidth 0`); the app driver now sends an explicit policy with `img-src 'self' data:`.
+
 ## 2026-07-18 (first real downstream app: MAPPS client)
 
 - The MAPPS repository now ships a first-party POEM client (`Mapps/client`) — the first real application on the framework, verified on all three targets against its live engine. Two dogfood findings landed here: the Android manifest template now requests `INTERNET` permission (no example had ever made a network call, so its absence was invisible until a real app dialed out — `dial tcp: operation not permitted`), and `DataTable` column truncation on phone-width layouts is tracked in `TASK.md`.

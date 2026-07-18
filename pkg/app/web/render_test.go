@@ -302,3 +302,22 @@ func TestTextAreaFieldRoundTrips(t *testing.T) {
 		t.Fatalf("badge should contribute no message; allowed = %+v", allowed)
 	}
 }
+
+func TestRenderImageEmitsDataURI(t *testing.T) {
+	// A 1x1 transparent PNG.
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R',
+		0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89,
+		0, 0, 0, 0x0d, 'I', 'D', 'A', 'T', 0x78, 0x9c, 0x62, 0, 1, 0, 0, 5, 0, 1, 0x0d, 0x0a, 0x2d, 0xb4,
+		0, 0, 0, 0, 'I', 'E', 'N', 'D', 0xae, 0x42, 0x60, 0x82}
+	node := app.Image(png, "route overview")
+	html := string(renderNode(node, rootPath))
+	for _, wanted := range []string{`src="data:image/png;base64,`, `alt="route overview"`, "trellis-image"} {
+		if !strings.Contains(html, wanted) {
+			t.Fatalf("Image missing %q: %s", wanted, html)
+		}
+	}
+	// Non-image bytes must render nothing rather than an unsniffable URI.
+	if got := string(renderNode(app.Image([]byte("plain text here"), "x"), rootPath)); got != "" {
+		t.Fatalf("non-image bytes rendered %q", got)
+	}
+}

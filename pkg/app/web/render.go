@@ -1,9 +1,11 @@
 package web
 
 import (
+	"encoding/base64"
 	"fmt"
 	"html"
 	"html/template"
+	"net/http"
 	"strings"
 
 	"github.com/mulavdm/poem/pkg/web/components"
@@ -126,6 +128,26 @@ func renderNode(node app.Node, path string) template.HTML {
 			Value:    n.Value,
 			Disabled: n.Disabled,
 		}.HTML()
+
+	case app.ImageNode:
+		// The encoded bytes ship inline as a data URI: self-contained (no
+		// asset endpoint), and the sniffed MIME keeps the browser honest.
+		if len(n.Encoded) == 0 {
+			return ""
+		}
+		mime := http.DetectContentType(n.Encoded)
+		if !strings.HasPrefix(mime, "image/") {
+			return ""
+		}
+		style := "max-width:100%"
+		if n.MaxWidth > 0 {
+			style += fmt.Sprintf(";max-width:%dpx", n.MaxWidth)
+		}
+		if n.MaxHeight > 0 {
+			style += fmt.Sprintf(";max-height:%dpx", n.MaxHeight)
+		}
+		return template.HTML(fmt.Sprintf(`<img class="trellis-image" alt="%s" style="%s" src="data:%s;base64,%s">`,
+			html.EscapeString(n.Alt), style, mime, base64.StdEncoding.EncodeToString(n.Encoded)))
 
 	case app.TableNode:
 		columns := make([]data.TableColumn, len(n.Columns))

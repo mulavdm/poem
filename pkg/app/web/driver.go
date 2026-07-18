@@ -105,7 +105,12 @@ func NewHandlerWithStore[S any](a app.App[S], title string, raw Options, backend
 	mux.HandleFunc("POST /__event", eventHandler(a))
 	mux.Handle("GET /components/static/", http.StripPrefix("/components/static/", components.AssetHandlerWithOptions(components.AssetOptions{})))
 
-	handler := middleware.Chain(mux, sessionMiddleware(store, options), middleware.RequestID(), middleware.SecurityHeaders(), middleware.LogRequests(options.Logger), middleware.Recover(options.Logger))
+	handler := middleware.Chain(mux, sessionMiddleware(store, options), middleware.RequestID(), middleware.SecurityHeadersWithOptions(middleware.SecurityOptions{
+		// ImageNode ships images as data: URIs (self-contained, no asset
+		// endpoint), so the app driver's CSP must allow them for img-src
+		// while everything else stays self-only.
+		ContentSecurityPolicy: "default-src 'self'; img-src 'self' data:; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+	}), middleware.LogRequests(options.Logger), middleware.Recover(options.Logger))
 	return handler, options, nil
 }
 

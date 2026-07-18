@@ -46,6 +46,15 @@ class RendererGLES {
         std::uint32_t count;
         bool clipEnabled;
         int clipX, clipY, clipW, clipH;
+        unsigned int imageTexture = 0; // 0 = atlas; else a DrawImage texture
+    };
+
+    // ImageEntry caches uploaded DrawImage textures by content hash: the
+    // engine re-sends image bytes every frame, and re-uploading a photo-sized
+    // RGBA buffer at 60fps would swamp the GPU bus.
+    struct ImageEntry {
+        unsigned int texture = 0;
+        int width = 0, height = 0;
     };
 
     void AppendQuad(std::vector<Vertex>& vertices, float x1, float y1, float x2, float y2,
@@ -54,6 +63,7 @@ class RendererGLES {
                     float drawType, float glow, float isGlass, float radius);
     void BuildGeometry(const protocol::RenderFrame& frame,
                        std::vector<Vertex>& vertices, std::vector<DrawRange>& ranges);
+    unsigned int UploadImageCached(const std::vector<std::uint8_t>& rgba, int width, int height);
 
     int width_ = 0;
     int height_ = 0;
@@ -67,6 +77,7 @@ class RendererGLES {
     GLint uScreen_ = -1;
     GLint uAtlas_ = -1;
     std::unordered_map<std::uint32_t, GlyphInfo> glyphs_;
+    std::unordered_map<std::uint64_t, ImageEntry> images_;
 };
 
 } // namespace poem

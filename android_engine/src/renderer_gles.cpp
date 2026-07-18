@@ -89,6 +89,10 @@ varying vec4 vRect;
 varying vec4 vMisc;
 varying vec2 vPixel;
 void main() {
+    if (vMisc.x > 1.5) {
+        gl_FragColor = texture2D(uAtlas, vUV) * vColor;
+        return;
+    }
     if (vMisc.x > 0.5) {
         vec4 sample = texture2D(uAtlas, vUV);
         gl_FragColor = vec4(vColor.rgb, vColor.a * sample.a);
@@ -219,16 +223,18 @@ void RendererGLES::BuildGeometry(const protocol::RenderFrame& frame,
     bool clipEnabled = false;
     int clipX = 0, clipY = 0, clipW = 0, clipH = 0;
 
+    unsigned int rangeImage = 0; // texture for the quad being pushed (0 = atlas)
     auto pushRange = [&](std::uint32_t start, std::uint32_t count) {
         if (!ranges.empty()) {
             auto& last = ranges.back();
             if (last.start + last.count == start && last.clipEnabled == clipEnabled &&
+                last.imageTexture == rangeImage &&
                 last.clipX == clipX && last.clipY == clipY && last.clipW == clipW && last.clipH == clipH) {
                 last.count += count;
                 return;
             }
         }
-        ranges.push_back(DrawRange{start, count, clipEnabled, clipX, clipY, clipW, clipH});
+        ranges.push_back(DrawRange{start, count, clipEnabled, clipX, clipY, clipW, clipH, rangeImage});
     };
 
     for (const auto& cmd : frame.commands) {
@@ -330,12 +336,22 @@ void RendererGLES::BuildGeometry(const protocol::RenderFrame& frame,
             }
             break;
         }
+        case protocol::DrawCommandType::DrawImage: {
+            // cmd.w/h carry the pixel dimensions, cmd.bytes the RGBA data.
+            const auto texture = UploadImageCached(cmd.bytes, cmd.w, cmd.h);
+            if (texture == 0) break;
+            rangeImage = texture;
+            // drawType 2: sample the bound image texture across the quad.
+            AppendQuad(vertices, x1, y1, x2, y2, 0, 0, 1, 1, 1, 1, 1, 1, 2.0f, 0.0f, 0.0f, 0.0f);
+            break;
+        }
         default:
-            break; // DrawImage: not yet supported on this presenter.
+            break;
         }
 
         const auto end = static_cast<std::uint32_t>(vertices.size());
         if (end > start) pushRange(start, end - start);
+        rangeImage = 0;
     }
 }
 
@@ -369,6 +385,7 @@ void RendererGLES::Render(const protocol::RenderFrame& frame) {
     for (int i = 0; i <= 4; ++i) glEnableVertexAttribArray(i);
 
     for (const auto& range : ranges) {
+        glBindTexture(GL_TEXTURE_2D, range.imageTexture != 0 ? range.imageTexture : atlasTexture_);
         if (range.clipEnabled) {
             glEnable(GL_SCISSOR_TEST);
             // Protocol clip rects are top-left origin; GL scissor is bottom-left.
@@ -379,6 +396,43 @@ void RendererGLES::Render(const protocol::RenderFrame& frame) {
         glDrawArrays(GL_TRIANGLES, static_cast<GLint>(range.start), static_cast<GLsizei>(range.count));
     }
     glDisable(GL_SCISSOR_TEST);
+}
+
+} // namespace poem
+
+namespace poem {
+
+// UploadImageCached returns a texture for the RGBA payload, uploading only on
+// first sight of this exact content (FNV-1a over the bytes). The engine
+// resends image bytes every frame; the cache turns that into one upload per
+// distinct image. Small hard cap with drop-all eviction — UI image working
+// sets are tiny, and bookkeeping an LRU would outweigh re-uploading once.
+unsigned int RendererGLES::UploadImageCached(const std::vector<std::uint8_t>& rgba, int width, int height) {
+    if (width <= 0 || height <= 0 ||
+        rgba.size() < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4) {
+        return 0;
+    }
+    std::uint64_t hash = 1469598103934665603ull;
+    for (const auto byte : rgba) {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
+    if (auto it = images_.find(hash); it != images_.end()) return it->second.texture;
+
+    if (images_.size() >= 8) {
+        for (auto& [key, entry] : images_) glDeleteTextures(1, &entry.texture);
+        images_.clear();
+    }
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    images_[hash] = ImageEntry{texture, width, height};
+    return texture;
 }
 
 } // namespace poem

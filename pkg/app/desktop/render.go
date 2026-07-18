@@ -118,6 +118,20 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 			Children:  radios,
 		}
 
+	case app.ImageNode:
+		view := &render.ImageView{CompID: path}
+		if decoded, ok := decodeImageCached(n.Encoded); ok {
+			view.ImageWidth = decoded.width
+			view.ImageHeight = decoded.height
+			view.Pixels = decoded.pixels
+		}
+		if n.MaxWidth > 0 || n.MaxHeight > 0 {
+			// An explicit rect bounds the layout; ImageView keeps the aspect
+			// ratio inside it via its contain-fit measure.
+			view.Rect = image.Rect(0, 0, n.MaxWidth, n.MaxHeight)
+		}
+		return view
+
 	case app.TableNode:
 		columns := make([]render.TableColumn, len(n.Columns))
 		for i, column := range n.Columns {

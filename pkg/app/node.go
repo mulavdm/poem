@@ -68,7 +68,8 @@ const (
 // Node is the shared declarative UI tree. Concrete kinds are TextNode,
 // ButtonNode, TextInputNode, TextAreaNode, CheckboxNode, SwitchNode,
 // SelectNode, RadioGroupNode, SliderNode, BadgeNode, ProgressBarNode,
-// TableNode, AccordionNode, TabsNode, ContainerNode, and ModalNode.
+// TableNode, AccordionNode, TabsNode, ImageNode, ContainerNode, and
+// ModalNode.
 type Node interface {
 	isNode()
 }
@@ -420,4 +421,25 @@ func (ModalNode) isNode() {}
 // Modal creates a ModalNode.
 func Modal(trigger, title string, content ...Node) ModalNode {
 	return ModalNode{Trigger: trigger, Title: title, Content: content}
+}
+
+// ImageNode renders a raster image from encoded bytes (PNG, JPEG, or GIF —
+// whatever image.Decode understands). It is display-only and fires no Msg.
+// The bytes travel as-is to the web target (a data URI) and are decoded once
+// per content change on the native targets, so a View may return the same
+// slice every frame without re-decode cost. Alt describes the image for
+// accessibility. MaxWidth/MaxHeight (logical px, optional) bound the layout;
+// the image keeps its aspect ratio inside them.
+type ImageNode struct {
+	Encoded   []byte
+	Alt       string
+	MaxWidth  int
+	MaxHeight int
+}
+
+func (ImageNode) isNode() {}
+
+// Image creates an ImageNode from encoded image bytes.
+func Image(encoded []byte, alt string) ImageNode {
+	return ImageNode{Encoded: encoded, Alt: alt}
 }

@@ -40,7 +40,7 @@ As of 2026-07-16 the former sibling projects **Trellis** (the app layer) and **G
 ## Layers
 
 - **`pkg/app`** — the public application API: `App[S]`, serializable `Msg`s, and a closed set
-  of `Node` kinds (16 today) that every target renders. Drivers: `pkg/app/desktop`,
+  of `Node` kinds (17 today) that every target renders. Drivers: `pkg/app/desktop`,
   `pkg/app/web`; Android launches through `pkg/mobile`.
 - **`pkg/render`** — the engine layer: the component/theme/layout/semantics runtime, the
   binary presenter protocol (`pkg/render/protocol`), and `render.Run`/`render.RunHosted`.
