@@ -92,3 +92,7 @@ open at that gate:
       deprecated systemWindowInset accessors under-report on MIUI/HyperOS and
       switch to the Type-based getInsets(systemBars()|displayCutout) API 30
       path if so.
+- [ ] **Narrow-screen table columns (Mapps finding, 2026-07-18)**: DataTable
+      column widths truncate long text on phone-width layouts (route
+      instructions clipped to "Drive nor..."); flex column sizing or text
+      wrap needed for small screens.

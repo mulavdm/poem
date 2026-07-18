@@ -1,5 +1,9 @@
 # OKF Bundle Update Log
 
+## 2026-07-18 (first real downstream app: MAPPS client)
+
+- The MAPPS repository now ships a first-party POEM client (`Mapps/client`) — the first real application on the framework, verified on all three targets against its live engine. Two dogfood findings landed here: the Android manifest template now requests `INTERNET` permission (no example had ever made a network call, so its absence was invisible until a real app dialed out — `dial tcp: operation not permitted`), and `DataTable` column truncation on phone-width layouts is tracked in `TASK.md`.
+
 ## 2026-07-17 (web-engine knowledge completed + layout rationale)
 
 - Ported the remaining durable web concepts the consolidation pass under-carried: [Accessibility](/concepts/web/accessibility.md), [Asset Delivery](/concepts/web/component-asset-delivery.md), and [Family Packages](/concepts/web/family-packages.md) join trusted-html under `concepts/web/` (paths and `poem-` prefixes remapped, provenance noted). Deliberately not ported: `downstream-consumption` and `compatibility`, which documented consuming GopherWeb as an external Go module — moot now that it is this repository.
