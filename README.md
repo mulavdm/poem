@@ -1,5 +1,11 @@
 # POEM
 
+## Vector cartography foundation (M9, in development)
+
+`MapViewportNode` is POEM's controlled semantic map canvas: applications provide a credential-free `MapSource`, typed style intent, stable map features, camera limits, quality/cache policy, and fallback image. State-derived `App.MapResources` providers keep endpoints and tokens in Go; web sessions access them only through the validated same-origin broker. `App.Subscriptions` adds keyed multi-message sources, and host capabilities are available only through command/subscription contexts via `PlatformServices`.
+
+`pkg/cartography` is the shared Go core for bounded MVT decoding, Web-Mercator coverage, typed-style evaluation, deterministic scene construction, bounded concave polygon tessellation with holes and multipolygon parts, stable application route/marker/POI/traffic overlays, hash-keyed retained buffers, and bounded OpenType shaping through the pinned pure-Go `go-text/typesetting` library. Its GPU-independent label stage performs deterministic priority ordering, camera-aware screen placement, bounded collision, culling, and cancellation and compiles unchanged to WASM. Accepted native labels are rasterized from exact shaped glyph IDs into deterministic bounded alpha atlases and submitted as hash-keyed textured ranges; D3D11 and GLES3 upload each atlas once and retain it until release. Native resource loading is cancellation-aware, limited to eight concurrent fetches and quality-bounded tile coverage, and backed by a snapshot-isolated decoded-tile LRU. Scene submission references unchanged hashes without resending their bytes and explicitly releases resources that leave a viewport. Protocol v4 carries generation-fenced retained map scenes and an explicit viewport-placement draw command. The Windows D3D11 and Android GLES3 presenters cache projected scene geometry in dedicated immutable/static GPU buffers, interleave it with UI draw ranges, preserve local pan/zoom preview and raster fallback ordering, and rebuild only for a new scene or placement. Hash-resource-level vertex/index GPU buffers and the WebGL2/Go-WASM worker remain active M9 gates.
+
 ## Map-first adaptive workspaces (M8)
 
 `App.Start` can publish startup state and launch one keyed command exactly once per native engine or new web session. `WorkspaceNode` now keeps a primary canvas persistent while adapting its tools: docked on expanded windows, compact overlay on medium layouts, and a draggable bottom sheet on compact touch layouts. `SectionNode`, semantic action importance/placement, interactive collections, product color overrides, and viewport size commits let applications build rich workspaces without application-owned visual metrics.
@@ -82,6 +88,7 @@ As of 2026-07-16 the former sibling projects **Trellis** (the app layer) and **G
 .
 |-- pkg/app/               # Public application API (App[S], Msg, Node) + desktop/web drivers
 |-- pkg/render/            # Engine layer: components, layout, protocol, state, engine loop
+|-- pkg/cartography/       # Shared bounded vector decode/style/scene core (Go + future WASM build)
 |-- pkg/web/               # Server-rendered HTML components + HTTP middleware
 |-- pkg/hosted/            # Shared bounded in-process engine transport
 |-- pkg/mobile/            # Android-specific c-shared bridge and logcat integration

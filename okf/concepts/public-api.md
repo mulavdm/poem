@@ -7,6 +7,14 @@ timestamp: 2026-07-10T00:00:00Z
 ---
 # Public API Surface
 
+## M9 vector-map and live-source contracts
+
+`MapViewportNode` owns a controlled `MapCamera` (center, zoom, bearing, pitch), registered `MapSource`, typed semantic `MapStyleSet`, stable feature records, quality/cache policy, load semantics, and camera/feature messages. Sources name a provider and contain no arbitrary URL or credential. `App.MapResources` derives providers from the same serialized state snapshot; native calls them directly and web uses a session-validated same-origin broker.
+
+`App.Subscriptions` derives keyed multi-message sources. Revision changes cancel and supersede the prior generation, and late emissions are rejected under the same serialized reducer lock used for commands. `App.Services` contains host capabilities that are attached only to command/subscription contexts; `ServicesFromContext` exposes location, speech, haptics, notifications, wake, preferences, and secure storage without serializing their implementations or secrets.
+
+`pkg/cartography` provides the shared bounded MVT, camera/tile-cover, typed-style, deterministic scene-buffer, concave polygon/hole/multipolygon tessellation, stable application-overlay, picking, and pinned pure-Go OpenType-shaping core. `BuildLabelCandidates` evaluates bounded typed tile rules, `PlaceLabels` performs deterministic camera-aware grid collision, and `AddLabelPlacements` rasterizes exact shaped glyph IDs into a bounded retained alpha atlas and geographic-anchor/screen-offset quads. The native runtime uses the actual laid-out map viewport—not the enclosing window—for tile cover and collision, and D3D11/GLES3 cache atlas textures by content hash. Direct GPU reuse of vertex/index resources and the Go/WASM WebGL worker remain release gates.
+
 ## M8 startup and workspace contract
 
 `App[S].Start` is an optional once-only reducer hook. Native drivers invoke it once per hosted engine lifetime; the web driver invokes it only when creating a session, never when restoring one. Immediate state is visible in the first view and its `Cmd` uses the ordinary keyed executor.

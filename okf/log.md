@@ -1,5 +1,11 @@
 # OKF Bundle Update Log
 
+## 2026-07-19 (M9 vector cartography foundation, in development)
+
+- Added the controlled `MapViewportNode`, credential-free sources, state-derived secure resource providers, keyed subscriptions, platform-service contexts, a validated web resource broker, and protocol-v4 retained scene/camera contracts.
+- Added the bounded pure-Go cartography core for MVT decoding, Web-Mercator coverage, typed style evaluation, bounded deterministic concave polygon tessellation with holes and multipolygon parts, hash-keyed scene buffers, stable route/marker/POI/traffic overlays, feature picking, pinned pure-Go OpenType shaping, deterministic camera-aware label placement, and exact-glyph alpha-atlas scene resources.
+- Added deterministic solar lighting: a pure-Go PSA solar-position algorithm (`SolarPosition`) with an injectable clock, clamped visual elevation (low-sun lift and a soft night ambient), and `BuildSceneLit` populating the protocol's sun azimuth/elevation uniforms. Wired into the desktop runtime (dynamic sun from the style, `time.Now` clock) and the WASM worker (injectable `unix_millis`); a fixed north-west key light remains the default when dynamic sun is off. Cascaded shadows, height fog, and per-quality shadow tiers remain presenter-side gates. The desktop runtime now uses laid-out map bounds, bounded provider concurrency, supersession, quality-aware coverage, strict provider validation, and a snapshot-isolated decoded-tile LRU; scene deltas suppress unchanged byte uploads and release departed resources. D3D11 and GLES3 retain generation-fenced scenes, cache projected geometry, and upload hash-keyed label atlases once for texture-aware ranges. Local drag/pinch transforms move and scale the vector scene and markers together before settled replacement. Hash-resource-level vertex/index GPU buffers and the Go/WASM WebGL worker remain explicit release gates.
+
 ## 2026-07-19 (M8: MAPPS map-first product experience)
 
 - Added once-only application startup commands, a complete adaptive workspace/section/interactive-collection contract, semantic action placement/icons, immutable product design overrides, and dimension-aware viewport commits with legacy compatibility. Web framework/design/component assets now run under a strict same-origin CSP without required inline styles or scripts.
