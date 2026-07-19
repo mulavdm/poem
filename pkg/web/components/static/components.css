@@ -1,28 +1,13 @@
-:root {
-  --poem-surface: #ffffff;
-  --poem-surface-muted: #f4f6f8;
-  --poem-text: #151922;
-  --poem-muted: #647084;
-  --poem-line: #dce2ea;
-  --poem-primary: #176b5d;
-  --poem-secondary: #3d556f;
-  --poem-danger: #b42318;
-  --poem-success: #067647;
-  --poem-warning: #b54708;
-  --poem-neutral: #49515f;
-  --poem-focus: #d98a16;
-}
-
 .poem-button {
   align-items: center;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--poem-radius-sm);
   cursor: pointer;
   display: inline-flex;
   font: inherit;
   font-weight: 700;
   justify-content: center;
-  min-height: 2.5rem;
+  min-height: var(--poem-target);
   text-decoration: none;
 }
 
@@ -47,27 +32,27 @@
 
 .poem-button--primary {
   background: var(--poem-primary);
-  color: #ffffff;
+  color: var(--poem-on-primary);
 }
 
 .poem-button--secondary {
   background: var(--poem-secondary);
-  color: #ffffff;
+  color: var(--poem-on-primary);
 }
 
 .poem-button--danger {
   background: var(--poem-danger);
-  color: #ffffff;
+  color: var(--poem-on-primary);
 }
 
 .poem-button--success {
   background: var(--poem-success);
-  color: #ffffff;
+  color: var(--poem-on-primary);
 }
 
 .poem-button--warning {
   background: var(--poem-warning);
-  color: #ffffff;
+  color: var(--poem-on-primary);
 }
 
 .poem-button--neutral {
@@ -77,7 +62,7 @@
 }
 
 .poem-badge {
-  border-radius: 999px;
+  border-radius: 100vmax;
   display: inline-flex;
   font-size: 0.78rem;
   font-weight: 700;
@@ -85,27 +70,27 @@
 }
 
 .poem-badge--primary {
-  background: #9cc9c0;
+  background: color-mix(in srgb, var(--poem-primary) 24%, var(--poem-surface));
   color: var(--poem-primary);
 }
 
 .poem-badge--secondary {
-  background: #b0bdcb;
+  background: color-mix(in srgb, var(--poem-secondary) 24%, var(--poem-surface));
   color: var(--poem-secondary);
 }
 
 .poem-badge--danger {
-  background: #f4b6b1;
+  background: color-mix(in srgb, var(--poem-danger) 24%, var(--poem-surface));
   color: var(--poem-danger);
 }
 
 .poem-badge--success {
-  background: #9dd7bd;
+  background: color-mix(in srgb, var(--poem-success) 24%, var(--poem-surface));
   color: var(--poem-success);
 }
 
 .poem-badge--warning {
-  background: #f7c681;
+  background: color-mix(in srgb, var(--poem-warning) 24%, var(--poem-surface));
   color: var(--poem-warning);
 }
 
@@ -125,7 +110,7 @@
 .poem-toast {
   background: var(--poem-surface);
   border: 1px solid var(--poem-line);
-  border-radius: 8px;
+  border-radius: var(--poem-radius-md);
 }
 
 .poem-alert {
@@ -137,27 +122,27 @@
 
 .poem-alert--primary,
 .poem-toast--primary {
-  border-color: #9cc9c0;
+  border-color: var(--poem-primary);
 }
 
 .poem-alert--secondary,
 .poem-toast--secondary {
-  border-color: #b0bdcb;
+  border-color: var(--poem-secondary);
 }
 
 .poem-alert--danger,
 .poem-toast--danger {
-  border-color: #f4b6b1;
+  border-color: var(--poem-danger);
 }
 
 .poem-alert--success,
 .poem-toast--success {
-  border-color: #9dd7bd;
+  border-color: var(--poem-success);
 }
 
 .poem-alert--warning,
 .poem-toast--warning {
-  border-color: #f7c681;
+  border-color: var(--poem-warning);
 }
 
 .poem-alert--neutral,
@@ -234,10 +219,11 @@
 .poem-textarea,
 .poem-select {
   border: 1px solid var(--poem-line);
-  border-radius: 6px;
+  border-radius: var(--poem-radius-sm);
+  background: var(--poem-surface-raised);
   color: var(--poem-text);
   font: inherit;
-  min-height: 2.5rem;
+  min-height: var(--poem-target);
   padding: 0.55rem 0.7rem;
   width: 100%;
 }
@@ -286,7 +272,7 @@
 
 .poem-switch__track {
   background: var(--poem-border);
-  border-radius: 999px;
+  border-radius: 100vmax;
   display: inline-block;
   grid-column: 1;
   grid-row: 1;
@@ -385,24 +371,24 @@
   appearance: none;
   block-size: 0.5rem;
   border: none;
-  border-radius: 999px;
+  border-radius: 100vmax;
   inline-size: 100%;
   overflow: hidden;
 }
 
 .poem-progress::-webkit-progress-bar {
   background: var(--poem-border);
-  border-radius: 999px;
+  border-radius: 100vmax;
 }
 
 .poem-progress::-webkit-progress-value {
   background: var(--poem-primary);
-  border-radius: 999px;
+  border-radius: 100vmax;
 }
 
 .poem-progress::-moz-progress-bar {
   background: var(--poem-primary);
-  border-radius: 999px;
+  border-radius: 100vmax;
 }
 
 .poem-progress:not([value]) {
@@ -430,7 +416,7 @@
 .poem-navbar {
   background: var(--poem-surface);
   border: 1px solid var(--poem-line);
-  border-radius: 8px;
+  border-radius: var(--poem-radius-md);
   padding: 0.75rem 1rem;
 }
 
@@ -466,10 +452,26 @@
   gap: 0.75rem;
 }
 
+@media (max-width: 599px) {
+  .poem-tabs { display: flex; flex-direction: column; }
+  .poem-tabs__list { order: 2; position: sticky; bottom: 0; z-index: 3; background: var(--poem-surface); padding: var(--poem-space-sm); justify-content: space-around; }
+  .poem-tabs__panel { order: 1; }
+}
+
+@media (min-width: 600px) and (max-width: 839px) {
+  .poem-tabs { grid-template-columns: max-content minmax(0, 1fr); }
+  .poem-tabs__list { flex-direction: column; align-items: stretch; }
+}
+
+@media (min-width: 840px) {
+  .poem-tabs { grid-template-columns: minmax(12rem, 20%) minmax(0, 1fr); }
+  .poem-tabs__list { flex-direction: column; align-items: stretch; }
+}
+
 .poem-tabs__tab {
   background: var(--poem-surface);
   border: 1px solid var(--poem-line);
-  border-radius: 999px;
+  border-radius: 100vmax;
   cursor: pointer;
   font: inherit;
   padding: 0.45rem 0.8rem;
@@ -477,17 +479,17 @@
 
 .poem-tabs__tab[aria-selected="true"] {
   background: var(--poem-primary);
-  color: #ffffff;
+  color: var(--poem-on-primary);
 }
 
 .poem-tabs__panel {
   border: 1px solid var(--poem-line);
-  border-radius: 8px;
+  border-radius: var(--poem-radius-md);
   padding: 1rem;
 }
 
 .poem-modal {
-  background: rgb(0 0 0 / 0.42);
+  background: var(--poem-overlay);
   inset: 0;
   padding: 2rem;
   position: fixed;
@@ -553,7 +555,7 @@
 
 .poem-pagination a {
   border: 1px solid var(--poem-line);
-  border-radius: 6px;
+  border-radius: var(--poem-radius-sm);
   padding: 0.35rem 0.6rem;
 }
 
@@ -564,12 +566,12 @@
 
 .poem-pagination [aria-current="page"] {
   background: var(--poem-primary);
-  color: #ffffff;
+  color: var(--poem-on-primary);
 }
 
 .poem-toast {
   bottom: 1rem;
-  box-shadow: 0 20px 40px rgb(0 0 0 / 0.16);
+  box-shadow: 0 var(--poem-space-lg) calc(2 * var(--poem-space-lg)) var(--poem-shadow);
   padding: 0.85rem 1rem;
   position: fixed;
   right: 1rem;
@@ -593,7 +595,7 @@
 .poem-command button {
   background: var(--poem-surface-muted);
   border: 1px solid var(--poem-line);
-  border-radius: 6px;
+  border-radius: var(--poem-radius-sm);
   cursor: pointer;
   font: inherit;
   padding: 0.5rem;

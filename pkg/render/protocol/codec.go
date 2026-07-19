@@ -340,6 +340,10 @@ func EncodeEventBatch(msg EventBatch) ([]byte, error) {
 		writeString(&body, ev.Target)
 		writeString(&body, ev.Action)
 		writeString(&body, ev.Value)
+		writeInt32(&body, ev.DeltaX)
+		writeInt32(&body, ev.DeltaY)
+		writeFloat32(&body, ev.Scale)
+		writeByte(&body, byte(ev.Phase))
 	}
 	return wrapEnvelope(MessageEventBatch, body.Bytes()), nil
 }
@@ -650,6 +654,22 @@ func DecodeEventBatch(payload []byte) (EventBatch, error) {
 		if len(text) > 1<<20 || len(target) > 1<<20 || len(action) > 1<<20 || len(value) > 1<<20 {
 			return EventBatch{}, fmt.Errorf("event string exceeds 1 MiB")
 		}
+		deltaX, err := readInt32(r)
+		if err != nil {
+			return EventBatch{}, err
+		}
+		deltaY, err := readInt32(r)
+		if err != nil {
+			return EventBatch{}, err
+		}
+		scale, err := readFloat32(r)
+		if err != nil {
+			return EventBatch{}, err
+		}
+		phase, err := readByte(r)
+		if err != nil {
+			return EventBatch{}, err
+		}
 		events = append(events, Event{
 			Type:    EventType(t),
 			X:       x,
@@ -664,6 +684,10 @@ func DecodeEventBatch(payload []byte) (EventBatch, error) {
 			Target:  target,
 			Action:  action,
 			Value:   value,
+			DeltaX:  deltaX,
+			DeltaY:  deltaY,
+			Scale:   scale,
+			Phase:   GesturePhase(phase),
 		})
 	}
 	return EventBatch{Events: events}, nil

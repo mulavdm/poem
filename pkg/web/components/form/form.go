@@ -57,6 +57,7 @@ type Input struct {
 	Placeholder string
 	Required    bool
 	Disabled    bool
+	ReadOnly    bool
 	Help        string
 	Error       string
 }
@@ -70,7 +71,7 @@ func (i Input) HTML() template.HTML {
 	if typ == "" {
 		typ = "text"
 	}
-	control := fmt.Sprintf(`<input class="poem-input" id="%s" name="%s" type="%s" value="%s" placeholder="%s"%s%s>`, markup.Attr(id), markup.Attr(i.Name), markup.Attr(typ), markup.Attr(i.Value), markup.Attr(i.Placeholder), markup.Bool("required", i.Required), markup.Bool("disabled", i.Disabled))
+	control := fmt.Sprintf(`<input class="poem-input" id="%s" name="%s" type="%s" value="%s" placeholder="%s"%s%s%s>`, markup.Attr(id), markup.Attr(i.Name), markup.Attr(typ), markup.Attr(i.Value), markup.Attr(i.Placeholder), markup.Bool("required", i.Required), markup.Bool("disabled", i.Disabled), markup.Bool("readonly", i.ReadOnly))
 	return Field{ID: id, Label: i.Label, Help: i.Help, Error: i.Error, ControlHTML: markup.Markup(control)}.HTML()
 }
 

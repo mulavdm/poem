@@ -32,6 +32,24 @@ func TestRenderSliderEmitsRangeControl(t *testing.T) {
 	}
 }
 
+func TestResponsiveRendersCompactBaselineAndCollectsBothBranches(t *testing.T) {
+	node := app.Responsive(700,
+		[]app.Node{app.Button("Compact", app.Msg{Name: "compact"})},
+		[]app.Node{app.Button("Wide", app.Msg{Name: "wide"})},
+	)
+	html := string(renderNode(node, rootPath))
+	for _, wanted := range []string{`data-poem-responsive`, `data-breakpoint="700"`, `data-poem-compact`, `data-poem-wide hidden disabled`} {
+		if !strings.Contains(html, wanted) {
+			t.Fatalf("Responsive missing %q: %s", wanted, html)
+		}
+	}
+	allowed := map[string]bool{}
+	collectMessages(node, allowed)
+	if !allowed["compact"] || !allowed["wide"] {
+		t.Fatalf("responsive messages = %#v", allowed)
+	}
+}
+
 // TestFloatPayloadRoundTrips proves the FloatPayload/Msg.Float convention is a
 // clean round trip across the string transport, including a fractional value.
 func TestFloatPayloadRoundTrips(t *testing.T) {
@@ -55,6 +73,37 @@ func TestRenderBadgeCarriesVariantClass(t *testing.T) {
 	}
 	if !strings.Contains(html, "Live") {
 		t.Fatalf("Badge text missing: %s", html)
+	}
+}
+
+func TestWorkspaceRendersSemanticLandmarks(t *testing.T) {
+	node := app.WorkspaceNode{Semantic: app.Semantic{ID: "work", Name: "Workspace", Enabled: true}, Title: "MAPPS", Subtitle: "Private", Content: []app.Node{app.Text("Map")}, Tools: []app.Node{app.SectionNode{Semantic: app.Semantic{ID: "plan", Name: "Planner", Enabled: true}, Title: "Plan", Children: []app.Node{app.Text("Search")}}}}
+	html := string(renderNode(node, rootPath))
+	for _, wanted := range []string{`class="poem-workspace"`, `<main class="poem-workspace__content">`, `<aside class="poem-workspace__tools"`, `<h1>MAPPS</h1>`, `class="poem-section"`} {
+		if !strings.Contains(html, wanted) {
+			t.Fatalf("workspace markup missing %q: %s", wanted, html)
+		}
+	}
+}
+
+func TestContainerUsesTokenClassesWithoutInlineStyle(t *testing.T) {
+	html := string(renderNode(app.Container(app.Vertical, 12, app.Text("Content")), rootPath))
+	if strings.Contains(html, `style=`) {
+		t.Fatalf("container emitted CSP-blocked inline style: %s", html)
+	}
+	for _, wanted := range []string{"trellis-gap-3", "trellis-padding-0"} {
+		if !strings.Contains(html, wanted) {
+			t.Fatalf("container missing %q: %s", wanted, html)
+		}
+	}
+}
+
+func TestViewportScriptHasResizeFallbackAndBucketAlignedThreshold(t *testing.T) {
+	script := string(imageViewportScript)
+	for _, wanted := range []string{`addEventListener("resize", scheduleResizeCommit`, `Math.abs(rect.width - renderedWidth) > 127`, `setTimeout(scheduleResizeCommit, 0)`} {
+		if !strings.Contains(script, wanted) {
+			t.Fatalf("viewport script missing %q", wanted)
+		}
 	}
 }
 

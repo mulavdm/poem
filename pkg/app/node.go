@@ -3,18 +3,42 @@
 // translate a Node tree into a real running interface.
 package app
 
-import "strconv"
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"math"
+	"strconv"
+	"strings"
+)
 
-// Msg is a named, serializable event fired by an interactive Node. It has to
-// be representable as a plain string plus an optional string payload rather
-// than a Go closure: the POEM backend can dispatch it in-process, but the web
-// backend has to carry it across an HTTP request, where a closure can't
-// travel. Non-string payloads (so far, only bool, fired by CheckboxNode) are
+// Msg is a named event fired by an interactive Node or completed Cmd. Its
+// browser-transported portion has to be representable as a plain string plus
+// an optional string payload rather than a Go closure: the POEM backend can
+// dispatch it in-process, but the web backend has to carry it across an HTTP
+// request, where a closure can't travel. Runtime-local command completions
+// may also carry Value and Err.
+// Non-string browser payloads (so far, only bool, fired by CheckboxNode) are
 // encoded as the literal strings "true"/"false" — see BoolPayload and
 // Msg.Bool.
 type Msg struct {
 	Name    string
 	Payload string
+
+	// Value and Err are runtime-local command completion data. Browser events
+	// can populate only Name and Payload; drivers set these fields after a Cmd
+	// completes inside the application process.
+	Value any
+	Err   error
+}
+
+// Cmd describes asynchronous application work. Name is both the concurrency
+// key and the name of the completion Msg. Commands with different names may
+// run concurrently; a newer command with the same name supersedes the older
+// one. The zero value performs no work.
+type Cmd struct {
+	Name string
+	Run  func(context.Context) (any, error)
 }
 
 // Bool decodes a Payload encoded by BoolPayload.
@@ -49,6 +73,141 @@ func FloatPayload(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
+// ImageTransform is the controlled transform applied by an ImageViewportNode.
+// OffsetX and OffsetY are fractions of the viewport width and height; positive
+// values move the image right and down. Scale is normalized to 1 when zero.
+type ImageTransform struct {
+	OffsetX float64 `json:"x"`
+	OffsetY float64 `json:"y"`
+	Scale   float64 `json:"scale"`
+}
+
+// ImageViewportCommit is the controlled transform plus the logical viewport
+// dimensions that produced it. Zero dimensions represent the legacy M4
+// transform-only payload.
+type ImageViewportCommit struct {
+	OffsetX float64 `json:"x"`
+	OffsetY float64 `json:"y"`
+	Scale   float64 `json:"scale"`
+	Width   int     `json:"width,omitempty"`
+	Height  int     `json:"height,omitempty"`
+}
+
+func (c ImageViewportCommit) Transform() ImageTransform {
+	return ImageTransform{OffsetX: c.OffsetX, OffsetY: c.OffsetY, Scale: c.Scale}.Normalized()
+}
+func (c ImageViewportCommit) Valid() bool {
+	t := c.Transform()
+	return t.Valid() && ((c.Width == 0 && c.Height == 0) || (c.Width >= 32 && c.Width <= 4096 && c.Height >= 32 && c.Height <= 4096))
+}
+
+func ImageViewportCommitPayload(c ImageViewportCommit) string {
+	c.Scale = c.Transform().Scale
+	if !c.Valid() {
+		return ""
+	}
+	encoded, err := json.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+func (m Msg) ViewportCommit() (ImageViewportCommit, bool) {
+	var commit ImageViewportCommit
+	decoder := json.NewDecoder(strings.NewReader(m.Payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&commit); err != nil {
+		return ImageViewportCommit{}, false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return ImageViewportCommit{}, false
+	}
+	commit.Scale = commit.Transform().Scale
+	return commit, commit.Valid()
+}
+
+// Normalized returns t with the zero-value scale interpreted as identity.
+func (t ImageTransform) Normalized() ImageTransform {
+	if t.Scale == 0 {
+		t.Scale = 1
+	}
+	return t
+}
+
+// Valid reports whether t is safe to accept from an untrusted browser event.
+func (t ImageTransform) Valid() bool {
+	t = t.Normalized()
+	return !math.IsNaN(t.OffsetX) && !math.IsInf(t.OffsetX, 0) &&
+		!math.IsNaN(t.OffsetY) && !math.IsInf(t.OffsetY, 0) &&
+		!math.IsNaN(t.Scale) && !math.IsInf(t.Scale, 0) &&
+		math.Abs(t.OffsetX) <= 4 && math.Abs(t.OffsetY) <= 4 &&
+		t.Scale >= 0.125 && t.Scale <= 64
+}
+
+// ImageTransformPayload encodes a transform for Msg.Payload.
+func ImageTransformPayload(t ImageTransform) string {
+	t = t.Normalized()
+	if !t.Valid() {
+		return ""
+	}
+	encoded, err := json.Marshal(t)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+// ImageTransform decodes a strictly validated ImageViewportNode payload.
+func (m Msg) ImageTransform() (ImageTransform, bool) {
+	commit, ok := m.ViewportCommit()
+	if !ok {
+		return ImageTransform{}, false
+	}
+	return commit.Transform(), true
+}
+
+// ViewportPoint is a normalized point inside an ImageViewportNode. X and Y
+// range from zero at the top-left edge to one at the bottom-right edge.
+type ViewportPoint struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// Valid reports whether p can safely originate from an untrusted client.
+func (p ViewportPoint) Valid() bool {
+	return !math.IsNaN(p.X) && !math.IsInf(p.X, 0) && !math.IsNaN(p.Y) && !math.IsInf(p.Y, 0) &&
+		p.X >= 0 && p.X <= 1 && p.Y >= 0 && p.Y <= 1
+}
+
+// ViewportPointPayload strictly encodes p for Msg.Payload.
+func ViewportPointPayload(p ViewportPoint) string {
+	if !p.Valid() {
+		return ""
+	}
+	encoded, err := json.Marshal(p)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+// ViewportPoint decodes a strictly validated ImageViewportNode activation.
+func (m Msg) ViewportPoint() (ViewportPoint, bool) {
+	var point ViewportPoint
+	decoder := json.NewDecoder(strings.NewReader(m.Payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&point); err != nil {
+		return ViewportPoint{}, false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return ViewportPoint{}, false
+	}
+	return point, point.Valid()
+}
+
 // Variant selects a Node's semantic visual treatment. Its members are the
 // intersection POEM (theme.Variant) and GopherWeb (components.Variant) already
 // converged on independently; a member either backend lacked (POEM's Subtle)
@@ -68,7 +227,8 @@ const (
 // Node is the shared declarative UI tree. Concrete kinds are TextNode,
 // ButtonNode, TextInputNode, TextAreaNode, CheckboxNode, SwitchNode,
 // SelectNode, RadioGroupNode, SliderNode, BadgeNode, ProgressBarNode,
-// TableNode, AccordionNode, TabsNode, ImageNode, ContainerNode, and
+// TableNode, AccordionNode, TabsNode, ImageNode, ImageViewportNode,
+// ResponsiveNode, ContainerNode, and
 // ModalNode.
 type Node interface {
 	isNode()
@@ -88,9 +248,12 @@ func Text(value string) TextNode {
 
 // ButtonNode renders an activatable control that fires OnClick when pressed.
 type ButtonNode struct {
-	Label    string
-	OnClick  Msg
-	Disabled bool
+	Label     string
+	OnClick   Msg
+	Disabled  bool
+	Variant   Variant
+	Icon      IconID
+	Placement ActionPlacement
 }
 
 func (ButtonNode) isNode() {}
@@ -103,8 +266,13 @@ func Button(label string, onClick Msg) ButtonNode {
 // TextInputNode renders an editable single-line text field that fires
 // OnChange when its value changes.
 type TextInputNode struct {
+	Label       string
 	Value       string
 	Placeholder string
+	Description string
+	Error       string
+	Disabled    bool
+	ReadOnly    bool
 	OnChange    Msg
 }
 
@@ -120,8 +288,11 @@ func TextInput(value, placeholder string, onChange Msg) TextInputNode {
 // TextArea and GopherWeb's form.Textarea both back it — and posts its value
 // the same valueField way over the web backend.
 type TextAreaNode struct {
+	Label       string
 	Value       string
 	Placeholder string
+	Description string
+	Error       string
 	Rows        int
 	Disabled    bool
 	OnChange    Msg
@@ -141,6 +312,7 @@ func TextArea(value, placeholder string, onChange Msg) TextAreaNode {
 // (FloatPayload / Msg.Float), just as CheckboxNode introduced BoolPayload for
 // bool. Step, when positive, constrains the value to multiples of it.
 type SliderNode struct {
+	Label    string
 	Min      float64
 	Max      float64
 	Step     float64
@@ -240,6 +412,7 @@ type Option struct {
 // Select does this itself, keyed by the node's stable ID; a native HTML
 // <select> does it natively), so the shared IR doesn't need to represent it.
 type SelectNode struct {
+	Label       string
 	Options     []Option
 	Value       string
 	Placeholder string
@@ -263,6 +436,7 @@ func Select(options []Option, value string, onChange Msg) SelectNode {
 // enforced the same way SelectNode's is: the reducer sets Value and the tree
 // is rebuilt, so exactly the matching Option renders selected.
 type RadioGroupNode struct {
+	Label    string
 	Options  []Option
 	Value    string
 	Disabled bool
@@ -442,4 +616,70 @@ func (ImageNode) isNode() {}
 // Image creates an ImageNode from encoded image bytes.
 func Image(encoded []byte, alt string) ImageNode {
 	return ImageNode{Encoded: encoded, Alt: alt}
+}
+
+// ImageViewportNode renders an ImageNode inside an interactive, clipped
+// viewport. Transform is controlled application state. Pointer drag, wheel,
+// and pinch gestures update it through OnChange; MinScale and MaxScale default
+// to 0.5 and 8. Disabled preserves the current view while suppressing input.
+type ImageViewportNode struct {
+	Image     ImageNode
+	Transform ImageTransform
+	MinScale  float64
+	MaxScale  float64
+	Disabled  bool
+	OnChange  Msg
+	// OnActivate fires for a short click or tap on the viewport background.
+	OnActivate Msg
+	// Markers are accessible annotations anchored to normalized image points.
+	Markers []ImageMarker
+}
+
+func (ImageViewportNode) isNode() {}
+
+// ImageViewport creates an interactive viewport for image.
+func ImageViewport(image ImageNode, onChange Msg) ImageViewportNode {
+	return ImageViewportNode{Image: image, MinScale: 0.5, MaxScale: 8, OnChange: onChange}
+}
+
+// ResponsiveNode selects one of two node groups from the available viewport
+// width. Compact is the no-JavaScript web baseline.
+type ResponsiveNode struct {
+	// Breakpoint is the maximum logical-pixel width that uses Compact.
+	Breakpoint int
+	// Compact contains the narrow layout.
+	Compact []Node
+	// Wide contains the layout used above Breakpoint.
+	Wide []Node
+}
+
+func (ResponsiveNode) isNode() {}
+
+// Responsive creates an adaptive node group.
+func Responsive(breakpoint int, compact, wide []Node) ResponsiveNode {
+	if breakpoint <= 0 {
+		breakpoint = 600
+	}
+	return ResponsiveNode{Breakpoint: breakpoint, Compact: compact, Wide: wide}
+}
+
+// ImageMarker is an accessible annotation anchored to normalized image
+// coordinates. Marker IDs must be stable within the current View tree.
+type ImageMarker struct {
+	// ID is stable and unique within this viewport's current marker set.
+	ID string
+	// X is the normalized horizontal image coordinate.
+	X float64
+	// Y is the normalized vertical image coordinate.
+	Y float64
+	// Label is the marker's accessible name and optional selected caption.
+	Label string
+	// Variant selects the marker color.
+	Variant Variant
+	// Selected emphasizes the marker and exposes its selected semantic state.
+	Selected bool
+	// Disabled suppresses pointer and semantic activation.
+	Disabled bool
+	// OnActivate fires with the marker ID in Msg.Payload.
+	OnActivate Msg
 }

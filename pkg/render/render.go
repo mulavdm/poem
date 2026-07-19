@@ -142,6 +142,22 @@ type Paragraph = components.Paragraph
 type TextArea = components.TextArea
 type Modal = components.Modal
 type ImageView = components.ImageView
+type ImageViewport = components.ImageViewport
+type ImageTransform = components.ImageTransform
+type ImageMarker = components.ImageMarker
+type ImageMarkerVariant = components.ImageMarkerVariant
+type Responsive = components.Responsive
+type Workspace = components.Workspace
+
+const (
+	ImageMarkerNeutral   = components.ImageMarkerNeutral
+	ImageMarkerPrimary   = components.ImageMarkerPrimary
+	ImageMarkerSecondary = components.ImageMarkerSecondary
+	ImageMarkerDanger    = components.ImageMarkerDanger
+	ImageMarkerSuccess   = components.ImageMarkerSuccess
+	ImageMarkerWarning   = components.ImageMarkerWarning
+)
+
 type LabeledBox = components.LabeledBox
 type Checkbox = components.Checkbox
 type Switch = components.Switch

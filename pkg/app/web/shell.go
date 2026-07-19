@@ -26,16 +26,15 @@ const pageShell = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{{if .Pending}}<meta http-equiv="refresh" content="1">{{end}}
 <title>{{.Title}}</title>
 <link rel="stylesheet" href="/components/static/components.css">
+<link rel="stylesheet" href="/__poem/design.css">
+<link rel="stylesheet" href="/__poem/app.css">
 <script src="/components/static/components.js" defer></script>
-<style>
-  body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; }
-  .trellis-container { display: flex; }
-  .trellis-container--vertical { flex-direction: column; }
-  .trellis-container--horizontal { flex-direction: row; align-items: center; }
-  .trellis-text { margin: 0; }
-</style>
+<script src="/__poem/image-viewport.js" defer></script>
+<script src="/__poem/responsive.js" defer></script>
+<script src="/__poem/workspace.js" defer></script>
 </head>
 <body>
 <form method="post" action="/__event">
@@ -49,12 +48,13 @@ const pageShell = `<!doctype html>
 var shellTemplate = template.Must(template.New("shell").Parse(pageShell))
 
 type shellData struct {
-	Title string
-	CSRF  string
-	Body  template.HTML
+	Title   string
+	CSRF    string
+	Body    template.HTML
+	Pending bool
 }
 
 // renderShell wraps body in Trellis's document shell and writes it to w.
-func renderShell(w io.Writer, title, csrf string, body template.HTML) error {
-	return shellTemplate.Execute(w, shellData{Title: title, CSRF: csrf, Body: body})
+func renderShell(w io.Writer, title, csrf string, body template.HTML, pending bool) error {
+	return shellTemplate.Execute(w, shellData{Title: title, CSRF: csrf, Body: body, Pending: pending})
 }

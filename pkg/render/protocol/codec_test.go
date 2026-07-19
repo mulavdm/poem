@@ -98,6 +98,24 @@ func TestCompositionEventRoundTrip(t *testing.T) {
 	}
 }
 
+func TestGestureEventRoundTrip(t *testing.T) {
+	want := EventBatch{Events: []Event{
+		{Type: EventTypePanGesture, X: 10, Y: 20, DeltaX: -3, DeltaY: 7, Phase: GesturePhaseUpdate},
+		{Type: EventTypePinchGesture, X: 30, Y: 40, DeltaX: 2, DeltaY: -1, Scale: 1.25, Phase: GesturePhaseEnd},
+	}}
+	encoded, err := EncodeEventBatch(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeEventBatch(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("gesture events=%#v want=%#v", got, want)
+	}
+}
+
 func TestSemanticActionEventRoundTrip(t *testing.T) {
 	want := EventBatch{Events: []Event{{Type: EventTypeSemanticAction, Target: "editor/title", Action: "set-value", Value: "日本語"}}}
 	encoded, err := EncodeEventBatch(want)

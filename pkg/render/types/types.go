@@ -6,6 +6,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/mulavdm/poem/pkg/design"
 	"github.com/mulavdm/poem/pkg/render/events"
 	"github.com/mulavdm/poem/pkg/render/platform"
 	"github.com/mulavdm/poem/pkg/render/semantics"
@@ -142,6 +143,8 @@ type ApplicationState struct {
 	ReducedMotion         bool
 	ShowDiagnostics       bool
 	LegacyComponentStyles bool
+	DesignSystem          *design.System
+	DesignEnvironment     design.Environment
 	Overlays              *OverlayManager
 	TransientState        *renderstate.Store
 }
@@ -551,6 +554,28 @@ func MeasureContent(comp Component, avail image.Point, state *ApplicationState) 
 type ScrollableComponent interface {
 	Component
 	OnMouseWheel(pt image.Point, delta int, state *ApplicationState) bool
+}
+
+// GesturePhase identifies the lifecycle position of a touch gesture.
+type GesturePhase byte
+
+const (
+	GestureBegin GesturePhase = iota
+	GestureUpdate
+	GestureEnd
+	GestureCancel
+)
+
+// PannableComponent consumes incremental two-axis touch-pan movement.
+type PannableComponent interface {
+	Component
+	OnPanGesture(pt, delta image.Point, phase GesturePhase, state *ApplicationState) bool
+}
+
+// PinchableComponent consumes incremental focal-point pinch scaling.
+type PinchableComponent interface {
+	Component
+	OnPinchGesture(pt, delta image.Point, scale float64, phase GesturePhase, state *ApplicationState) bool
 }
 
 var (

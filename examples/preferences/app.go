@@ -39,8 +39,11 @@ var planOptions = []app.Option{
 // and hand it to their respective backend's Run.
 var App = app.App[State]{
 	Init: State{Subscribed: false, Theme: "system", Plan: "free", Volume: 3},
+	Commands: func(State) []app.Command {
+		return []app.Command{{ID: "save", Label: "Save preferences", Invoke: app.Msg{Name: "save"}, Enabled: true, Visible: true}}
+	},
 	View: view,
-	Update: func(state State, msg app.Msg) State {
+	Update: func(state State, msg app.Msg) (State, app.Cmd) {
 		switch msg.Name {
 		case "subscribed":
 			state.Subscribed = msg.Bool()
@@ -59,7 +62,7 @@ var App = app.App[State]{
 		case "tab":
 			state.Tab = msg.Payload
 		}
-		return state
+		return state, app.Cmd{}
 	},
 }
 
@@ -70,7 +73,7 @@ func view(state State) app.Node {
 	// changed. POEM's own Checkbox/Select fire OnChange immediately on
 	// interaction regardless — Save is a web-transport necessity here, not a
 	// POEM one, and this view is intentionally identical for both backends.
-	return app.Container(app.Vertical, 12,
+	return app.FormNode{Semantic: app.Semantic{ID: "preferences-form", Name: "Preferences", Enabled: true}, Children: []app.Node{
 		app.Checkbox("Subscribe to updates", state.Subscribed, app.Msg{Name: "subscribed"}),
 		app.Switch("Compact layout", state.Compact, app.Msg{Name: "compact"}),
 		app.Text("Theme"),
@@ -91,7 +94,7 @@ func view(state State) app.Node {
 			}},
 		),
 		app.Button("Save", app.Msg{Name: "save"}),
-		app.Container(app.Horizontal, 8,
+		app.Container(app.Horizontal, int(app.SpaceRelated),
 			app.Text("Status:"),
 			app.Badge(subscriptionStatus(state.Subscribed), subscriptionVariant(state.Subscribed)),
 		),
@@ -115,7 +118,7 @@ func view(state State) app.Node {
 				{Cells: map[string]string{"setting": "Beta", "value": boolText(state.Beta)}},
 			},
 		),
-	)
+	}}
 }
 
 func subscriptionStatus(subscribed bool) string {

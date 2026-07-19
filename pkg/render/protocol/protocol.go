@@ -2,7 +2,7 @@ package protocol
 
 const (
 	Magic   = "POEM"
-	Version = uint16(2)
+	Version = uint16(3)
 )
 
 type MessageType uint16
@@ -60,6 +60,18 @@ const (
 	EventTypeCompositionUpdate
 	EventTypeCompositionEnd
 	EventTypeSemanticAction
+	EventTypePanGesture
+	EventTypePinchGesture
+	EventTypeCapabilities
+)
+
+type GesturePhase byte
+
+const (
+	GesturePhaseBegin GesturePhase = iota
+	GesturePhaseUpdate
+	GesturePhaseEnd
+	GesturePhaseCancel
 )
 
 type CharInfo struct {
@@ -185,6 +197,10 @@ type Event struct {
 	Target  string
 	Action  string
 	Value   string
+	DeltaX  int32
+	DeltaY  int32
+	Scale   float32
+	Phase   GesturePhase
 }
 
 type EventBatch struct {

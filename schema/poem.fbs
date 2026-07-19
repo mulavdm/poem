@@ -92,7 +92,10 @@ enum EventType : byte {
   MouseWheel = 5,
   KeyDown = 6,
   KeyUp = 7,
-  KeyChar = 8
+  KeyChar = 8,
+  PanGesture = 13,
+  PinchGesture = 14,
+  Capabilities = 15
 }
 
 table Event {
@@ -105,6 +108,10 @@ table Event {
   char: uint;  // Unicode character codepoint
   width: int;  // New window width
   height: int; // New window height
+  delta_x: int;
+  delta_y: int;
+  scale: float = 1.0;
+  phase: ubyte;
 }
 
 table EventBatch {
