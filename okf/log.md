@@ -1,5 +1,9 @@
 # OKF Bundle Update Log
 
+## 2026-07-19 (M9 quality governor)
+
+- Added `app.QualityGovernor`: resolves `MapQualityAuto` from a GPU-capability ceiling (`app.QualityCeiling`) and an EMA of measured frame time with dwell hysteresis, stepping one tier at a time and biasing toward downgrade before instability. Explicit tiers are honored but capped by the ceiling. Tested. Wiring it to a presenter frame-time feedback signal (a field on the capability channel) and to the runtime's quality-aware coverage/label/terrain limits remains a follow-up; shadow-cascade and height-fog shaders remain presenter-side gates.
+
 ## 2026-07-19 (M9 vector cartography foundation, in development)
 
 - Added the controlled `MapViewportNode`, credential-free sources, state-derived secure resource providers, keyed subscriptions, platform-service contexts, a validated web resource broker, and protocol-v4 retained scene/camera contracts.
