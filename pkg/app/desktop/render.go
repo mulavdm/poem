@@ -5,6 +5,7 @@ package desktop
 import (
 	"fmt"
 	"image"
+	"math"
 
 	"github.com/mulavdm/poem/pkg/render"
 
@@ -214,6 +215,61 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 					markerMsg.Payload = id
 					dispatch(markerMsg)
 				}
+			}
+		}
+		return view
+
+	case app.MapViewportNode:
+		if !n.Valid() {
+			return render.NewLabel(path+"/invalid", "Map unavailable")
+		}
+		view := &render.ImageViewport{CompID: path, Alt: n.Semantic.Name, MinScale: 0.5, MaxScale: 8, Disabled: !n.Semantic.Enabled, MapViewportID: n.Semantic.ID}
+		if decoded, ok := decodeImageCached(n.Fallback.Encoded); ok {
+			view.ImageWidth, view.ImageHeight, view.Pixels = decoded.width, decoded.height, decoded.pixels
+		}
+		if n.Fallback.MaxWidth > 0 || n.Fallback.MaxHeight > 0 {
+			view.Rect = image.Rect(0, 0, n.Fallback.MaxWidth, n.Fallback.MaxHeight)
+		}
+		if n.OnCameraChange.Name != "" {
+			msg := n.OnCameraChange
+			camera := n.Camera.Normalized()
+			view.OnChange = func(transform render.ImageTransform, _ *render.ApplicationState) {
+				next := camera
+				next.Zoom = math.Max(n.MinZoom, math.Min(n.MaxZoom, camera.Zoom+math.Log2(transform.Scale)))
+				world := math.Exp2(camera.Zoom)
+				next.Longitude = math.Max(-180, math.Min(180, camera.Longitude-transform.OffsetX*360/world))
+				next.Latitude = math.Max(-85.05112878, math.Min(85.05112878, camera.Latitude+transform.OffsetY*170/world))
+				dispatch(app.Msg{Name: msg.Name, Payload: app.MapCameraPayload(next)})
+			}
+		}
+		bounds := n.Source.Bounds
+		featureMessages := make(map[string]app.Msg)
+		if bounds.Valid() {
+			for _, feature := range n.Features {
+				if !feature.Valid() || feature.Geometry != app.MapGeometryPoint {
+					continue
+				}
+				position := feature.Positions[0]
+				x := (position.Longitude - bounds.West) / (bounds.East - bounds.West)
+				y := (bounds.North - position.Latitude) / (bounds.North - bounds.South)
+				if x < 0 || x > 1 || y < 0 || y > 1 {
+					continue
+				}
+				view.Markers = append(view.Markers, render.ImageMarker{ID: feature.ID, Label: feature.Name, X: x, Y: y, Selected: feature.Selected, Disabled: feature.Disabled})
+				msg := feature.OnActivate
+				if msg.Name == "" {
+					msg = n.OnFeature
+				}
+				if msg.Name != "" {
+					featureMessages[feature.ID] = msg
+				}
+			}
+		}
+		if len(featureMessages) > 0 {
+			view.OnMarker = func(id string, _ *render.ApplicationState) {
+				msg := featureMessages[id]
+				msg.Payload = id
+				dispatch(msg)
 			}
 		}
 		return view

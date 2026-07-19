@@ -828,6 +828,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                         app.hasFrame = true;
                     }
                     if (app.hwnd) PostMessageW(app.hwnd, WM_POEM_FRAME, 0, 0);
+                } else if (env.type == poem::protocol::MessageType::MapSceneDelta) {
+                    auto scene = poem::protocol::DecodeMapSceneDelta(env.body);
+                    {
+                        std::lock_guard<std::mutex> lock(app.frameMutex);
+                        app.renderer.ApplyMapScene(scene);
+                    }
+                    if (app.hwnd) PostMessageW(app.hwnd, WM_POEM_FRAME, 0, 0);
                 } else if (env.type == poem::protocol::MessageType::PlaySound) {
                     auto sound = poem::protocol::DecodePlaySound(env.body);
                     app.audio.Play(sound.type);

@@ -59,13 +59,16 @@ type ImageViewport struct {
 	ImageWidth  int
 	ImageHeight int
 	Pixels      []byte
-	BGColor     color.RGBA
-	Transform   ImageTransform
-	MinScale    float64
-	MaxScale    float64
-	Disabled    bool
-	Alt         string
-	OnChange    func(ImageTransform, *types.ApplicationState)
+	// MapViewportID replaces the ordinary image draw with a retained map-scene
+	// placeholder. Pixels remain the missing-scene fallback.
+	MapViewportID string
+	BGColor       color.RGBA
+	Transform     ImageTransform
+	MinScale      float64
+	MaxScale      float64
+	Disabled      bool
+	Alt           string
+	OnChange      func(ImageTransform, *types.ApplicationState)
 	// OnActivate receives normalized viewport coordinates for a short
 	// background click or tap.
 	OnActivate func(float64, float64, *types.ApplicationState)
@@ -79,6 +82,12 @@ type ImageViewport struct {
 	dragStart     image.Point
 	start         ImageTransform
 	pressedMarker int
+}
+
+// MapViewportPlacement exposes the laid-out retained-map canvas to the native
+// resource runtime without coupling it to this concrete component type.
+func (i *ImageViewport) MapViewportPlacement() (string, image.Rectangle) {
+	return i.MapViewportID, i.Rect
 }
 
 func (i *ImageViewport) ID() string                    { return i.CompID }
@@ -126,22 +135,42 @@ func (i *ImageViewport) Draw(p types.Painter, _ *types.ApplicationState) {
 	if i.BGColor.A != 0 {
 		p.FillRect(i.Rect, i.BGColor)
 	}
+	t := i.normalized()
+	dest := i.transformedRect(t)
+	if i.MapViewportID != "" {
+		if mapPainter, ok := p.(interface {
+			DrawMapScene(image.Rectangle, string, int, int, []byte, float64)
+		}); ok {
+			p.PushClip(i.Rect)
+			mapPainter.DrawMapScene(dest, i.MapViewportID, i.ImageWidth, i.ImageHeight, i.Pixels, t.Scale)
+			for index := range i.Markers {
+				i.drawMarker(p, index, t)
+			}
+			p.PopClip()
+			return
+		}
+	}
 	if len(i.Pixels) == 0 || i.ImageWidth <= 0 || i.ImageHeight <= 0 {
 		return
 	}
-	t := i.normalized()
-	base := containRect(i.Rect, i.ImageWidth, i.ImageHeight)
-	w := int(math.Round(float64(base.Dx()) * t.Scale))
-	h := int(math.Round(float64(base.Dy()) * t.Scale))
-	cx := i.Rect.Min.X + i.Rect.Dx()/2 + int(math.Round(t.OffsetX*float64(i.Rect.Dx())))
-	cy := i.Rect.Min.Y + i.Rect.Dy()/2 + int(math.Round(t.OffsetY*float64(i.Rect.Dy())))
-	dest := image.Rect(cx-w/2, cy-h/2, cx+(w-w/2), cy+(h-h/2))
 	p.PushClip(i.Rect)
 	p.DrawImage(dest, i.ImageWidth, i.ImageHeight, i.Pixels)
 	for index := range i.Markers {
 		i.drawMarker(p, index, t)
 	}
 	p.PopClip()
+}
+
+func (i *ImageViewport) transformedRect(transform ImageTransform) image.Rectangle {
+	base := i.Rect
+	if i.ImageWidth > 0 && i.ImageHeight > 0 {
+		base = containRect(i.Rect, i.ImageWidth, i.ImageHeight)
+	}
+	w := int(math.Round(float64(base.Dx()) * transform.Scale))
+	h := int(math.Round(float64(base.Dy()) * transform.Scale))
+	cx := i.Rect.Min.X + i.Rect.Dx()/2 + int(math.Round(transform.OffsetX*float64(i.Rect.Dx())))
+	cy := i.Rect.Min.Y + i.Rect.Dy()/2 + int(math.Round(transform.OffsetY*float64(i.Rect.Dy())))
+	return image.Rect(cx-w/2, cy-h/2, cx+(w-w/2), cy+(h-h/2))
 }
 
 func (i *ImageViewport) HitTest(pt image.Point) string {

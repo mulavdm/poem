@@ -2,12 +2,20 @@
 
 #include <android/log.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <string>
+#include <unordered_set>
 
 #define RLOGE(...) __android_log_print(ANDROID_LOG_ERROR, "poem-gles", __VA_ARGS__)
 
 namespace poem {
+
+namespace {
+std::string MapHashKey(const std::array<std::uint8_t, 32>& hash) {
+    return std::string(reinterpret_cast<const char*>(hash.data()), hash.size());
+}
+}
 
 namespace {
 
@@ -159,6 +167,12 @@ bool RendererGLES::Init(int width, int height, float scale) {
     uInset_ = glGetUniformLocation(program_, "uInset");
 
     glGenBuffers(1, &vbo_);
+	for (auto& entry : mapScenes_) {
+		entry.second.vertexBuffer = 0;
+		entry.second.vertexCount = 0;
+		entry.second.textures.clear();
+		entry.second.geometryDirty = true;
+	}
     glGenTextures(1, &atlasTexture_);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -196,6 +210,126 @@ void RendererGLES::UploadAtlas(const protocol::InitEngine& init) {
         glyphs_[static_cast<std::uint32_t>(ch.r)] =
             GlyphInfo{ch.u1, ch.v1, ch.u2, ch.v2, ch.width, ch.height, ch.advance};
     }
+}
+
+void RendererGLES::ApplyMapScene(const protocol::MapSceneDelta& scene) {
+    auto& retained = mapScenes_[scene.viewportId];
+    if (scene.generation <= retained.generation) return;
+    for (const auto& resource : scene.resources) {
+        const auto key = MapHashKey(resource.hash);
+        if (resource.operation == protocol::MapResourceOperation::Release) {
+			retained.resources.erase(key);
+			const auto texture = retained.textures.find(key);
+			if (texture != retained.textures.end()) { glDeleteTextures(1, &texture->second); retained.textures.erase(texture); }
+		} else {
+			retained.resources[key] = resource;
+			const auto texture = retained.textures.find(key);
+			if (texture != retained.textures.end()) { glDeleteTextures(1, &texture->second); retained.textures.erase(texture); }
+		}
+    }
+    retained.generation = scene.generation;
+    retained.camera = scene.camera;
+    retained.draws = scene.draws;
+	retained.geometryDirty = true;
+	std::unordered_set<std::string> referenced;
+	for (const auto& draw : retained.draws) {
+		referenced.insert(MapHashKey(draw.vertexHash));
+		referenced.insert(MapHashKey(draw.indexHash));
+		referenced.insert(MapHashKey(draw.textureHash));
+	}
+	for (auto resource = retained.resources.begin(); resource != retained.resources.end();) {
+		if (referenced.find(resource->first) == referenced.end()) {
+			const auto texture = retained.textures.find(resource->first);
+			if (texture != retained.textures.end()) { glDeleteTextures(1, &texture->second); retained.textures.erase(texture); }
+			resource = retained.resources.erase(resource);
+		}
+		else ++resource;
+	}
+}
+
+bool RendererGLES::EnsureMapGeometryBuffer(const std::string& viewportId, float left, float top, float right, float bottom, float previewScale) {
+	auto found = mapScenes_.find(viewportId);
+	if (found == mapScenes_.end() || found->second.draws.empty()) return false;
+	auto& scene = found->second;
+	if (!scene.geometryDirty && scene.vertexBuffer != 0 && scene.vertexCount > 0 && scene.left == left && scene.top == top && scene.right == right && scene.bottom == bottom && scene.previewScale == previewScale) return true;
+	std::vector<Vertex> vertices;
+	std::vector<MapGeometryRange> ranges;
+	AppendMapGeometry(vertices, ranges, viewportId, left, top, right, bottom, previewScale);
+	if (vertices.empty()) {
+		scene.vertexCount = 0;
+		scene.geometryDirty = false;
+		return false;
+	}
+	if (scene.vertexBuffer == 0) glGenBuffers(1, &scene.vertexBuffer);
+	glBindBuffer(GL_ARRAY_BUFFER, scene.vertexBuffer);
+	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)), vertices.data(), GL_STATIC_DRAW);
+	scene.vertexCount = static_cast<std::uint32_t>(vertices.size());
+	scene.geometryRanges = std::move(ranges);
+	scene.left = left; scene.top = top; scene.right = right; scene.bottom = bottom;
+	scene.previewScale = previewScale;
+	scene.geometryDirty = false;
+	return true;
+}
+
+void RendererGLES::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<MapGeometryRange>& ranges, const std::string& viewportId, float left, float top, float right, float bottom, float previewScale) {
+    struct MapVertex { float x, y, z, width, r, g, b, a, u, v, offsetX, offsetY; };
+    auto readVertex = [](const protocol::MapSceneResource& resource, std::uint32_t index, MapVertex& out) {
+        if (resource.stride < 28 || static_cast<std::uint64_t>(index + 1) * resource.stride > resource.bytes.size()) return false;
+        const auto* data = resource.bytes.data() + static_cast<std::size_t>(index) * resource.stride;
+        std::memcpy(&out.x, data, 4); std::memcpy(&out.y, data + 4, 4); std::memcpy(&out.z, data + 8, 4); std::memcpy(&out.width, data + 16, 4);
+        out.r = data[12] / 255.0f; out.g = data[13] / 255.0f; out.b = data[14] / 255.0f; out.a = data[15] / 255.0f;
+		if (resource.stride >= 44) { std::memcpy(&out.u, data + 28, 4); std::memcpy(&out.v, data + 32, 4); std::memcpy(&out.offsetX, data + 36, 4); std::memcpy(&out.offsetY, data + 40, 4); }
+        return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z) && std::isfinite(out.width);
+    };
+    auto solid = [](float x, float y, const MapVertex& source) { return Vertex{x, y, 0, 0, source.r, source.g, source.b, source.a, x, y, 1, 1, 0, 0, 0, 0}; };
+    for (const auto& entry : mapScenes_) {
+        if (entry.first != viewportId) continue;
+        const auto& scene = entry.second; if (scene.draws.empty()) continue;
+        const double latitude = std::max(-85.05112878, std::min(85.05112878, scene.camera.latitude));
+        const double centerX = (scene.camera.longitude + 180.0) / 360.0;
+        const double latSin = std::sin(latitude * M_PI / 180.0);
+        const double centerY = .5 - std::log((1.0 + latSin) / (1.0 - latSin)) / (4.0 * M_PI);
+		const double worldPixels = 512.0 * std::pow(2.0, scene.camera.zoom) * std::max(.01f, previewScale);
+        const double angle = -scene.camera.bearing * M_PI / 180.0, cs = std::cos(angle), sn = std::sin(angle);
+		const double pitch = scene.camera.pitch * M_PI / 180.0, pitchCos = std::cos(pitch), pitchSin = std::sin(pitch);
+        const double metersToPixels = worldPixels / (40075016.68557849 * std::max(.01, std::cos(scene.camera.latitude * M_PI / 180.0)));
+		const double cameraDistance = std::max(1.0, static_cast<double>(bottom-top)*.5/std::tan(M_PI/8.0));
+		auto screen = [&](float x, float y, float elevation) { double dx=x-centerX;if(dx>.5)dx-=1;else if(dx<-.5)dx+=1;const double dy=y-centerY,localX=(dx*cs-dy*sn)*worldPixels,localY=(dx*sn+dy*cs)*worldPixels,localZ=elevation*metersToPixels,projectedY=localY*pitchCos-localZ*pitchSin,depth=localY*pitchSin+localZ*pitchCos,perspective=cameraDistance/std::max(cameraDistance*.05,cameraDistance-depth);return std::array<float,2>{static_cast<float>((left+right)*.5+localX*perspective),static_cast<float>((top+bottom)*.5+projectedY*perspective)};};
+        for (const auto& draw : scene.draws) {
+			const auto rangeStart = static_cast<std::uint32_t>(vertices.size());
+			const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
+            const auto verticesIt = scene.resources.find(MapHashKey(draw.vertexHash)), indicesIt = scene.resources.find(MapHashKey(draw.indexHash));
+            if (verticesIt == scene.resources.end() || indicesIt == scene.resources.end() || indicesIt->second.stride != 4 || static_cast<std::uint64_t>(draw.first + draw.count)*4 > indicesIt->second.bytes.size()) continue;
+            auto indexAt = [&](std::uint32_t i) { std::uint32_t value{}; std::memcpy(&value, indicesIt->second.bytes.data() + static_cast<std::size_t>(draw.first+i)*4, 4); return value; };
+            if (draw.primitive == protocol::MapPrimitive::Triangles && textured) {
+				for (std::uint32_t i=0; i+2<draw.count; i+=3) { MapVertex points[3]{}; bool valid=true; for(int p=0;p<3;p++) valid=valid&&readVertex(verticesIt->second,indexAt(i+p),points[p]); if(!valid||verticesIt->second.stride<44) continue; for(auto& point:points){auto at=screen(point.x,point.y,point.z);vertices.push_back(Vertex{at[0]+point.offsetX,at[1]+point.offsetY,point.u,point.v,point.r,point.g,point.b,point.a*draw.opacity,0,0,0,0,1,0,0,0});}}
+            } else if (draw.primitive == protocol::MapPrimitive::Triangles) {
+                for (std::uint32_t i=0; i+2<draw.count; i+=3) { MapVertex a{},b{},c{}; if(!readVertex(verticesIt->second,indexAt(i),a)||!readVertex(verticesIt->second,indexAt(i+1),b)||!readVertex(verticesIt->second,indexAt(i+2),c)) continue; auto pa=screen(a.x,a.y,a.z),pb=screen(b.x,b.y,b.z),pc=screen(c.x,c.y,c.z); a.a*=draw.opacity;b.a*=draw.opacity;c.a*=draw.opacity; vertices.push_back(solid(pa[0],pa[1],a));vertices.push_back(solid(pb[0],pb[1],b));vertices.push_back(solid(pc[0],pc[1],c)); }
+            } else if (draw.primitive == protocol::MapPrimitive::Lines) {
+                for (std::uint32_t i=0; i+1<draw.count; i+=2) { MapVertex a{},b{}; if(!readVertex(verticesIt->second,indexAt(i),a)||!readVertex(verticesIt->second,indexAt(i+1),b)) continue; auto pa=screen(a.x,a.y,a.z),pb=screen(b.x,b.y,b.z); float dx=pb[0]-pa[0],dy=pb[1]-pa[1],length=std::sqrt(dx*dx+dy*dy); if(length<.01f) continue; float half=std::max(1.0f,a.width)*.5f,nx=-dy/length*half,ny=dx/length*half; a.a*=draw.opacity; vertices.push_back(solid(pa[0]+nx,pa[1]+ny,a));vertices.push_back(solid(pb[0]+nx,pb[1]+ny,a));vertices.push_back(solid(pa[0]-nx,pa[1]-ny,a));vertices.push_back(solid(pa[0]-nx,pa[1]-ny,a));vertices.push_back(solid(pb[0]+nx,pb[1]+ny,a));vertices.push_back(solid(pb[0]-nx,pb[1]-ny,a)); }
+            } else {
+                for(std::uint32_t i=0;i<draw.count;i++){MapVertex p{};if(!readVertex(verticesIt->second,indexAt(i),p))continue;auto at=screen(p.x,p.y,p.z);float r=std::max(3.0f,p.width);AppendQuad(vertices,at[0]-r,at[1]-r,at[0]+r,at[1]+r,0,0,1,1,p.r,p.g,p.b,p.a*draw.opacity,0,0,0,r);}
+            }
+			const auto rangeCount = static_cast<std::uint32_t>(vertices.size()) - rangeStart;
+			if (rangeCount > 0) ranges.push_back(MapGeometryRange{rangeStart, rangeCount, textured ? MapHashKey(draw.textureHash) : std::string{}});
+        }
+    }
+}
+
+GLuint RendererGLES::EnsureMapTexture(RetainedMapScene& scene, const std::string& hash) {
+	if (hash.empty()) return atlasTexture_;
+	const auto cached = scene.textures.find(hash);
+	if (cached != scene.textures.end()) return cached->second;
+	const auto found = scene.resources.find(hash);
+	if (found == scene.resources.end()) return 0;
+	const auto& resource = found->second;
+	if (resource.type != protocol::MapResourceType::TextureAlpha || resource.width == 0 || resource.height == 0 || resource.width > 4096 || resource.height > 4096 || resource.bytes.size() != static_cast<std::size_t>(resource.width) * resource.height) return 0;
+	GLuint texture = 0; glGenTextures(1, &texture); glBindTexture(GL_TEXTURE_2D, texture);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, resource.width, resource.height, 0, GL_ALPHA, GL_UNSIGNED_BYTE, resource.bytes.data());
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	scene.textures.emplace(hash, texture);
+	return texture;
 }
 
 void RendererGLES::AppendQuad(std::vector<Vertex>& vertices, float x1, float y1, float x2, float y2,
@@ -268,6 +402,7 @@ void RendererGLES::BuildGeometry(const protocol::RenderFrame& frame,
         }
 
         const auto start = static_cast<std::uint32_t>(vertices.size());
+		bool retainedMap = false;
         const float cr = cmd.r / 255.0f;
         const float cg = cmd.g / 255.0f;
         const float cb = cmd.b / 255.0f;
@@ -345,17 +480,45 @@ void RendererGLES::BuildGeometry(const protocol::RenderFrame& frame,
             AppendQuad(vertices, x1, y1, x2, y2, 0, 0, 1, 1, 1, 1, 1, 1, 2.0f, 0.0f, 0.0f, 0.0f);
             break;
         }
+        case protocol::DrawCommandType::DrawMapScene: {
+			if (const auto scene = mapScenes_.find(cmd.text); scene != mapScenes_.end() && !scene->second.draws.empty()) {
+				retainedMap = true;
+			} else if (cmd.w > 0 && cmd.h > 0 && !cmd.bytes.empty()) {
+                const auto texture = UploadImageCached(cmd.bytes, cmd.w, cmd.h);
+                if (texture != 0) {
+                    rangeImage = texture;
+                    AppendQuad(vertices, x1, y1, x2, y2, 0, 0, 1, 1, 1, 1, 1, 1, 2.0f, 0, 0, 0);
+                }
+            }
+            break;
+        }
         default:
             break;
         }
 
         const auto end = static_cast<std::uint32_t>(vertices.size());
-        if (end > start) pushRange(start, end - start);
+		if (retainedMap) {
+			DrawRange range{0, 0, clipEnabled, clipX, clipY, clipW, clipH, 0};
+			range.mapViewportID = cmd.text;
+			range.mapLeft = x1; range.mapTop = y1; range.mapRight = x2; range.mapBottom = y2;
+			range.mapScale = cmd.val1 > 0 ? cmd.val1 : 1;
+			ranges.push_back(std::move(range));
+		} else if (end > start) pushRange(start, end - start);
         rangeImage = 0;
     }
 }
 
 void RendererGLES::Render(const protocol::RenderFrame& frame) {
+	for (auto& entry : mapScenes_) {
+		auto& scene = entry.second;
+		if (scene.draws.empty() && scene.resources.empty() && scene.vertexBuffer != 0) {
+			glDeleteBuffers(1, &scene.vertexBuffer);
+			scene.vertexBuffer = 0;
+			scene.vertexCount = 0;
+			for (const auto& texture : scene.textures) glDeleteTextures(1, &texture.second);
+			scene.textures.clear();
+		}
+	}
     std::vector<Vertex> vertices;
     std::vector<DrawRange> ranges;
     BuildGeometry(frame, vertices, ranges);
@@ -364,7 +527,7 @@ void RendererGLES::Render(const protocol::RenderFrame& frame) {
     glDisable(GL_SCISSOR_TEST);
     glClearColor(0.04f, 0.05f, 0.07f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    if (vertices.empty()) return;
+	if (ranges.empty()) return;
 
     glUseProgram(program_);
     glUniform2f(uScreen_, static_cast<float>(width_), static_cast<float>(height_));
@@ -373,18 +536,40 @@ void RendererGLES::Render(const protocol::RenderFrame& frame) {
     glUniform1i(uAtlas_, 0);
     glUniform2f(uInset_, static_cast<float>(insetX_), static_cast<float>(insetY_));
 
-    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)),
-                 vertices.data(), GL_STREAM_DRAW);
     const auto stride = static_cast<GLsizei>(sizeof(Vertex));
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(8));
-    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(16));
-    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(32));
-    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(48));
+	auto bindVertices = [&](GLuint buffer) {
+		glBindBuffer(GL_ARRAY_BUFFER, buffer);
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(8));
+		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(16));
+		glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(32));
+		glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(48));
+	};
+	if (!vertices.empty()) {
+		glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+		glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)), vertices.data(), GL_STREAM_DRAW);
+	}
+	bindVertices(vbo_);
     for (int i = 0; i <= 4; ++i) glEnableVertexAttribArray(i);
 
     for (const auto& range : ranges) {
+		if (!range.mapViewportID.empty()) {
+			if (!EnsureMapGeometryBuffer(range.mapViewportID, range.mapLeft, range.mapTop, range.mapRight, range.mapBottom, range.mapScale)) continue;
+			auto& scene = mapScenes_.at(range.mapViewportID);
+			bindVertices(scene.vertexBuffer);
+			if (range.clipEnabled) {
+				glEnable(GL_SCISSOR_TEST);
+				glScissor(range.clipX + insetX_, height_ - (range.clipY + insetY_ + range.clipH), range.clipW, range.clipH);
+			} else glDisable(GL_SCISSOR_TEST);
+			for (const auto& geometryRange : scene.geometryRanges) {
+				const auto texture = EnsureMapTexture(scene, geometryRange.textureHash);
+				if (texture == 0) continue;
+				glBindTexture(GL_TEXTURE_2D, texture);
+				glDrawArrays(GL_TRIANGLES, static_cast<GLint>(geometryRange.start), static_cast<GLsizei>(geometryRange.count));
+			}
+			bindVertices(vbo_);
+			continue;
+		}
         glBindTexture(GL_TEXTURE_2D, range.imageTexture != 0 ? range.imageTexture : atlasTexture_);
         if (range.clipEnabled) {
             glEnable(GL_SCISSOR_TEST);

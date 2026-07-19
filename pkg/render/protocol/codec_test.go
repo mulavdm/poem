@@ -68,6 +68,21 @@ func TestRenderFrameRoundTripWithImageBytes(t *testing.T) {
 	}
 }
 
+func TestRenderFrameRoundTripWithMapScenePlacement(t *testing.T) {
+	want := DrawCommand{Type: DrawCommandTypeDrawMapScene, X1: 4, Y1: 8, X2: 404, Y2: 308, W: 256, H: 128, Text: "main-map", Bytes: []byte{9, 8, 7}}
+	encoded, err := EncodeRenderFrame(RenderFrame{Width: 800, Height: 600, Commands: []DrawCommand{want}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := DecodeRenderFrame(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frame.Commands) != 1 || !reflect.DeepEqual(frame.Commands[0], want) {
+		t.Fatalf("map command = %+v, want %+v", frame.Commands, want)
+	}
+}
+
 func TestRenderFrameRoundTripPreservesUnicodeText(t *testing.T) {
 	want := "POEM 日本語 ✓"
 	encoded, err := EncodeRenderFrame(RenderFrame{Width: 320, Height: 200, Commands: []DrawCommand{{Type: DrawCommandTypeDrawText, Text: want}}})

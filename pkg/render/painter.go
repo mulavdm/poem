@@ -250,6 +250,13 @@ func (f *ProtocolPainter) DrawImage(r image.Rectangle, imageWidth, imageHeight i
 	})
 }
 
+// DrawMapScene places a retained scene in a clipped component rectangle. The
+// fallback pixels are carried for presenters that have not accepted a scene.
+func (f *ProtocolPainter) DrawMapScene(r image.Rectangle, viewportID string, imageWidth, imageHeight int, fallback []byte, previewScale float64) {
+	cloned := append([]byte(nil), fallback...)
+	f.commands = append(f.commands, DrawCmdData{Type: protocol.DrawCommandTypeDrawMapScene, X1: r.Min.X, Y1: r.Min.Y, X2: r.Max.X, Y2: r.Max.Y, W: imageWidth, H: imageHeight, Text: viewportID, Bytes: cloned, Val1: float32(previewScale)})
+}
+
 func (f *ProtocolPainter) SetGlow(strength float32) {
 	f.glow = strength
 	f.commands = append(f.commands, DrawCmdData{

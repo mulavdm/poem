@@ -1,5 +1,6 @@
 #include "protocol.h"
 
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 
@@ -40,6 +41,19 @@ class Reader {
     std::string ReadString() {
         auto bytes = ReadBytes();
         return std::string(bytes.begin(), bytes.end());
+    }
+
+    template <std::size_t N>
+    std::array<std::uint8_t, N> ReadArray() {
+        if (offset_ + N > data_.size()) throw std::runtime_error("protocol array overflow");
+        std::array<std::uint8_t, N> out{};
+        std::memcpy(out.data(), data_.data() + offset_, N);
+        offset_ += N;
+        return out;
+    }
+
+    void RequireEnd() const {
+        if (offset_ != data_.size()) throw std::runtime_error("protocol trailing data");
     }
 
   private:
@@ -160,6 +174,87 @@ RenderFrame DecodeRenderFrame(const std::vector<std::uint8_t>& body) {
         out.commands.push_back(std::move(cmd));
     }
     return out;
+}
+
+namespace {
+MapCamera ReadMapCamera(Reader& r) {
+    MapCamera camera;
+    camera.latitude = r.Read<double>();
+    camera.longitude = r.Read<double>();
+    camera.zoom = r.Read<float>();
+    camera.bearing = r.Read<float>();
+    camera.pitch = r.Read<float>();
+    camera.viewportWidth = r.Read<std::uint32_t>();
+    camera.viewportHeight = r.Read<std::uint32_t>();
+    return camera;
+}
+}
+
+MapSceneDelta DecodeMapSceneDelta(const std::vector<std::uint8_t>& body) {
+    Reader r(body);
+    MapSceneDelta out;
+    out.viewportId = r.ReadString();
+    if (out.viewportId.empty() || out.viewportId.size() > 1024) throw std::runtime_error("invalid map viewport id");
+    out.generation = r.Read<std::uint64_t>();
+    const auto resourceCount = r.Read<std::uint32_t>();
+    if (resourceCount > 16384) throw std::runtime_error("map resource count exceeds limit");
+    std::size_t totalBytes = 0;
+    out.resources.reserve(resourceCount);
+    for (std::uint32_t i = 0; i < resourceCount; ++i) {
+        MapSceneResource resource;
+        resource.operation = static_cast<MapResourceOperation>(r.Read<std::uint8_t>());
+        resource.type = static_cast<MapResourceType>(r.Read<std::uint8_t>());
+        if (resource.operation > MapResourceOperation::Release || resource.type > MapResourceType::TextureAlpha) throw std::runtime_error("invalid map resource enum");
+        resource.hash = r.ReadArray<32>();
+        resource.stride = r.Read<std::uint32_t>();
+        resource.width = r.Read<std::uint32_t>();
+        resource.height = r.Read<std::uint32_t>();
+        resource.bytes = r.ReadBytes();
+        totalBytes += resource.bytes.size();
+        if (totalBytes > 256u * 1024u * 1024u || (resource.operation == MapResourceOperation::Release && !resource.bytes.empty())) throw std::runtime_error("invalid map resource bytes");
+		if (resource.operation == MapResourceOperation::Upload) {
+			if (resource.type == MapResourceType::VertexBuffer) {
+				if (resource.stride == 0 || resource.stride > 1024 || resource.bytes.empty() || resource.bytes.size() % resource.stride != 0 || resource.width != 0 || resource.height != 0) throw std::runtime_error("invalid map vertex resource");
+			} else if (resource.type == MapResourceType::IndexBuffer) {
+				if (resource.stride != 4 || resource.bytes.empty() || resource.bytes.size() % 4 != 0 || resource.width != 0 || resource.height != 0) throw std::runtime_error("invalid map index resource");
+			} else {
+				const std::uint64_t bytesPerPixel = resource.type == MapResourceType::TextureRGBA ? 4 : 1;
+				const std::uint64_t expected = static_cast<std::uint64_t>(resource.width) * resource.height * bytesPerPixel;
+				if (resource.width == 0 || resource.height == 0 || resource.width > 4096 || resource.height > 4096 || resource.stride != bytesPerPixel || expected != resource.bytes.size()) throw std::runtime_error("invalid map texture resource");
+			}
+		}
+        out.resources.push_back(std::move(resource));
+    }
+    const auto drawCount = r.Read<std::uint32_t>();
+    if (drawCount > 1000000) throw std::runtime_error("map draw count exceeds limit");
+    out.draws.reserve(drawCount);
+    for (std::uint32_t i = 0; i < drawCount; ++i) {
+        MapDrawBatch draw;
+        draw.vertexHash = r.ReadArray<32>();
+        draw.indexHash = r.ReadArray<32>();
+        draw.textureHash = r.ReadArray<32>();
+        draw.primitive = static_cast<MapPrimitive>(r.Read<std::uint8_t>());
+        if (draw.primitive > MapPrimitive::Points) throw std::runtime_error("invalid map primitive");
+        draw.first = r.Read<std::uint32_t>();
+        draw.count = r.Read<std::uint32_t>();
+        draw.layer = r.Read<std::int32_t>();
+        draw.opacity = r.Read<float>();
+		if (!std::isfinite(draw.opacity) || draw.opacity < 0 || draw.opacity > 1) throw std::runtime_error("invalid map opacity");
+        draw.depthTest = r.Read<std::uint8_t>() != 0;
+        out.draws.push_back(draw);
+    }
+    out.camera = ReadMapCamera(r);
+    out.sunAzimuth = r.Read<float>();
+    out.sunElevation = r.Read<float>();
+    r.RequireEnd();
+    return out;
+}
+
+MapCamera DecodeMapCamera(const std::vector<std::uint8_t>& body) {
+    Reader r(body);
+    auto camera = ReadMapCamera(r);
+    r.RequireEnd();
+    return camera;
 }
 
 PlaySound DecodePlaySound(const std::vector<std::uint8_t>& body) {

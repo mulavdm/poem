@@ -33,6 +33,7 @@ const pageShell = `<!doctype html>
 <link rel="stylesheet" href="/__poem/app.css">
 <script src="/components/static/components.js" defer></script>
 <script src="/__poem/image-viewport.js" defer></script>
+<script src="/__poem/map-viewport.js?v={{.VectorAssetVersion}}" defer></script>
 <script src="/__poem/responsive.js" defer></script>
 <script src="/__poem/workspace.js" defer></script>
 </head>
@@ -48,13 +49,14 @@ const pageShell = `<!doctype html>
 var shellTemplate = template.Must(template.New("shell").Parse(pageShell))
 
 type shellData struct {
-	Title   string
-	CSRF    string
-	Body    template.HTML
-	Pending bool
+	Title              string
+	CSRF               string
+	Body               template.HTML
+	Pending            bool
+	VectorAssetVersion string
 }
 
 // renderShell wraps body in Trellis's document shell and writes it to w.
 func renderShell(w io.Writer, title, csrf string, body template.HTML, pending bool) error {
-	return shellTemplate.Execute(w, shellData{Title: title, CSRF: csrf, Body: body, Pending: pending})
+	return shellTemplate.Execute(w, shellData{Title: title, CSRF: csrf, Body: body, Pending: pending, VectorAssetVersion: vectorAssetVersion})
 }

@@ -156,6 +156,14 @@ func Lint(root app.Node, commands []app.Command) []Diagnostic {
 			visitNodes(n.Header)
 			visitNodes(n.Content)
 			visitNodes(n.Tools)
+		case app.MapViewportNode:
+			checkMeta(n.Semantic)
+			if strings.TrimSpace(n.Semantic.Name) == "" {
+				add("UI018", n.Semantic.ID, "map viewport requires an accessible name")
+			}
+			if !n.Valid() {
+				add("UI041", n.Semantic.ID, "map viewport contains an invalid source, camera, feature, or limit")
+			}
 		case app.AdaptiveNode:
 			checkMeta(n.Semantic)
 			base := ids

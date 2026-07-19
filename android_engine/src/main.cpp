@@ -206,6 +206,12 @@ void TransportLoop() {
                 g_host.latestFrame = std::move(frame);
                 break;
             }
+            case poem::protocol::MessageType::MapSceneDelta: {
+                auto scene = poem::protocol::DecodeMapSceneDelta(envelope.body);
+                std::lock_guard<std::mutex> lock(g_host.frameMutex);
+                g_host.renderer.ApplyMapScene(scene);
+                break;
+            }
             case poem::protocol::MessageType::SetImeVisible: {
                 const auto ime = poem::protocol::DecodeSetImeVisible(envelope.body);
                 HLOGI("ime visible -> %d", ime.visible ? 1 : 0);

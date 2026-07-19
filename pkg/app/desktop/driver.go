@@ -40,24 +40,46 @@ func configure[S any](ctx context.Context, a app.App[S], config render.AppConfig
 		state, startup = a.Start(state)
 	}
 	var executor *command.Executor
-	executor = command.New(ctx, func(msg app.Msg) (app.Cmd, error) {
+	executor = command.New(app.WithPlatformServices(ctx, a.Services), func(msg app.Msg) (app.Cmd, error) {
 		var cmd app.Cmd
 		state, cmd = a.Update(state, msg)
 		return cmd, nil
 	}, render.RequestRepaint, nil)
+	if a.Subscriptions != nil {
+		_ = executor.SetSubscriptions(func() []app.Subscription { return a.Subscriptions(state) })
+	}
 	_ = executor.Start(startup)
+	mapRuntime := newNativeMapRuntime(ctx)
 
 	config.BuildPagesFn = func(rstate *render.ApplicationState) {
 		dispatch := func(msg app.Msg) {
 			_ = executor.Dispatch(msg)
 		}
 		var root render.Component
+		var resolved app.Node
+		var mapProviders []app.MapResourceProvider
 		executor.Read(func() {
-			root = build(app.ResolvedView(a, state), rootPage, dispatch)
+			resolved = app.ResolvedView(a, state)
+			root = build(resolved, rootPage, dispatch)
+			if a.MapResources != nil {
+				mapProviders = a.MapResources(state)
+			}
 		})
 
 		w, h := rstate.GetWindowSize()
 		root.SetBounds(image.Rect(0, 0, w, h))
+		mapViewports := make(map[string]image.Point)
+		root.Walk(func(component render.Component) {
+			if placement, ok := component.(interface {
+				MapViewportPlacement() (string, image.Rectangle)
+			}); ok {
+				id, bounds := placement.MapViewportPlacement()
+				if id != "" && !bounds.Empty() {
+					mapViewports[id] = bounds.Size()
+				}
+			}
+		})
+		mapRuntime.reconcile(resolved, mapProviders, mapViewports, rstate.RenderContext().Design, w, h)
 
 		// The page scrolls when the app's content is taller than the window:
 		// a ScrollView wraps the root on every target (wheel on desktop,

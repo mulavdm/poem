@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -136,6 +137,75 @@ func TestPanicBecomesSanitizedCompletionAndCloseCancels(t *testing.T) {
 	case <-cancelled:
 	case <-time.After(2 * time.Second):
 		t.Fatal("close did not cancel active command")
+	}
+}
+
+func TestExecutorReconcilesSubscriptionGenerations(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var mu sync.Mutex
+	var revision atomic.Value
+	revision.Store("one")
+	var received []string
+	started := make(chan string, 2)
+	stopped := make(chan string, 2)
+	executor := New(ctx, func(msg app.Msg) (app.Cmd, error) {
+		mu.Lock()
+		received = append(received, msg.Payload)
+		mu.Unlock()
+		return app.Cmd{}, nil
+	}, nil, nil)
+	defer executor.Close()
+	if err := executor.SetSubscriptions(func() []app.Subscription {
+		captured := revision.Load().(string)
+		return []app.Subscription{{Name: "location", Revision: captured, Run: func(ctx context.Context, emit func(app.Msg)) error {
+			started <- captured
+			emit(app.Msg{Name: "location", Payload: captured})
+			<-ctx.Done()
+			stopped <- captured
+			emit(app.Msg{Name: "location", Payload: "late-" + captured})
+			return ctx.Err()
+		}}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := waitValue(t, started); got != "one" {
+		t.Fatalf("started %q", got)
+	}
+	revision.Store("two")
+	if err := executor.Dispatch(app.Msg{Name: "change"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := waitValue(t, stopped); got != "one" {
+		t.Fatalf("stopped %q", got)
+	}
+	if got := waitValue(t, started); got != "two" {
+		t.Fatalf("started %q", got)
+	}
+
+	contains := func(values []string, wanted string) bool {
+		for _, value := range values {
+			if value == wanted {
+				return true
+			}
+		}
+		return false
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		mu.Lock()
+		got := append([]string(nil), received...)
+		mu.Unlock()
+		if contains(got, "one") && contains(got, "two") {
+			if contains(got, "late-one") {
+				t.Fatalf("accepted stale emission: %v", got)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("events = %v", got)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

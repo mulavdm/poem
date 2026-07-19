@@ -2,9 +2,11 @@ package web
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"html"
 	"html/template"
+	"io"
 	"math"
 	"net/http"
 	"strings"
@@ -25,7 +27,43 @@ import (
 const (
 	msgFieldName = "trellis_msg"
 	fieldPrefix  = "trellis_field_"
+	actionPrefix = "__poem_msg_v1_"
 )
+
+func actionSubmitValue(message app.Msg) string {
+	if message.Payload == "" && !strings.HasPrefix(message.Name, actionPrefix) {
+		return message.Name
+	}
+	body, _ := json.Marshal(struct {
+		Name    string `json:"name"`
+		Payload string `json:"payload"`
+	}{message.Name, message.Payload})
+	return actionPrefix + base64.RawURLEncoding.EncodeToString(body)
+}
+
+func submittedAction(value string) (app.Msg, bool) {
+	if !strings.HasPrefix(value, actionPrefix) {
+		return app.Msg{Name: value}, value != ""
+	}
+	body, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(value, actionPrefix))
+	if err != nil || len(body) > 16<<10 {
+		return app.Msg{}, false
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.DisallowUnknownFields()
+	var message struct {
+		Name    string `json:"name"`
+		Payload string `json:"payload"`
+	}
+	if err := decoder.Decode(&message); err != nil || message.Name == "" || len(message.Name) > 1024 || len(message.Payload) > 8<<10 {
+		return app.Msg{}, false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return app.Msg{}, false
+	}
+	return app.Msg{Name: message.Name, Payload: message.Payload}, true
+}
 
 // renderNode converts a app.Node tree into GopherWeb component HTML, using
 // GopherWeb's real public renderers (action.Button, form.Input, ...) so
@@ -41,7 +79,7 @@ func renderNode(node app.Node, path string) template.HTML {
 
 	case app.ActionNode:
 		label := actionLabel(n.Icon, n.Label)
-		attrs := components.Attrs{"name": msgFieldName, "value": n.Invoke.Name, "data-poem-placement": actionPlacementName(n.Placement)}
+		attrs := components.Attrs{"name": msgFieldName, "value": actionSubmitValue(n.Invoke), "data-poem-placement": actionPlacementName(n.Placement)}
 		if n.Semantic.Running {
 			attrs["aria-busy"] = "true"
 		}
@@ -58,7 +96,7 @@ func renderNode(node app.Node, path string) template.HTML {
 			Disabled: n.Disabled,
 			Attributes: components.Attrs{
 				"name":  msgFieldName,
-				"value": n.OnClick.Name,
+				"value": actionSubmitValue(n.OnClick),
 			},
 		}.HTML()
 
@@ -223,6 +261,58 @@ func renderNode(node app.Node, path string) template.HTML {
 		}
 		viewport.WriteString(`</div>`)
 		return template.HTML(viewport.String())
+
+	case app.MapViewportNode:
+		if !n.Valid() {
+			return ""
+		}
+		camera, _ := json.Marshal(n.Camera.Normalized())
+		features, _ := json.Marshal(n.Features)
+		source, _ := json.Marshal(n.Source)
+		mapStyle := n.Style.Web
+		if !mapStyle.Valid() {
+			mapStyle = n.Style.House
+		}
+		if !mapStyle.Valid() {
+			mapStyle = app.MapStyle{ID: "poem-default", LabelDensity: 1, TerrainScale: 1, BuildingHeights: true, POIFilters: app.POITransport | app.POIParkingFuel | app.POIFoodDrink | app.POIHealth | app.POIShoppingServices | app.POILeisureTourism | app.POICivic}
+		}
+		style, _ := json.Marshal(mapStyle)
+		activeFeatureIndexes := make([]int, 0, len(n.Features))
+		for index, feature := range n.Features {
+			msg := feature.OnActivate
+			if msg.Name == "" {
+				msg = n.OnFeature
+			}
+			if feature.Valid() && !feature.Disabled && msg.Name != "" {
+				activeFeatureIndexes = append(activeFeatureIndexes, index)
+			}
+		}
+		activeFeatures, _ := json.Marshal(activeFeatureIndexes)
+		label := n.Semantic.Name
+		if label == "" {
+			label = "Interactive map"
+		}
+		disabled := "false"
+		if !n.Semantic.Enabled {
+			disabled = "true"
+		}
+		var out strings.Builder
+		out.WriteString(fmt.Sprintf(`<section class="poem-map-viewport" role="region" aria-label="%s" aria-busy="true" data-poem-map-viewport data-vector-status="loading" data-field="%s" data-disabled="%s" data-viewport-id="%s" data-camera="%s" data-source="%s" data-style="%s" data-features="%s" data-active-features="%s" data-quality="%d" data-min-zoom="%s" data-max-zoom="%s" data-min-pitch="%s" data-max-pitch="%s"><canvas tabindex="0" aria-label="%s" aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight + - Q E PageUp PageDown Home"></canvas>`,
+			html.EscapeString(label), html.EscapeString(fieldPrefix+path), disabled, html.EscapeString(n.Semantic.ID), base64.StdEncoding.EncodeToString(camera), base64.StdEncoding.EncodeToString(source), base64.StdEncoding.EncodeToString(style), base64.StdEncoding.EncodeToString(features), base64.StdEncoding.EncodeToString(activeFeatures),
+			n.Quality, app.FloatPayload(n.MinZoom), app.FloatPayload(n.MaxZoom), app.FloatPayload(n.MinPitch), app.FloatPayload(n.MaxPitch), html.EscapeString(label)))
+		if len(n.Fallback.Encoded) > 0 {
+			mime := http.DetectContentType(n.Fallback.Encoded)
+			if strings.HasPrefix(mime, "image/") {
+				out.WriteString(fmt.Sprintf(`<img class="poem-map-viewport__fallback" alt="%s" src="data:%s;base64,%s">`, html.EscapeString(n.Fallback.Alt), mime, base64.StdEncoding.EncodeToString(n.Fallback.Encoded)))
+			}
+		}
+		out.WriteString(`<div class="poem-map-viewport__features" aria-label="Map features">`)
+		for _, index := range activeFeatureIndexes {
+			feature := n.Features[index]
+			out.WriteString(fmt.Sprintf(`<button type="submit" name="%s" value="%s">%s</button>`, html.EscapeString(fieldPrefix+path+fmt.Sprintf("/feature-%d", index)), html.EscapeString(feature.ID), html.EscapeString(feature.Name)))
+		}
+		out.WriteString(`</div></section>`)
+		return template.HTML(out.String())
 
 	case app.TableNode:
 		columns := make([]data.TableColumn, len(n.Columns))
@@ -495,6 +585,9 @@ const (
 	imageTransformField
 	viewportPointField
 	imageMarkerField
+	mapCameraField
+	mapFeatureField
+	mapVectorFeatureField
 )
 
 // postedField pairs the Msg an interactive Node fires with how to read its
@@ -521,6 +614,14 @@ func (f postedField) validPayload(payload string) bool {
 		return ok
 	case imageMarkerField:
 		return payload != "" && payload == f.expected
+	case mapCameraField:
+		_, ok := (app.Msg{Payload: payload}).MapCamera()
+		return ok
+	case mapFeatureField:
+		return payload != "" && payload == f.expected
+	case mapVectorFeatureField:
+		_, ok := (app.Msg{Payload: payload}).MapFeatureActivation()
+		return ok
 	default:
 		return true
 	}
@@ -594,6 +695,22 @@ func collectFields(node app.Node, path string, out map[string]postedField) {
 				}
 			}
 		}
+	case app.MapViewportNode:
+		if n.Semantic.Enabled && n.OnCameraChange.Name != "" {
+			out[fieldPrefix+path] = postedField{msg: n.OnCameraChange, kind: mapCameraField}
+		}
+		if n.Semantic.Enabled && n.OnFeature.Name != "" {
+			out[fieldPrefix+path+"/vector-feature"] = postedField{msg: n.OnFeature, kind: mapVectorFeatureField}
+		}
+		for index, feature := range n.Features {
+			msg := feature.OnActivate
+			if msg.Name == "" {
+				msg = n.OnFeature
+			}
+			if n.Semantic.Enabled && !feature.Disabled && feature.Valid() && msg.Name != "" {
+				out[fieldPrefix+path+fmt.Sprintf("/feature-%d", index)] = postedField{msg: msg, kind: mapFeatureField, expected: feature.ID}
+			}
+		}
 	case app.ContainerNode:
 		for i, child := range n.Children {
 			collectFields(child, childPath(path, i), out)
@@ -634,7 +751,7 @@ func collectMessages(node app.Node, out map[string]bool) {
 		collectMessages(n.Child, out)
 	case app.ActionNode:
 		if n.Semantic.Enabled && !n.Semantic.Running && n.Invoke.Name != "" {
-			out[n.Invoke.Name] = true
+			out[actionSubmitValue(n.Invoke)] = true
 		}
 	case app.CollectionNode:
 		for _, item := range n.Items {
@@ -665,7 +782,7 @@ func collectMessages(node app.Node, out map[string]bool) {
 
 	case app.ButtonNode:
 		if !n.Disabled && n.OnClick.Name != "" {
-			out[n.OnClick.Name] = true
+			out[actionSubmitValue(n.OnClick)] = true
 		}
 	case app.TextInputNode:
 		if n.OnChange.Name != "" {
@@ -698,6 +815,19 @@ func collectMessages(node app.Node, out map[string]bool) {
 	case app.ImageViewportNode:
 		if !n.Disabled && n.OnChange.Name != "" {
 			out[n.OnChange.Name] = true
+		}
+	case app.MapViewportNode:
+		if n.Semantic.Enabled && n.OnCameraChange.Name != "" {
+			out[n.OnCameraChange.Name] = true
+		}
+		for _, feature := range n.Features {
+			msg := feature.OnActivate
+			if msg.Name == "" {
+				msg = n.OnFeature
+			}
+			if n.Semantic.Enabled && !feature.Disabled && msg.Name != "" {
+				out[msg.Name] = true
+			}
 		}
 	case app.ContainerNode:
 		for _, child := range n.Children {

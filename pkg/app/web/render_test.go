@@ -32,6 +32,19 @@ func TestRenderSliderEmitsRangeControl(t *testing.T) {
 	}
 }
 
+func TestActionSubmitValueRoundTripsPayloadAndProtectsPrefixNames(t *testing.T) {
+	for _, message := range []app.Msg{{Name: "panel", Payload: "settings"}, {Name: actionPrefix + "literal"}} {
+		encoded := actionSubmitValue(message)
+		decoded, ok := submittedAction(encoded)
+		if !ok || decoded.Name != message.Name || decoded.Payload != message.Payload {
+			t.Fatalf("round trip %+v => %q => %+v, %v", message, encoded, decoded, ok)
+		}
+	}
+	if _, ok := submittedAction(actionPrefix + "malformed"); ok {
+		t.Fatal("accepted malformed encoded action")
+	}
+}
+
 func TestResponsiveRendersCompactBaselineAndCollectsBothBranches(t *testing.T) {
 	node := app.Responsive(700,
 		[]app.Node{app.Button("Compact", app.Msg{Name: "compact"})},

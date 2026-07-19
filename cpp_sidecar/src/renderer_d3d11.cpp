@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <unordered_set>
 #include <vector>
 
 #ifdef DrawText
@@ -21,6 +22,10 @@ struct ConstantBuffer {
     float screenHeight;
     float pad[2];
 };
+
+std::string MapHashKey(const std::array<std::uint8_t, 32>& hash) {
+    return std::string(reinterpret_cast<const char*>(hash.data()), hash.size());
+}
 
 std::vector<std::uint32_t> DecodeUtf8(const std::string& text) {
     std::vector<std::uint32_t> codepoints;
@@ -684,6 +689,176 @@ void RendererD3D11::Resize(int width, int height) {
     RecreateRenderTarget();
 }
 
+void RendererD3D11::ApplyMapScene(const protocol::MapSceneDelta& scene) {
+    auto& retained = mapScenes_[scene.viewportId];
+    if (scene.generation <= retained.generation) return;
+    for (const auto& resource : scene.resources) {
+        const auto key = MapHashKey(resource.hash);
+        if (resource.operation == protocol::MapResourceOperation::Release) {
+			retained.resources.erase(key);
+			retained.textures.erase(key);
+		} else {
+			retained.resources[key] = resource;
+			retained.textures.erase(key);
+		}
+    }
+    retained.generation = scene.generation;
+    retained.camera = scene.camera;
+    retained.draws = scene.draws;
+	retained.vertexBuffer.Reset();
+	retained.vertexCount = 0;
+	retained.geometryRanges.clear();
+	std::unordered_set<std::string> referenced;
+	for (const auto& draw : retained.draws) {
+		referenced.insert(MapHashKey(draw.vertexHash));
+		referenced.insert(MapHashKey(draw.indexHash));
+		referenced.insert(MapHashKey(draw.textureHash));
+	}
+	for (auto resource = retained.resources.begin(); resource != retained.resources.end();) {
+		if (referenced.find(resource->first) == referenced.end()) { retained.textures.erase(resource->first); resource = retained.resources.erase(resource); }
+		else ++resource;
+	}
+}
+
+bool RendererD3D11::EnsureMapGeometryBuffer(const std::string& viewportId, float left, float top, float right, float bottom, float previewScale) {
+	auto found = mapScenes_.find(viewportId);
+	if (found == mapScenes_.end() || found->second.draws.empty()) return false;
+	auto& scene = found->second;
+	if (scene.vertexBuffer && scene.vertexCount > 0 && scene.left == left && scene.top == top && scene.right == right && scene.bottom == bottom && scene.previewScale == previewScale) return true;
+	std::vector<Vertex> vertices;
+	std::vector<MapGeometryRange> ranges;
+	AppendMapGeometry(vertices, ranges, viewportId, left, top, right, bottom, previewScale);
+	if (vertices.empty()) {
+		scene.vertexBuffer.Reset();
+		scene.vertexCount = 0;
+		return false;
+	}
+	D3D11_BUFFER_DESC desc{};
+	desc.ByteWidth = static_cast<UINT>(vertices.size() * sizeof(Vertex));
+	desc.Usage = D3D11_USAGE_IMMUTABLE;
+	desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	D3D11_SUBRESOURCE_DATA initial{};
+	initial.pSysMem = vertices.data();
+	Microsoft::WRL::ComPtr<ID3D11Buffer> buffer;
+	if (FAILED(device_->CreateBuffer(&desc, &initial, &buffer))) return false;
+	scene.vertexBuffer = std::move(buffer);
+	scene.vertexCount = static_cast<std::uint32_t>(vertices.size());
+	scene.geometryRanges = std::move(ranges);
+	scene.left = left; scene.top = top; scene.right = right; scene.bottom = bottom;
+	scene.previewScale = previewScale;
+	return true;
+}
+
+void RendererD3D11::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<MapGeometryRange>& ranges, const std::string& viewportId, float left, float top, float right, float bottom, float previewScale) {
+    const auto project = [](double longitude, double latitude) {
+        latitude = std::max(-85.05112878, std::min(85.05112878, latitude));
+        const double x = (longitude + 180.0) / 360.0;
+        const double sine = std::sin(latitude * 3.14159265358979323846 / 180.0);
+        const double y = .5 - std::log((1.0 + sine) / (1.0 - sine)) / (4.0 * 3.14159265358979323846);
+        return std::array<double, 2>{x, y};
+    };
+    struct MapVertex { float x, y, z, width; float r, g, b, a; float u, v, offsetX, offsetY; };
+    auto readVertex = [](const protocol::MapSceneResource& resource, std::uint32_t index, MapVertex& out) {
+        if (resource.stride < 28 || static_cast<std::uint64_t>(index + 1) * resource.stride > resource.bytes.size()) return false;
+        const auto* data = resource.bytes.data() + static_cast<std::size_t>(index) * resource.stride;
+        std::memcpy(&out.x, data, 4); std::memcpy(&out.y, data + 4, 4); std::memcpy(&out.z, data + 8, 4); std::memcpy(&out.width, data + 16, 4);
+        out.r = data[12] / 255.0f; out.g = data[13] / 255.0f; out.b = data[14] / 255.0f; out.a = data[15] / 255.0f;
+		if (resource.stride >= 44) { std::memcpy(&out.u, data + 28, 4); std::memcpy(&out.v, data + 32, 4); std::memcpy(&out.offsetX, data + 36, 4); std::memcpy(&out.offsetY, data + 40, 4); }
+        return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z) && std::isfinite(out.width);
+    };
+    auto solidVertex = [](float x, float y, const MapVertex& source) {
+        return Vertex{x, y, 0, 0, source.r, source.g, source.b, source.a, x, y, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+    };
+    for (const auto& sceneEntry : mapScenes_) {
+      if (sceneEntry.first != viewportId) continue;
+      const auto& retained = sceneEntry.second;
+      if (retained.draws.empty() || retained.camera.viewportWidth == 0 || retained.camera.viewportHeight == 0) continue;
+      const auto center = project(retained.camera.longitude, retained.camera.latitude);
+      const double worldPixels = 512.0 * std::pow(2.0, retained.camera.zoom) * std::max(.01f, previewScale);
+      const double angle = -retained.camera.bearing * 3.14159265358979323846 / 180.0;
+      const double cosine = std::cos(angle), sine = std::sin(angle);
+      const double pitch = retained.camera.pitch * 3.14159265358979323846 / 180.0;
+      const double pitchCos = std::cos(pitch), pitchSin = std::sin(pitch);
+      const double metersToPixels = worldPixels / (40075016.68557849 * std::max(.01, std::cos(retained.camera.latitude * 3.14159265358979323846 / 180.0)));
+	  const double cameraDistance = std::max(1.0, static_cast<double>(bottom - top) * .5 / std::tan(3.14159265358979323846 / 8.0));
+      auto screen = [&](float worldX, float worldY, float elevation) {
+          double dx = static_cast<double>(worldX) - center[0];
+          if (dx > .5) dx -= 1.0; else if (dx < -.5) dx += 1.0;
+          const double dy = static_cast<double>(worldY) - center[1];
+          const double localX = (dx * cosine - dy * sine) * worldPixels;
+		  const double localY = (dx * sine + dy * cosine) * worldPixels;
+		  const double localZ = elevation * metersToPixels;
+		  const double projectedY = localY * pitchCos - localZ * pitchSin;
+		  const double depth = localY * pitchSin + localZ * pitchCos;
+		  const double perspective = cameraDistance / std::max(cameraDistance * .05, cameraDistance - depth);
+          return std::array<float, 2>{static_cast<float>((left + right) * .5 + localX * perspective), static_cast<float>((top + bottom) * .5 + projectedY * perspective)};
+      };
+      for (const auto& draw : retained.draws) {
+		const auto rangeStart = static_cast<std::uint32_t>(vertices.size());
+		const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
+        const auto vertexIt = retained.resources.find(MapHashKey(draw.vertexHash));
+        const auto indexIt = retained.resources.find(MapHashKey(draw.indexHash));
+        if (vertexIt == retained.resources.end() || indexIt == retained.resources.end() || indexIt->second.stride != 4) continue;
+        const auto& vertexResource = vertexIt->second;
+        const auto& indexResource = indexIt->second;
+        if (static_cast<std::uint64_t>(draw.first + draw.count) * 4 > indexResource.bytes.size()) continue;
+        auto indexAt = [&](std::uint32_t offset) { std::uint32_t value{}; std::memcpy(&value, indexResource.bytes.data() + static_cast<std::size_t>(draw.first + offset) * 4, 4); return value; };
+        if (draw.primitive == protocol::MapPrimitive::Lines) {
+            for (std::uint32_t i = 0; i + 1 < draw.count; i += 2) {
+                MapVertex a{}, b{}; if (!readVertex(vertexResource, indexAt(i), a) || !readVertex(vertexResource, indexAt(i + 1), b)) continue;
+                const auto pa = screen(a.x, a.y, a.z), pb = screen(b.x, b.y, b.z);
+                AppendLineQuad(vertices, pa[0], pa[1], pb[0], pb[1], std::max(1.0f, a.width), a.r, a.g, a.b, a.a * draw.opacity);
+            }
+        } else if (draw.primitive == protocol::MapPrimitive::Triangles && textured) {
+			for (std::uint32_t i = 0; i + 2 < draw.count; i += 3) {
+				MapVertex points[3]{}; bool valid = true;
+				for (int p = 0; p < 3; ++p) valid = valid && readVertex(vertexResource, indexAt(i + p), points[p]);
+				if (!valid || vertexResource.stride < 44) continue;
+				for (auto& point : points) {
+					const auto projected = screen(point.x, point.y, point.z);
+					vertices.push_back(Vertex{projected[0] + point.offsetX, projected[1] + point.offsetY, point.u, point.v, point.r, point.g, point.b, point.a * draw.opacity, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0});
+				}
+			}
+        } else if (draw.primitive == protocol::MapPrimitive::Triangles) {
+            for (std::uint32_t i = 0; i + 2 < draw.count; i += 3) {
+                MapVertex a{}, b{}, c{}; if (!readVertex(vertexResource, indexAt(i), a) || !readVertex(vertexResource, indexAt(i + 1), b) || !readVertex(vertexResource, indexAt(i + 2), c)) continue;
+                const auto pa = screen(a.x, a.y, a.z), pb = screen(b.x, b.y, b.z), pc = screen(c.x, c.y, c.z);
+                a.a *= draw.opacity; b.a *= draw.opacity; c.a *= draw.opacity;
+                vertices.push_back(solidVertex(pa[0], pa[1], a)); vertices.push_back(solidVertex(pb[0], pb[1], b)); vertices.push_back(solidVertex(pc[0], pc[1], c));
+            }
+        } else {
+            for (std::uint32_t i = 0; i < draw.count; ++i) {
+                MapVertex point{}; if (!readVertex(vertexResource, indexAt(i), point)) continue;
+                const auto p = screen(point.x, point.y, point.z); const float radius = std::max(3.0f, point.width);
+                AppendRect(vertices, p[0] - radius, p[1] - radius, p[0] + radius, p[1] + radius, point.r, point.g, point.b, point.a * draw.opacity, 0, 0, 0, radius, 0, 0, 0, 0);
+            }
+        }
+		const auto rangeCount = static_cast<std::uint32_t>(vertices.size()) - rangeStart;
+		if (rangeCount > 0) ranges.push_back(MapGeometryRange{rangeStart, rangeCount, textured ? MapHashKey(draw.textureHash) : std::string{}});
+      }
+    }
+}
+
+bool RendererD3D11::EnsureMapTexture(RetainedMapScene& scene, const std::string& hash) {
+	if (hash.empty()) return true;
+	if (scene.textures.find(hash) != scene.textures.end()) return true;
+	const auto found = scene.resources.find(hash);
+	if (found == scene.resources.end()) return false;
+	const auto& resource = found->second;
+	if (resource.type != protocol::MapResourceType::TextureAlpha || resource.width == 0 || resource.height == 0 || resource.width > 4096 || resource.height > 4096 || resource.bytes.size() != static_cast<std::size_t>(resource.width) * resource.height) return false;
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = resource.width; desc.Height = resource.height; desc.MipLevels = 1; desc.ArraySize = 1;
+	desc.Format = DXGI_FORMAT_A8_UNORM; desc.SampleDesc.Count = 1; desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	D3D11_SUBRESOURCE_DATA data{}; data.pSysMem = resource.bytes.data(); data.SysMemPitch = resource.width;
+	Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+	if (FAILED(device_->CreateTexture2D(&desc, &data, &texture))) return false;
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{}; srvDesc.Format = desc.Format; srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; srvDesc.Texture2D.MipLevels = 1;
+	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+	if (FAILED(device_->CreateShaderResourceView(texture.Get(), &srvDesc, &srv))) return false;
+	scene.textures.emplace(hash, std::move(srv));
+	return true;
+}
+
 bool RendererD3D11::CaptureBackbufferRGBA(std::vector<std::uint8_t>& rgba, int& width, int& height) {
     rgba.clear();
     width = 0;
@@ -971,6 +1146,8 @@ void RendererD3D11::BuildGeometry(const protocol::RenderFrame& frame, std::vecto
         }
 
         const auto start = static_cast<std::uint32_t>(vertices.size());
+        bool mapFallback = false;
+		bool retainedMap = false;
         const float cr = cmd.r / 255.0f;
         const float cg = cmd.g / 255.0f;
         const float cb = cmd.b / 255.0f;
@@ -1005,6 +1182,14 @@ void RendererD3D11::BuildGeometry(const protocol::RenderFrame& frame, std::vecto
                 AppendRect(vertices, x1, y1, x2, y2, cr, cg, cb, ca,
                            0.0f, currentGlow, currentGlass, radius,
                            shadowOx, shadowOy, shadowBlur, 0.0f);
+            }
+            break;
+        case protocol::DrawCommandType::DrawMapScene:
+			if (const auto scene = mapScenes_.find(cmd.text); scene != mapScenes_.end() && !scene->second.draws.empty()) {
+				retainedMap = true;
+			} else if (cmd.w > 0 && cmd.h > 0 && !cmd.bytes.empty()) {
+                AppendImageQuad(vertices, x1, y1, x2, y2);
+                mapFallback = true;
             }
             break;
         case protocol::DrawCommandType::DrawImage:
@@ -1044,8 +1229,15 @@ void RendererD3D11::BuildGeometry(const protocol::RenderFrame& frame, std::vecto
         }
 
         const auto end = static_cast<std::uint32_t>(vertices.size());
-        if (end > start) {
-            pushRange(start, end - start, cmd.type == protocol::DrawCommandType::DrawImage, cmd.w, cmd.h, cmd.bytes);
+		if (retainedMap) {
+			DrawRange range;
+			range.scissor = clipEnabled ? clipRect : D3D11_RECT{0, 0, width_, height_};
+			range.mapViewportID = cmd.text;
+			range.mapLeft = x1; range.mapTop = y1; range.mapRight = x2; range.mapBottom = y2;
+			range.mapScale = cmd.val1 > 0 ? cmd.val1 : 1;
+			ranges.push_back(std::move(range));
+		} else if (end > start) {
+            pushRange(start, end - start, cmd.type == protocol::DrawCommandType::DrawImage || mapFallback, cmd.w, cmd.h, cmd.bytes);
         }
     }
 }
@@ -1102,6 +1294,25 @@ void RendererD3D11::Render(const protocol::RenderFrame& frame) {
 
     for (std::size_t i = 0; i < ranges.size(); ++i) {
         auto& range = ranges[i];
+		if (!range.mapViewportID.empty()) {
+			if (!EnsureMapGeometryBuffer(range.mapViewportID, range.mapLeft, range.mapTop, range.mapRight, range.mapBottom, range.mapScale)) continue;
+			auto& scene = mapScenes_.at(range.mapViewportID);
+			ID3D11Buffer* mapVB = scene.vertexBuffer.Get();
+			context_->IASetVertexBuffers(0, 1, &mapVB, &stride, &offset);
+			context_->RSSetScissorRects(1, &range.scissor);
+			for (const auto& geometryRange : scene.geometryRanges) {
+				ID3D11ShaderResourceView* texture = atlasSrv_.Get();
+				if (!geometryRange.textureHash.empty()) {
+					if (!EnsureMapTexture(scene, geometryRange.textureHash)) continue;
+					texture = scene.textures.at(geometryRange.textureHash).Get();
+				}
+				ID3D11ShaderResourceView* mapRangeSrvs[3] = {texture, mapSrv_.Get(), nullptr};
+				context_->PSSetShaderResources(0, 3, mapRangeSrvs);
+				context_->Draw(geometryRange.count, geometryRange.start);
+			}
+			context_->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+			continue;
+		}
         if (range.usesImage) {
             if (!EnsureImageTexture(range.imageWidth, range.imageHeight, range.imageBytes)) {
                 continue;

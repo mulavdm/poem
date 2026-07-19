@@ -20,6 +20,18 @@ type App[S any] struct {
 	// Nodes refer to these by ID; invocation still travels as a transport-safe
 	// Msg through Update.
 	Commands func(state S) []Command
+	// MapResources derives the transport-local resource providers available to
+	// MapViewportNode values in the same state snapshot. Provider functions are
+	// never serialized into a browser document; the web driver brokers validated
+	// requests through the current session instead.
+	MapResources func(state S) []MapResourceProvider
+	// Subscriptions derives keyed, long-lived event sources. Drivers reconcile
+	// this set after every accepted state transition. A changed subscription with
+	// the same name supersedes the previous generation just like Cmd.
+	Subscriptions func(state S) []Subscription
+	// Services are host-owned capabilities exposed only through command and
+	// subscription contexts. They are never part of serialized application state.
+	Services PlatformServices
 	View     func(state S) Node
 	Update   func(state S, msg Msg) (S, Cmd)
 }

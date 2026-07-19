@@ -2,7 +2,7 @@ package protocol
 
 const (
 	Magic   = "POEM"
-	Version = uint16(3)
+	Version = uint16(4)
 )
 
 type MessageType uint16
@@ -14,6 +14,8 @@ const (
 	MessageSemanticTree         MessageType = 4
 	MessageFontAtlas            MessageType = 5
 	MessageSetImeVisible        MessageType = 6
+	MessageMapSceneDelta        MessageType = 7
+	MessageMapCamera            MessageType = 8
 	MessageEventBatch           MessageType = 101
 	MessageNativeDebugRequest   MessageType = 201
 	MessageNativeDebugResponse  MessageType = 202
@@ -34,6 +36,7 @@ const (
 	DrawCommandTypeSetOffset
 	DrawCommandTypeSetClip
 	DrawCommandTypeDrawImage
+	DrawCommandTypeDrawMapScene
 )
 
 type SoundType byte
@@ -63,6 +66,9 @@ const (
 	EventTypePanGesture
 	EventTypePinchGesture
 	EventTypeCapabilities
+	EventTypeMapCamera
+	EventTypeMapFeature
+	EventTypeMapFailure
 )
 
 type GesturePhase byte
@@ -205,6 +211,72 @@ type Event struct {
 
 type EventBatch struct {
 	Events []Event
+}
+
+type MapResourceType byte
+
+const (
+	MapResourceVertexBuffer MapResourceType = iota
+	MapResourceIndexBuffer
+	MapResourceTextureRGBA
+	MapResourceTextureSDF
+	MapResourceTextureAlpha
+)
+
+type MapResourceOperation byte
+
+const (
+	MapResourceUpload MapResourceOperation = iota
+	MapResourceRelease
+)
+
+type MapPrimitive byte
+
+const (
+	MapPrimitiveTriangles MapPrimitive = iota
+	MapPrimitiveLines
+	MapPrimitivePoints
+)
+
+type MapSceneResource struct {
+	Operation MapResourceOperation
+	Type      MapResourceType
+	Hash      [32]byte
+	Stride    uint32
+	Width     uint32
+	Height    uint32
+	Bytes     []byte
+}
+
+type MapDrawBatch struct {
+	VertexHash  [32]byte
+	IndexHash   [32]byte
+	TextureHash [32]byte
+	Primitive   MapPrimitive
+	First       uint32
+	Count       uint32
+	Layer       int32
+	Opacity     float32
+	DepthTest   bool
+}
+
+type MapCamera struct {
+	Latitude, Longitude           float64
+	Zoom, Bearing, Pitch          float32
+	ViewportWidth, ViewportHeight uint32
+}
+
+// MapSceneDelta updates retained resources and the ordered draw list for one
+// viewport generation. A presenter must discard deltas older than the newest
+// accepted Generation for the same ViewportID.
+type MapSceneDelta struct {
+	ViewportID   string
+	Generation   uint64
+	Resources    []MapSceneResource
+	Draws        []MapDrawBatch
+	Camera       MapCamera
+	SunAzimuth   float32
+	SunElevation float32
 }
 
 type NativeDebugRequest struct {

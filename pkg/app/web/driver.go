@@ -109,6 +109,11 @@ func NewHandlerWithStore[S any](a app.App[S], title string, raw Options, backend
 	mux.HandleFunc("POST /__event", eventHandler(a))
 	mux.HandleFunc("POST /__field", fieldCommitHandler(a))
 	mux.HandleFunc("GET /__poem/image-viewport.js", imageViewportScriptHandler)
+	mux.HandleFunc("GET /__poem/map-viewport.js", mapViewportScriptHandler)
+	mux.HandleFunc("GET /__poem/map-worker.js", immutableVectorAsset("text/javascript; charset=utf-8", mapWorkerScript))
+	mux.HandleFunc("GET /__poem/wasm_exec.js", immutableVectorAsset("text/javascript; charset=utf-8", wasmExecScript))
+	mux.HandleFunc("GET /__poem/cartography.wasm", immutableVectorAsset("application/wasm", cartographyWASM))
+	mux.HandleFunc("GET /__poem/map-resource", mapResourceHandler(a))
 	mux.HandleFunc("GET /__poem/responsive.js", responsiveScriptHandler)
 	mux.HandleFunc("GET /__poem/workspace.js", workspaceScriptHandler)
 	mux.HandleFunc("GET /__poem/app.css", staticCSSHandler(appCSS))
@@ -123,7 +128,7 @@ func NewHandlerWithStore[S any](a app.App[S], title string, raw Options, backend
 		// ImageNode ships images as data: URIs (self-contained, no asset
 		// endpoint), so the app driver's CSP must allow them for img-src
 		// while everything else stays self-only.
-		ContentSecurityPolicy: "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+		ContentSecurityPolicy: "default-src 'self'; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
 	}), middleware.LogRequests(options.Logger), middleware.Recover(options.Logger))
 	return handler, options, nil
 }
@@ -182,7 +187,7 @@ func eventHandler[S any](a app.App[S]) http.HandlerFunc {
 					http.Error(w, "save session", http.StatusInternalServerError)
 					return
 				}
-			case imageTransformField, viewportPointField, imageMarkerField:
+			case imageTransformField, viewportPointField, imageMarkerField, mapCameraField, mapFeatureField, mapVectorFeatureField:
 				if r.PostForm.Has(fieldName) {
 					payload := r.PostForm.Get(fieldName)
 					if !field.validPayload(payload) {
@@ -199,12 +204,17 @@ func eventHandler[S any](a app.App[S]) http.HandlerFunc {
 
 		allowed := map[string]bool{}
 		collectMessages(root, allowed)
-		if msgName := r.PostForm.Get(msgFieldName); msgName != "" {
-			if !allowed[msgName] {
+		if submitted := r.PostForm.Get(msgFieldName); submitted != "" {
+			if !allowed[submitted] {
 				http.Error(w, "invalid event", http.StatusBadRequest)
 				return
 			}
-			if err := session.Dispatch(app.Msg{Name: msgName}); err != nil {
+			message, valid := submittedAction(submitted)
+			if !valid {
+				http.Error(w, "invalid event", http.StatusBadRequest)
+				return
+			}
+			if err := session.Dispatch(message); err != nil {
 				http.Error(w, "save session", http.StatusInternalServerError)
 				return
 			}
@@ -232,7 +242,7 @@ func fieldCommitHandler[S any](a app.App[S]) http.HandlerFunc {
 		fields := map[string]postedField{}
 		collectFields(app.ResolvedView(a, state), rootPath, fields)
 		field, ok := fields[r.PostForm.Get(commitFieldName)]
-		if !ok || (field.kind != imageTransformField && field.kind != viewportPointField && field.kind != imageMarkerField) || field.msg.Name == "" {
+		if !ok || (field.kind != imageTransformField && field.kind != viewportPointField && field.kind != imageMarkerField && field.kind != mapCameraField && field.kind != mapFeatureField && field.kind != mapVectorFeatureField) || field.msg.Name == "" {
 			http.Error(w, "invalid field", http.StatusBadRequest)
 			return
 		}
@@ -288,6 +298,9 @@ body>form{min-height:100%}
 .trellis-image-marker{position:absolute;left:50%;top:50%;z-index:2;width:var(--poem-target);height:var(--poem-target);padding:0;border:var(--poem-space-md) solid transparent;border-radius:50%;background:var(--poem-neutral);background-clip:content-box;transform:translate(-50%,-50%);cursor:pointer}
 .trellis-image-marker--primary{background-color:var(--poem-primary)}.trellis-image-marker--secondary{background-color:var(--poem-secondary)}.trellis-image-marker--danger{background-color:var(--poem-danger)}.trellis-image-marker--success{background-color:var(--poem-success)}.trellis-image-marker--warning{background-color:var(--poem-warning)}
 .trellis-image-marker.is-selected,.trellis-image-marker:focus-visible{outline:.1875rem solid var(--poem-focus);outline-offset:.0625rem}
+.poem-map-viewport{position:relative;width:100%;height:100%;min-height:22rem;overflow:hidden;background:var(--poem-surface-muted);--poem-map-route:var(--poem-primary);--poem-map-traffic:var(--poem-warning)}
+.poem-map-viewport canvas{position:absolute;inset:0;z-index:2;width:100%;height:100%;touch-action:none;cursor:grab}.poem-map-viewport canvas:active{cursor:grabbing}.poem-map-viewport canvas:focus-visible{outline:.125rem solid var(--poem-focus);outline-offset:-.25rem}
+.poem-map-viewport__fallback{position:absolute;inset:0;z-index:1;width:100%;height:100%;object-fit:cover}.poem-map-viewport__features{position:absolute;z-index:3;left:var(--poem-space-sm);bottom:var(--poem-space-sm);display:flex;max-width:calc(100% - 2 * var(--poem-space-sm));gap:var(--poem-space-xs);overflow:auto}.poem-map-viewport__features button{min-height:var(--poem-target);border:1px solid var(--poem-line);border-radius:var(--poem-radius-md);background:var(--poem-surface-raised);color:var(--poem-text);padding:var(--poem-space-xs) var(--poem-space-sm)}
 .trellis-responsive>fieldset{min-width:0;margin:0;padding:0;border:0}.trellis-responsive>fieldset:not([hidden]){display:flex;flex-direction:column;gap:var(--poem-space-sm)}
 .poem-workspace{min-height:calc(100vh - 2 * var(--poem-space-lg));display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden;border:1px solid var(--poem-line);border-radius:var(--poem-radius-lg);background:var(--poem-surface);box-shadow:0 var(--poem-space-sm) var(--poem-space-lg) var(--poem-shadow)}
 .poem-workspace__header{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:var(--poem-space-md);padding:var(--poem-space-md) var(--poem-space-lg);border-bottom:1px solid var(--poem-line);background:var(--poem-surface-raised)}

@@ -139,6 +139,52 @@ func TestHandlerRequiresCSRFAndAllowsDeclaredEvent(t *testing.T) {
 	}
 }
 
+func TestDeclaredActionPayloadIsTransportedAndForgedPayloadIsRejected(t *testing.T) {
+	var received app.Msg
+	application := app.App[string]{
+		View: func(string) app.Node {
+			return app.ActionNode{Semantic: app.Semantic{ID: "settings", Name: "Settings", Enabled: true}, Label: "Settings", Invoke: app.Msg{Name: "panel", Payload: "settings"}}
+		},
+		Update: func(state string, message app.Msg) (string, app.Cmd) {
+			received = message
+			return message.Payload, app.Cmd{}
+		},
+	}
+	handler, _, err := NewHandler(application, "test", Options{SigningKey: []byte(strings.Repeat("p", 32))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	client := server.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	home, err := client.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(home.Body)
+	home.Body.Close()
+	cookie := home.Cookies()[0]
+	post := func(action string) int {
+		form := url.Values{csrfFieldName: {csrfFromBody(string(body))}, msgFieldName: {action}}
+		request, _ := http.NewRequest(http.MethodPost, server.URL+"/__event", strings.NewReader(form.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.AddCookie(cookie)
+		response, postErr := client.Do(request)
+		if postErr != nil {
+			t.Fatal(postErr)
+		}
+		defer response.Body.Close()
+		return response.StatusCode
+	}
+	if status := post(actionSubmitValue(app.Msg{Name: "panel", Payload: "settings"})); status != http.StatusSeeOther || received.Name != "panel" || received.Payload != "settings" {
+		t.Fatalf("status=%d received=%+v", status, received)
+	}
+	if status := post("panel"); status != http.StatusBadRequest {
+		t.Fatalf("forged payload-free action status=%d", status)
+	}
+}
+
 func TestConfiguredSignerRejectsShortKey(t *testing.T) {
 	if _, _, err := NewHandler(testApp(), "test", Options{SigningKey: []byte("short")}); err == nil {
 		t.Fatal("expected short signing key to fail")

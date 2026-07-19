@@ -107,6 +107,29 @@ type Environment struct {
 	Dark          bool
 	TextScale     float32
 	SystemAccent  *color.RGBA
+	// Locale is a BCP-47 language tag. UnitSystem is "metric", "imperial",
+	// or empty when the application should derive it from Locale.
+	Locale     string
+	UnitSystem string
+	GPU        GPUCapabilities
+	Background BackgroundCapabilities
+}
+
+type GPUCapabilities struct {
+	RetainedMeshes bool
+	WebGL2         bool
+	GLES3          bool
+	D3D11          bool
+	MaxTextureSize int
+	MemoryBudget   int64
+}
+
+type BackgroundCapabilities struct {
+	LocationContinuous bool
+	ExtendedExecution  bool
+	Notifications      bool
+	Speech             bool
+	Haptics            bool
 }
 
 // Normalized fills derived and zero-value environment fields.

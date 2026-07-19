@@ -643,6 +643,20 @@ func writeMessage(conn io.Writer, payload []byte) error {
 	return err
 }
 
+// SubmitMapScene sends one retained vector-scene generation to the active
+// hosted presenter. It is safe to call from a bounded cartography worker and
+// shares frame transport serialization with ordinary UI rendering.
+func SubmitMapScene(scene protocol.MapSceneDelta) error {
+	if globalRenderConn == nil {
+		return fmt.Errorf("render: no active presenter")
+	}
+	payload, err := protocol.EncodeMapSceneDelta(scene)
+	if err != nil {
+		return err
+	}
+	return writeMessage(globalRenderConn, payload)
+}
+
 // Read helper
 func readMessage(conn io.Reader) ([]byte, error) {
 	var lenBuf [4]byte

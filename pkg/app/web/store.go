@@ -105,7 +105,7 @@ func (s *sessionStore[S]) load(id string, r *http.Request) (*sessionEntry[S], er
 	}
 
 	entry := &sessionEntry[S]{state: state, csrf: csrfForSession(s.signer, id), lastSeen: now}
-	entry.executor = command.New(context.Background(), func(msg app.Msg) (app.Cmd, error) {
+	entry.executor = command.New(app.WithPlatformServices(context.Background(), s.app.Services), func(msg app.Msg) (app.Cmd, error) {
 		next, cmd := s.app.Update(entry.state, msg)
 		if err := s.backend.Save(context.Background(), id, next); err != nil {
 			return app.Cmd{}, err
@@ -116,6 +116,11 @@ func (s *sessionStore[S]) load(id string, r *http.Request) (*sessionEntry[S], er
 		s.mu.Unlock()
 		return cmd, nil
 	}, nil, s.logger)
+	if s.app.Subscriptions != nil {
+		if err := entry.executor.SetSubscriptions(func() []app.Subscription { return s.app.Subscriptions(entry.state) }); err != nil {
+			return nil, err
+		}
+	}
 	if err := entry.executor.Start(startup); err != nil {
 		return nil, err
 	}
@@ -167,8 +172,8 @@ func sessionMiddleware[S any](store *sessionStore[S], options Options) func(http
 			id := readOrIssueSessionID(w, r, store.signer, options.SecureCookies, int(options.SessionTTL/time.Second))
 			lock := store.lockFor(id)
 			lock.Lock()
-			defer lock.Unlock()
 			entry, err := store.load(id, r)
+			lock.Unlock()
 			if err != nil {
 				http.Error(w, "load session", http.StatusInternalServerError)
 				return

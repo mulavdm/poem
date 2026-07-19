@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -7,7 +8,7 @@
 namespace poem::protocol {
 
 constexpr char kMagic[4] = {'P', 'O', 'E', 'M'};
-constexpr std::uint16_t kVersion = 3;
+constexpr std::uint16_t kVersion = 4;
 
 enum class MessageType : std::uint16_t {
     InitEngine = 1,
@@ -16,6 +17,8 @@ enum class MessageType : std::uint16_t {
     SemanticTree = 4,
     FontAtlas = 5,
     SetImeVisible = 6,
+    MapSceneDelta = 7,
+    MapCamera = 8,
     EventBatch = 101,
     NativeDebugRequest = 201,
     NativeDebugResponse = 202,
@@ -34,6 +37,7 @@ enum class DrawCommandType : std::uint8_t {
     SetOffset = 7,
     SetClip = 8,
     DrawImage = 9,
+    DrawMapScene = 10,
 };
 
 enum class SoundType : std::uint8_t {
@@ -59,6 +63,9 @@ enum class EventType : std::uint8_t {
 	PanGesture = 13,
 	PinchGesture = 14,
 	Capabilities = 15,
+	MapCamera = 16,
+	MapFeature = 17,
+	MapFailure = 18,
 };
 
 enum class GesturePhase : std::uint8_t {
@@ -119,6 +126,52 @@ struct RenderFrame {
     std::int32_t height{};
     std::uint8_t cursor{};
     std::vector<DrawCommand> commands;
+};
+
+enum class MapResourceType : std::uint8_t { VertexBuffer = 0, IndexBuffer = 1, TextureRGBA = 2, TextureSDF = 3, TextureAlpha = 4 };
+enum class MapResourceOperation : std::uint8_t { Upload = 0, Release = 1 };
+enum class MapPrimitive : std::uint8_t { Triangles = 0, Lines = 1, Points = 2 };
+
+struct MapSceneResource {
+    MapResourceOperation operation{};
+    MapResourceType type{};
+    std::array<std::uint8_t, 32> hash{};
+    std::uint32_t stride{};
+    std::uint32_t width{};
+    std::uint32_t height{};
+    std::vector<std::uint8_t> bytes;
+};
+
+struct MapDrawBatch {
+    std::array<std::uint8_t, 32> vertexHash{};
+    std::array<std::uint8_t, 32> indexHash{};
+    std::array<std::uint8_t, 32> textureHash{};
+    MapPrimitive primitive{};
+    std::uint32_t first{};
+    std::uint32_t count{};
+    std::int32_t layer{};
+    float opacity{};
+    bool depthTest{};
+};
+
+struct MapCamera {
+    double latitude{};
+    double longitude{};
+    float zoom{};
+    float bearing{};
+    float pitch{};
+    std::uint32_t viewportWidth{};
+    std::uint32_t viewportHeight{};
+};
+
+struct MapSceneDelta {
+    std::string viewportId;
+    std::uint64_t generation{};
+    std::vector<MapSceneResource> resources;
+    std::vector<MapDrawBatch> draws;
+    MapCamera camera;
+    float sunAzimuth{};
+    float sunElevation{};
 };
 
 struct SetImeVisible {
@@ -257,6 +310,8 @@ struct NativeDialogResponse {
 Envelope DecodeEnvelope(const std::vector<std::uint8_t>& payload);
 InitEngine DecodeInitEngine(const std::vector<std::uint8_t>& body);
 RenderFrame DecodeRenderFrame(const std::vector<std::uint8_t>& body);
+MapSceneDelta DecodeMapSceneDelta(const std::vector<std::uint8_t>& body);
+MapCamera DecodeMapCamera(const std::vector<std::uint8_t>& body);
 PlaySound DecodePlaySound(const std::vector<std::uint8_t>& body);
 SetImeVisible DecodeSetImeVisible(const std::vector<std::uint8_t>& body);
 SemanticTree DecodeSemanticTree(const std::vector<std::uint8_t>& body);
