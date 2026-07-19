@@ -49,12 +49,19 @@ echo "==> C++ presenter"
   "$WORK/glue.o" -I"$ENGINE_DIR/src" -I"$POEM_DIR/cpp_sidecar/src" -I"$GLUE" \
   -L"$LIBDIR" -lpoemapp -lEGL -lGLESv2 -laaudio -landroid -llog -u ANativeActivity_onCreate
 
+# Optional extra native libraries (space-separated paths) to bundle, e.g. an
+# app-specific engine libpoemapp.so links against. They are copied into the ABI
+# lib dir and packaged alongside the host/app libs.
+for extra in ${EXTRA_LIBS:-}; do
+  cp "$extra" "$LIBDIR/"
+done
+
 echo "==> Manifest + package"
 sed -e "s/__PACKAGE__/$PACKAGE_ID/" -e "s/__LABEL__/$APP_LABEL/" \
   "$ENGINE_DIR/AndroidManifest.template.xml" > "$WORK/AndroidManifest.xml"
 "$BT/aapt2.exe" link -o "$WORK/unaligned.apk" --manifest "$WORK/AndroidManifest.xml" \
   -I "$SDK/platforms/android-36.1/android.jar"
-(cd "$WORK/apkroot" && "$JAVA_HOME/bin/jar.exe" uf ../unaligned.apk "lib/$ABI/libpoemhost.so" "lib/$ABI/libpoemapp.so")
+(cd "$WORK/apkroot" && "$JAVA_HOME/bin/jar.exe" uf ../unaligned.apk lib/"$ABI"/*.so)
 "$BT/zipalign.exe" -f -p 4 "$WORK/unaligned.apk" "$OUT_APK"
 "$BT/apksigner.bat" sign --ks "$USERPROFILE/.android/debug.keystore" \
   --ks-pass pass:android --ks-key-alias androiddebugkey "$OUT_APK"

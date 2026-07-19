@@ -729,6 +729,12 @@ void android_main(android_app* app) {
     app->userData = &g_host;
     app->onAppCmd = HandleCmd;
     app->onInputEvent = HandleInput;
+    // Point the Go app's user-config/data lookups at the app's private, writable
+    // directory. Without this HOME is "/" on Android, so os.UserConfigDir fails
+    // and preferences and downloaded region packages have nowhere to live.
+    if (app->activity && app->activity->internalDataPath) {
+        setenv("HOME", app->activity->internalDataPath, 1);
+    }
     HLOGI("poem android host entered");
 
     while (true) {
