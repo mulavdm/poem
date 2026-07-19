@@ -4,7 +4,7 @@
 // Process shape: android_main owns the EGL surface and render loop; a
 // dedicated transport thread drains the engine→presenter byte stream through
 // the Go export PoemHostRead (framed exactly like the Windows named pipes:
-// 4-byte little-endian length + POEM v2 envelope); input events accumulate
+// 4-byte little-endian length + POEM v3 envelope); input events accumulate
 // and flush to the engine as one framed EventBatch per frame through
 // PoemHostWrite — one batched cgo crossing each way per frame.
 #include <android/log.h>
@@ -13,6 +13,7 @@
 #include <GLES2/gl2.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -69,6 +70,9 @@ struct Host {
     int touchStartX = 0, touchStartY = 0;
     int lastTouchX = 0, lastTouchY = 0;
     std::chrono::steady_clock::time_point touchDownAt{};
+    bool pinching = false;
+    float pinchDistance = 0.0f;
+    int pinchX = 0, pinchY = 0;
 
     // Velocity samples for fling: recent (time, y) pairs from the live drag.
     static constexpr int kVelocitySamples = 4;
@@ -85,6 +89,7 @@ struct Host {
     // is consumed (standard Android: the tap that catches a moving list
     // does not click anything).
     bool flinging = false;
+    bool flingGesture = false;
     float flingVelocity = 0.0f;
     float flingRemainder = 0.0f;
     bool eatNextTap = false;
@@ -111,6 +116,19 @@ Host g_host;
 void QueueEvent(const poem::protocol::Event& event) {
     std::lock_guard<std::mutex> lock(g_host.eventMutex);
     g_host.pendingEvents.push_back(event);
+}
+
+void QueueGesture(poem::protocol::EventType type, poem::protocol::GesturePhase phase,
+                  int x, int y, int dx, int dy, float scale) {
+    poem::protocol::Event gesture;
+    gesture.type = type;
+    gesture.x = x;
+    gesture.y = y;
+    gesture.deltaX = dx;
+    gesture.deltaY = dy;
+    gesture.scale = scale;
+    gesture.phase = phase;
+    QueueEvent(gesture);
 }
 
 // WriteFramed sends one length-framed message to the engine.
@@ -263,6 +281,10 @@ void InitDisplay(Host* host) {
     resize.width = host->logicalW;
     resize.height = host->logicalH;
     QueueEvent(resize);
+    poem::protocol::Event capabilities;
+    capabilities.type = poem::protocol::EventType::Capabilities;
+    capabilities.value = R"({"pointer":1,"hover":false,"keyboard":true,"touch":true,"trackpad":false,"stylus":false,"density":0,"textScale":1,"reducedMotion":false,"highContrast":false})";
+    QueueEvent(capabilities);
     host->animating = true;
 }
 
@@ -508,6 +530,70 @@ int32_t HandleInput(android_app* app, AInputEvent* event) {
         button.button = 1;
         QueueEvent(button);
     };
+    auto queueGesture = [](poem::protocol::EventType type, poem::protocol::GesturePhase phase,
+                           int gx, int gy, int dx, int dy, float scale) {
+        poem::protocol::Event gesture;
+        gesture.type = type;
+        gesture.x = gx;
+        gesture.y = gy;
+        gesture.deltaX = dx;
+        gesture.deltaY = dy;
+        gesture.scale = scale;
+        gesture.phase = phase;
+        QueueEvent(gesture);
+    };
+
+    const auto pointerCount = AMotionEvent_getPointerCount(event);
+    auto pinchMetrics = [event, host]() {
+        const float x0 = (AMotionEvent_getX(event, 0) - host->insetX) / host->scale;
+        const float y0 = (AMotionEvent_getY(event, 0) - host->insetY) / host->scale;
+        const float x1 = (AMotionEvent_getX(event, 1) - host->insetX) / host->scale;
+        const float y1 = (AMotionEvent_getY(event, 1) - host->insetY) / host->scale;
+        const float dx = x1 - x0;
+        const float dy = y1 - y0;
+        return std::array<float, 3>{(x0 + x1) * 0.5f, (y0 + y1) * 0.5f,
+                                    std::max(1.0f, std::sqrt(dx * dx + dy * dy))};
+    };
+
+    if (action == AMOTION_EVENT_ACTION_POINTER_DOWN && pointerCount >= 2) {
+        const auto metrics = pinchMetrics();
+        if (host->flingGesture) {
+            QueueGesture(poem::protocol::EventType::PanGesture, poem::protocol::GesturePhase::End,
+                         host->lastTouchX, host->lastTouchY, 0, 0, 1.0f);
+            host->flingGesture = false;
+        }
+        host->pinching = true;
+        host->flinging = false;
+        host->touch = Host::Touch::None;
+        host->pinchX = static_cast<int>(metrics[0]);
+        host->pinchY = static_cast<int>(metrics[1]);
+        host->pinchDistance = metrics[2];
+        queueGesture(poem::protocol::EventType::PinchGesture, poem::protocol::GesturePhase::Begin,
+                     host->pinchX, host->pinchY, 0, 0, 1.0f);
+        return 1;
+    }
+    if (host->pinching && action == AMOTION_EVENT_ACTION_MOVE && pointerCount >= 2) {
+        const auto metrics = pinchMetrics();
+        const int cx = static_cast<int>(metrics[0]);
+        const int cy = static_cast<int>(metrics[1]);
+        const float scaleDelta = metrics[2] / std::max(1.0f, host->pinchDistance);
+        queueGesture(poem::protocol::EventType::PinchGesture, poem::protocol::GesturePhase::Update,
+                     cx, cy, cx - host->pinchX, cy - host->pinchY, scaleDelta);
+        host->pinchX = cx;
+        host->pinchY = cy;
+        host->pinchDistance = metrics[2];
+        return 1;
+    }
+    if (host->pinching && (action == AMOTION_EVENT_ACTION_POINTER_UP || action == AMOTION_EVENT_ACTION_UP ||
+                           action == AMOTION_EVENT_ACTION_CANCEL)) {
+        queueGesture(poem::protocol::EventType::PinchGesture,
+                     action == AMOTION_EVENT_ACTION_CANCEL ? poem::protocol::GesturePhase::Cancel
+                                                           : poem::protocol::GesturePhase::End,
+                     host->pinchX, host->pinchY, 0, 0, 1.0f);
+        host->pinching = false;
+        host->touch = Host::Touch::None;
+        return 1;
+    }
 
     // Slop is generous (≈14 logical px): at high densities a firm tap wobbles
     // more physical pixels than a mouse ever would, and a wobble that
@@ -526,6 +612,11 @@ int32_t HandleInput(android_app* app, AInputEvent* event) {
         // scroll once we see how it moves — or holds (hold-to-grab below).
         // Catching a fling stops it and consumes the tap.
         host->eatNextTap = host->flinging;
+        if (host->flingGesture) {
+            QueueGesture(poem::protocol::EventType::PanGesture, poem::protocol::GesturePhase::End,
+                         host->lastTouchX, host->lastTouchY, 0, 0, 1.0f);
+            host->flingGesture = false;
+        }
         host->flinging = false;
         host->touch = Host::Touch::Undecided;
         host->touchStartX = x;
@@ -546,7 +637,10 @@ int32_t HandleInput(android_app* app, AInputEvent* event) {
             // PromoteHeldTouch before ever moving.
             if (std::abs(dy) > kSlop && std::abs(dy) > std::abs(dx) * 3 / 2) {
                 host->touch = Host::Touch::Scroll;
+                host->lastTouchX = x;
                 host->lastTouchY = y;
+                queueGesture(poem::protocol::EventType::PanGesture, poem::protocol::GesturePhase::Begin,
+                             x, y, 0, 0, 1.0f);
             } else if (std::abs(dx) > kSlop) {
                 host->touch = Host::Touch::Drag;
                 queueMove(host->touchStartX, host->touchStartY);
@@ -559,19 +653,14 @@ int32_t HandleInput(android_app* app, AInputEvent* event) {
             // Pixel-accurate: every move streams its own wheel event whose
             // delta is the finger movement ×1.2 (the engine scales ×100/120
             // back to pixels), so the content tracks the finger 1:1.
-            const int dy = host->lastTouchY - y; // finger up = positive = scroll down
+            const int dx = x - host->lastTouchX;
+            const int dy = y - host->lastTouchY;
             host->lastTouchX = x;
             host->lastTouchY = y;
             recordVelocitySample(y);
-            if (dy != 0) {
-                queueMove(x, y); // wheel routing targets the component under the pointer
-                poem::protocol::Event wheel;
-                wheel.type = poem::protocol::EventType::MouseWheel;
-                wheel.x = x;
-                wheel.y = y;
-                wheel.delta = -dy * 120 / 100; // engine: delta<0 scrolls down
-                if (wheel.delta == 0) wheel.delta = dy > 0 ? -1 : 1;
-                QueueEvent(wheel);
+            if (dx != 0 || dy != 0) {
+                queueGesture(poem::protocol::EventType::PanGesture, poem::protocol::GesturePhase::Update,
+                             x, y, dx, dy, 1.0f);
             }
         } else if (host->touch == Host::Touch::Drag) {
             queueMove(x, y);
@@ -590,6 +679,9 @@ int32_t HandleInput(android_app* app, AInputEvent* event) {
             }
         } else if (host->touch == Host::Touch::Drag) {
             queueButton(poem::protocol::EventType::MouseUp, x, y);
+        } else if (host->touch == Host::Touch::Scroll && action == AMOTION_EVENT_ACTION_CANCEL) {
+            queueGesture(poem::protocol::EventType::PanGesture, poem::protocol::GesturePhase::Cancel,
+                         x, y, 0, 0, 1.0f);
         } else if (host->touch == Host::Touch::Scroll && action == AMOTION_EVENT_ACTION_UP) {
             // Release velocity (px/s over the recent sample window) becomes a
             // fling: the page keeps moving and decays frame by frame.
@@ -602,12 +694,17 @@ int32_t HandleInput(android_app* app, AInputEvent* event) {
                     const float v = static_cast<float>(oldest.y - y) / dt; // finger up = scroll down
                     if (std::abs(v) > 180.0f) {
                         host->flinging = true;
+                        host->flingGesture = true;
                         host->flingVelocity = std::min(std::max(v * 1.4f, -10000.0f), 10000.0f);
                         host->flingRemainder = 0.0f;
                         host->flingLastStep = now;
                     }
                     break;
                 }
+            }
+            if (!host->flinging) {
+                queueGesture(poem::protocol::EventType::PanGesture, poem::protocol::GesturePhase::End,
+                             x, y, 0, 0, 1.0f);
             }
         }
         host->eatNextTap = false;
@@ -647,7 +744,7 @@ void android_main(android_app* app) {
         }
         // Fling: after a fast scroll release the page keeps moving, slowing
         // exponentially (τ≈0.3s; release velocity ×1.4 so flicks launch fast and settle fast) — the standard Android inertia feel. Each
-        // frame converts the elapsed motion into one wheel event; fractional
+        // frame converts the elapsed motion into one pan update; fractional
         // pixels carry in flingRemainder so slow tails still move.
         if (g_host.flinging) {
             const auto now = std::chrono::steady_clock::now();
@@ -658,21 +755,18 @@ void android_main(android_app* app) {
             const int whole = static_cast<int>(travel);
             g_host.flingRemainder = travel - static_cast<float>(whole);
             if (whole != 0) {
-                poem::protocol::Event move;
-                move.type = poem::protocol::EventType::MouseMove;
-                move.x = g_host.lastTouchX;
-                move.y = g_host.lastTouchY;
-                QueueEvent(move);
-                poem::protocol::Event wheel;
-                wheel.type = poem::protocol::EventType::MouseWheel;
-                wheel.x = g_host.lastTouchX;
-                wheel.y = g_host.lastTouchY;
-                wheel.delta = -whole * 120 / 100;
-                if (wheel.delta == 0) wheel.delta = whole > 0 ? -1 : 1;
-                QueueEvent(wheel);
+                QueueGesture(poem::protocol::EventType::PanGesture, poem::protocol::GesturePhase::Update,
+                             g_host.lastTouchX, g_host.lastTouchY, 0, -whole, 1.0f);
             }
             g_host.flingVelocity *= std::exp(-dt / 0.3f);
-            if (std::abs(g_host.flingVelocity) < 80.0f) g_host.flinging = false;
+            if (std::abs(g_host.flingVelocity) < 80.0f) {
+                g_host.flinging = false;
+                if (g_host.flingGesture) {
+                    QueueGesture(poem::protocol::EventType::PanGesture, poem::protocol::GesturePhase::End,
+                                 g_host.lastTouchX, g_host.lastTouchY, 0, 0, 1.0f);
+                    g_host.flingGesture = false;
+                }
+            }
         }
 
         // Hold-to-grab: a press held past ~220ms without crossing the slop

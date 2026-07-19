@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 
+	"github.com/mulavdm/poem/pkg/design"
 	"github.com/mulavdm/poem/pkg/render/components"
 	"github.com/mulavdm/poem/pkg/render/events"
 	"github.com/mulavdm/poem/pkg/render/platform"
@@ -64,6 +66,14 @@ type AppConfig struct {
 	Effects               EffectsConfig
 	ShowDiagnostics       bool
 	LegacyComponentStyles bool
+	// Design resolves platform, density, accessibility, and semantic tokens.
+	Design *design.System
+	// Platform identifies the presentation convention without exposing a toolkit.
+	Platform design.Platform
+	// Input describes the host's available input paths.
+	Input design.InputCapabilities
+	// OnStop releases application-owned resources when the hosted engine exits.
+	OnStop func()
 }
 
 // Package-level orchestrator variables
@@ -162,21 +172,6 @@ func pollSystemPreferences(service platform.SystemPreferences, interval time.Dur
 	return updates, stop
 }
 
-func Run(config AppConfig) {
-	config.Services = withDefaultPlatformServices(config.Services)
-	manager, preferenceUpdates, stopPreferencePolling := prepareEngineState(config)
-	if stopPreferencePolling != nil {
-		defer close(stopPreferencePolling)
-	}
-
-	// Connect the platform presenter (on Windows: spawn the native sidecar
-	// and bind its named pipes) and drive it until it disconnects.
-	toPresenter, fromPresenter, cleanupPresenter := connectPresenter(config)
-	defer cleanupPresenter()
-
-	runEngine(config, manager, preferenceUpdates, toPresenter, fromPresenter)
-}
-
 // RunHosted drives an already-connected presenter over a caller-owned
 // transport instead of spawning a sidecar process. It exists for embedding
 // hosts where the presenter lives in the same process as the engine — the
@@ -184,6 +179,9 @@ func Run(config AppConfig) {
 // APK and exchange the same POEM byte protocol over an in-process pipe pair.
 // The caller owns both transports and closes them to stop the engine.
 func RunHosted(config AppConfig, toPresenter io.ReadWriteCloser, fromPresenter io.ReadWriteCloser) {
+	if config.OnStop != nil {
+		defer config.OnStop()
+	}
 	globalHostedMode = true
 	config.Services = withDefaultPlatformServices(config.Services)
 	manager, preferenceUpdates, stopPreferencePolling := prepareEngineState(config)
@@ -198,9 +196,23 @@ func RunHosted(config AppConfig, toPresenter io.ReadWriteCloser, fromPresenter i
 // transport. It returns the theme manager plus the system-preference polling
 // channel (and its stop channel, nil when polling is disabled).
 func prepareEngineState(config AppConfig) (*theme.Manager, <-chan platform.PreferenceSnapshot, chan struct{}) {
+	if config.Platform == design.PlatformUnknown {
+		switch runtime.GOOS {
+		case "windows":
+			config.Platform = design.PlatformWindows
+		case "android":
+			config.Platform = design.PlatformAndroid
+		}
+	}
+	if config.Design == nil {
+		config.Design = design.DefaultSystem()
+	}
+	designEnvironment := design.Environment{Platform: config.Platform, Width: config.Width, Height: config.Height, Input: config.Input,
+		ReducedMotion: config.Accessibility.ReducedMotion, TextScale: config.Accessibility.TextScale}
+	resolvedDesign := config.Design.Resolve(designEnvironment)
 	manager := config.Theme
 	if manager == nil {
-		manager = theme.NewManager(theme.ModernDark())
+		manager = theme.NewManager(resolvedDesign.Theme)
 	}
 	initialReducedMotion := config.Accessibility.ReducedMotion
 	if (config.Accessibility.FollowSystemTheme || config.Accessibility.FollowReducedMotion) && config.Services.Preferences != nil {
@@ -281,6 +293,8 @@ func prepareEngineState(config AppConfig) (*theme.Manager, <-chan platform.Prefe
 		ReducedMotion:         initialReducedMotion,
 		ShowDiagnostics:       config.ShowDiagnostics,
 		LegacyComponentStyles: config.LegacyComponentStyles,
+		DesignSystem:          config.Design,
+		DesignEnvironment:     resolvedDesign.Environment,
 		Overlays:              types.NewOverlayManager(),
 		TransientState:        state.NewStore(),
 	}
@@ -309,6 +323,8 @@ func prepareEngineState(config AppConfig) (*theme.Manager, <-chan platform.Prefe
 // platform-neutral — Run hands it named pipes bound to the Windows sidecar,
 // RunHosted hands it whatever in-process transport the embedding host owns.
 func runEngine(config AppConfig, manager *theme.Manager, preferenceUpdates <-chan platform.PreferenceSnapshot, toPresenter io.ReadWriteCloser, fromPresenter io.ReadWriteCloser) {
+	engineDone := make(chan struct{})
+	defer close(engineDone)
 	pipeConnGoToSidecar := toPresenter
 	pipeConnSidecarToGo := fromPresenter
 	globalRenderConn = pipeConnGoToSidecar
@@ -347,7 +363,7 @@ func runEngine(config AppConfig, manager *theme.Manager, preferenceUpdates <-cha
 	if err := writeMessage(pipeConnGoToSidecar, initBytes); err != nil {
 		panic(fmt.Sprintf("Failed to transmit InitEngine bootstrap package: %v", err))
 	}
-	fmt.Println("🔤 Font Atlas & Metrics bootstrap context loaded successfully to sidecar.")
+	fmt.Println("🔤 Font Atlas & Metrics bootstrap context loaded successfully to presenter.")
 
 	// 7. Initialize protocol-backed painter
 	painter := NewProtocolPainter()
@@ -358,13 +374,19 @@ func runEngine(config AppConfig, manager *theme.Manager, preferenceUpdates <-cha
 		startAutomationServer(resolveAutomationConfig(config.Automation))
 	}
 
-	// 8. Start Background Physics & Repaint loop (headful updates mapped back to sidecar)
+	// 8. Start Background Physics & Repaint loop (headful updates mapped back to presenter)
 	lastFrame := time.Now()
 	go func() {
+		ticker := time.NewTicker(16 * time.Millisecond)
+		defer ticker.Stop()
 		var telemetryTimer float64
 		for {
+			select {
+			case <-engineDone:
+				return
+			case <-ticker.C:
+			}
 			start := time.Now()
-			time.Sleep(16 * time.Millisecond) // ~60 FPS
 
 			stateMutex.Lock()
 			if preferenceUpdates != nil {
@@ -427,8 +449,9 @@ func runEngine(config AppConfig, manager *theme.Manager, preferenceUpdates <-cha
 		}
 	}()
 
-	// 9. Main event receiver loop (blocks on incoming event batches from the sidecar)
-	for {
+	// 9. Main event receiver loop (blocks on incoming event batches from the presenter)
+	stopRequested := false
+	for !stopRequested {
 		payload, err := readMessage(pipeConnSidecarToGo)
 		if err != nil {
 			if err == io.EOF {
@@ -452,7 +475,7 @@ func runEngine(config AppConfig, manager *theme.Manager, preferenceUpdates <-cha
 				continue
 			}
 			stateMutex.Lock()
-			processEventBatch(batch, pipeConnGoToSidecar, painter)
+			stopRequested = processEventBatch(batch, pipeConnGoToSidecar, painter)
 			stateMutex.Unlock()
 		case protocol.MessageNativeDebugResponse:
 			resp, err := protocol.DecodeNativeDebugResponse(payload)
@@ -1092,9 +1115,9 @@ func toProtocolSemanticTree(tree semantics.Tree) protocol.SemanticTree {
 }
 
 // Input event processor & state mapping
-func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *ProtocolPainter) {
+func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *ProtocolPainter) bool {
 	if globalState == nil {
-		return
+		return false
 	}
 	batchStart := time.Now()
 
@@ -1108,8 +1131,8 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 
 		switch ev.Type {
 		case protocol.EventTypeWindowClose:
-			fmt.Println("Sidecar requested window termination. Shutting down Go...")
-			os.Exit(0)
+			fmt.Println("Native host requested window termination. Shutting down Go...")
+			return true
 
 		case protocol.EventTypeWindowSize:
 			resizeEvents++
@@ -1126,6 +1149,20 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 					globalState.PhysicalWindowWidth = int(ev.X)
 					globalState.PhysicalWindowHeight = int(ev.Y)
 				}
+				globalState.ResolveDesign(w, h)
+			}
+
+		case protocol.EventTypeCapabilities:
+			capabilities, err := design.DecodeCapabilityUpdate(ev.Value)
+			if err == nil {
+				globalState.DesignEnvironment.Input = capabilities.Input()
+				globalState.DesignEnvironment.Density = capabilities.Density
+				globalState.DesignEnvironment.HighContrast = capabilities.HighContrast
+				if capabilities.TextScale > 0 {
+					globalState.TextScale = capabilities.TextScale
+				}
+				globalState.ReducedMotion = capabilities.ReducedMotion
+				globalState.ResolveDesign(globalState.WindowWidth, globalState.WindowHeight)
 			}
 
 		case protocol.EventTypeMouseDown:
@@ -1264,15 +1301,86 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			pt := image.Point{globalState.MouseX, globalState.MouseY}
 
 			comps := interactionRoots()
-			{
-				for _, comp := range comps {
-					comp.Walk(func(c types.Component) {
-						if sc, ok := c.(types.ScrollableComponent); ok {
-							if pt.In(c.Bounds()) {
-								sc.OnMouseWheel(pt, delta, globalState)
-							}
+			for rootIndex := len(comps) - 1; rootIndex >= 0; rootIndex-- {
+				var targets []types.ScrollableComponent
+				comps[rootIndex].Walk(func(c types.Component) {
+					if sc, ok := c.(types.ScrollableComponent); ok && pt.In(c.Bounds()) {
+						targets = append(targets, sc)
+					}
+				})
+				for targetIndex := len(targets) - 1; targetIndex >= 0; targetIndex-- {
+					if targets[targetIndex].OnMouseWheel(pt, delta, globalState) {
+						targetIndex = -1
+						rootIndex = -1
+					}
+				}
+			}
+
+		case protocol.EventTypePanGesture:
+			mouseEvents++
+			if ev.Phase > protocol.GesturePhaseCancel {
+				break
+			}
+			pt := image.Pt(int(ev.X), int(ev.Y))
+			delta := image.Pt(int(ev.DeltaX), int(ev.DeltaY))
+			phase := types.GesturePhase(ev.Phase)
+			handled := false
+			comps := interactionRoots()
+			for rootIndex := len(comps) - 1; rootIndex >= 0 && !handled; rootIndex-- {
+				var targets []types.PannableComponent
+				comps[rootIndex].Walk(func(c types.Component) {
+					if target, ok := c.(types.PannableComponent); ok && pt.In(c.Bounds()) {
+						targets = append(targets, target)
+					}
+				})
+				for targetIndex := len(targets) - 1; targetIndex >= 0; targetIndex-- {
+					if targets[targetIndex].OnPanGesture(pt, delta, phase, globalState) {
+						handled = true
+						break
+					}
+				}
+			}
+			if !handled && phase == types.GestureUpdate && delta.Y != 0 {
+				// Preserve ordinary Android page scrolling when no two-axis
+				// gesture target consumes the event.
+				for rootIndex := len(comps) - 1; rootIndex >= 0 && !handled; rootIndex-- {
+					var targets []types.ScrollableComponent
+					comps[rootIndex].Walk(func(c types.Component) {
+						if target, ok := c.(types.ScrollableComponent); ok && pt.In(c.Bounds()) {
+							targets = append(targets, target)
 						}
 					})
+					for targetIndex := len(targets) - 1; targetIndex >= 0; targetIndex-- {
+						if targets[targetIndex].OnMouseWheel(pt, delta.Y*120/100, globalState) {
+							handled = true
+							break
+						}
+					}
+				}
+			}
+
+		case protocol.EventTypePinchGesture:
+			mouseEvents++
+			if ev.Phase > protocol.GesturePhaseCancel || ev.Scale <= 0 || math.IsNaN(float64(ev.Scale)) || math.IsInf(float64(ev.Scale), 0) {
+				break
+			}
+			pt := image.Pt(int(ev.X), int(ev.Y))
+			delta := image.Pt(int(ev.DeltaX), int(ev.DeltaY))
+			phase := types.GesturePhase(ev.Phase)
+			comps := interactionRoots()
+			handled := false
+			for rootIndex := len(comps) - 1; rootIndex >= 0 && !handled; rootIndex-- {
+				var targets []types.PinchableComponent
+				comps[rootIndex].Walk(func(c types.Component) {
+					if target, ok := c.(types.PinchableComponent); ok && pt.In(c.Bounds()) {
+						targets = append(targets, target)
+					}
+				})
+				for targetIndex := len(targets) - 1; targetIndex >= 0; targetIndex-- {
+					if targets[targetIndex].OnPinchGesture(pt, delta, float64(ev.Scale), phase, globalState) {
+						handled = true
+						break
+					}
 				}
 			}
 
@@ -1369,6 +1477,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 	if stateChanged {
 		globalState.NeedsRepaint = true
 	}
+	return false
 }
 
 func activateMnemonic(key rune) bool {

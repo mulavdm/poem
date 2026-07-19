@@ -4,10 +4,38 @@ package render
 
 import (
 	"fmt"
+	"io"
 	"syscall"
 
 	"github.com/mulavdm/poem/internal/win32"
 )
+
+type automationPipeConnection struct{ handle uintptr }
+
+func (p *automationPipeConnection) Read(buffer []byte) (int, error) {
+	var read uint32
+	if err := syscall.ReadFile(syscall.Handle(p.handle), buffer, &read, nil); err != nil {
+		if err == syscall.ERROR_BROKEN_PIPE {
+			return 0, io.EOF
+		}
+		return 0, err
+	}
+	return int(read), nil
+}
+
+func (p *automationPipeConnection) Write(buffer []byte) (int, error) {
+	var written uint32
+	if err := syscall.WriteFile(syscall.Handle(p.handle), buffer, &written, nil); err != nil {
+		return 0, err
+	}
+	return int(written), nil
+}
+
+func (p *automationPipeConnection) Close() error {
+	win32.DisconnectNamedPipe(p.handle)
+	win32.CloseHandle(p.handle)
+	return nil
+}
 
 // startPipeAutomationServer serves the automation protocol over a Windows
 // named pipe. Pipe mode is Windows-only; other platforms use HTTP mode.
@@ -36,7 +64,7 @@ func startPipeAutomationServer(cfg AutomationConfig) {
 				continue
 			}
 
-			conn := &pipeReadWriteCloser{handle: handle}
+			conn := &automationPipeConnection{handle: handle}
 			handleAutomationConnection(conn, cfg)
 			_ = conn.Close()
 		}

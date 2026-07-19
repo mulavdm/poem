@@ -292,6 +292,10 @@ std::vector<std::uint8_t> EncodeEventBatch(const EventBatch& batch) {
 		w.WriteString(ev.target);
 		w.WriteString(ev.action);
 		w.WriteString(ev.value);
+		w.Write<std::int32_t>(ev.deltaX);
+		w.Write<std::int32_t>(ev.deltaY);
+		w.Write<float>(ev.scale);
+		w.Write<std::uint8_t>(static_cast<std::uint8_t>(ev.phase));
     }
     return w.Finish(MessageType::EventBatch);
 }

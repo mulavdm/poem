@@ -7,7 +7,7 @@
 namespace poem::protocol {
 
 constexpr char kMagic[4] = {'P', 'O', 'E', 'M'};
-constexpr std::uint16_t kVersion = 2;
+constexpr std::uint16_t kVersion = 3;
 
 enum class MessageType : std::uint16_t {
     InitEngine = 1,
@@ -56,6 +56,16 @@ enum class EventType : std::uint8_t {
     CompositionUpdate = 10,
     CompositionEnd = 11,
 	SemanticAction = 12,
+	PanGesture = 13,
+	PinchGesture = 14,
+	Capabilities = 15,
+};
+
+enum class GesturePhase : std::uint8_t {
+    Begin = 0,
+    Update = 1,
+    End = 2,
+    Cancel = 3,
 };
 
 struct Envelope {
@@ -182,6 +192,10 @@ struct Event {
 	std::string target;
 	std::string action;
 	std::string value;
+	std::int32_t deltaX{};
+	std::int32_t deltaY{};
+	float scale{1.0f};
+	GesturePhase phase{};
 };
 
 struct EventBatch {

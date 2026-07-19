@@ -1,6 +1,6 @@
 #include "audio.h"
 #include "accessibility.h"
-#include "ipc.h"
+#include "native_app.h"
 #include "protocol.h"
 #include "renderer_d3d11.h"
 
@@ -32,8 +32,7 @@ struct ComApartment {
 };
 
 struct AppState {
-    poem::ipc::PipeConnection toRenderer;
-    poem::ipc::PipeConnection toGo;
+    poem::host::NativeApp native;
     poem::protocol::InitEngine init;
     poem::RendererD3D11 renderer;
     poem::AudioEngine audio;
@@ -81,12 +80,17 @@ std::uint32_t ModifierMask() {
     return mask;
 }
 
-void SendEvent(AppState* app, const poem::protocol::Event& ev) {
+void SendEvent(AppState* app, const poem::protocol::Event& ev) noexcept {
+    if (!app || !app->native.Started()) return;
     std::lock_guard<std::mutex> lock(app->eventMutex);
-    poem::protocol::EventBatch batch;
-    batch.events.push_back(ev);
-    auto payload = poem::protocol::EncodeEventBatch(batch);
-    poem::ipc::WriteMessage(app->toGo, payload);
+    try {
+        poem::protocol::EventBatch batch;
+        batch.events.push_back(ev);
+        auto payload = poem::protocol::EncodeEventBatch(batch);
+        app->native.WriteMessage(payload);
+    } catch (...) {
+        app->running = false;
+    }
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -117,6 +121,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             float scale = static_cast<float>(dpi) / 96.0f;
             SendEvent(app, {poem::protocol::EventType::WindowSize, width, height, 0, 0, 0, 0,
                             static_cast<std::int32_t>(width / scale), static_cast<std::int32_t>(height / scale)});
+            poem::protocol::Event capabilities;
+            capabilities.type = poem::protocol::EventType::Capabilities;
+            capabilities.value = R"({"pointer":2,"hover":true,"keyboard":true,"touch":false,"trackpad":false,"stylus":false,"density":2,"textScale":1,"reducedMotion":false,"highContrast":false})";
+            SendEvent(app, capabilities);
         }
         return 0;
     case WM_DPICHANGED:
@@ -732,39 +740,31 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     ComApartment comApartment;
     SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
 
-    std::printf("POEM C++ sidecar starting up...\n");
+    std::printf("POEM native Windows host starting up...\n");
     AppState app;
     try {
-        app.toRenderer = poem::ipc::ConnectToPipe(L"\\\\.\\pipe\\poem_ipc_go_to_sidecar");
-        app.toGo = poem::ipc::ConnectToPipe(L"\\\\.\\pipe\\poem_ipc_sidecar_to_go");
-        auto initPayload = poem::ipc::ReadMessage(app.toRenderer);
-        auto initEnvelope = poem::protocol::DecodeEnvelope(initPayload);
-        if (initEnvelope.type != poem::protocol::MessageType::InitEngine) {
-            throw std::runtime_error("expected InitEngine");
-        }
-        app.init = poem::protocol::DecodeInitEngine(initEnvelope.body);
+        app.native.LoadAdjacent();
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "Startup failure: %s\n", ex.what());
+        OutputDebugStringA("POEM startup failure: ");
+        OutputDebugStringA(ex.what());
         return 1;
     }
 
-    std::wstring title = L"POEM C++ Sidecar";
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (argc > 1) title = argv[1];
-    LocalFree(argv);
+    const auto& metadata = app.native.Metadata();
+    const std::wstring& title = metadata.title;
 
     WNDCLASSW wc{};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
-    wc.lpszClassName = L"POEMCppSidecarWindow";
+    wc.lpszClassName = L"POEMWindowsHostWindow";
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassW(&wc);
 
     const StartupMonitorInfo startupMonitor = ResolveStartupMonitorInfo();
     const UINT initialDpi = startupMonitor.dpiX;
-    int desiredClientWidth = MulDiv(app.init.width, static_cast<int>(initialDpi), 96);
-    int desiredClientHeight = MulDiv(app.init.height, static_cast<int>(initialDpi), 96);
+    int desiredClientWidth = MulDiv(metadata.width, static_cast<int>(initialDpi), 96);
+    int desiredClientHeight = MulDiv(metadata.height, static_cast<int>(initialDpi), 96);
     RECT desiredWindowRect{0, 0, desiredClientWidth, desiredClientHeight};
     AdjustWindowRectExForDpi(&desiredWindowRect, WS_OVERLAPPEDWINDOW, FALSE, 0, initialDpi);
     RECT startupWindowRect = ResolveStartupWindowRect(desiredWindowRect, startupMonitor.info.rcWork);
@@ -793,14 +793,31 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
     RECT rc{};
     GetClientRect(hwnd, &rc);
+    try {
+        app.native.Start(rc.right - rc.left, rc.bottom - rc.top);
+        auto initPayload = app.native.ReadMessage();
+        auto initEnvelope = poem::protocol::DecodeEnvelope(initPayload);
+        if (initEnvelope.type != poem::protocol::MessageType::InitEngine) {
+            throw std::runtime_error("expected InitEngine");
+        }
+        app.init = poem::protocol::DecodeInitEngine(initEnvelope.body);
+    } catch (const std::exception& ex) {
+        std::fprintf(stderr, "Engine startup failure: %s\n", ex.what());
+        OutputDebugStringA("POEM engine startup failure: ");
+        OutputDebugStringA(ex.what());
+        app.native.Stop();
+        DestroyWindow(hwnd);
+        return 3;
+    }
     if (!app.renderer.Initialize(hwnd, rc.right - rc.left, rc.bottom - rc.top, app.init)) {
+        app.native.Stop();
         return 3;
     }
 
     std::thread reader([&app]() {
         while (app.running) {
             try {
-                auto payload = poem::ipc::ReadMessage(app.toRenderer);
+                auto payload = app.native.ReadMessage();
                 auto env = poem::protocol::DecodeEnvelope(payload);
                 if (env.type == poem::protocol::MessageType::RenderFrame) {
                     auto frame = poem::protocol::DecodeRenderFrame(env.body);
@@ -828,12 +845,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     auto request = poem::protocol::DecodeNativeDebugRequest(env.body);
                     auto response = BuildNativeDebugResponse(app, request);
                     auto payload = poem::protocol::EncodeNativeDebugResponse(response);
-                    poem::ipc::WriteMessage(app.toGo, payload);
+                    app.native.WriteMessage(payload);
                 } else if (env.type == poem::protocol::MessageType::NativeDialogRequest) {
                     auto request = poem::protocol::DecodeNativeDialogRequest(env.body);
                     auto response = OpenNativeDialog(app.hwnd, request);
                     auto payload = poem::protocol::EncodeNativeDialogResponse(response);
-                    poem::ipc::WriteMessage(app.toGo, payload);
+                    app.native.WriteMessage(payload);
                 }
             } catch (...) {
                 app.running = false;
@@ -843,6 +860,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         }
     });
 
+    // WM_SIZE may have run while the DLL was loaded but before its transport
+    // was started. Replay current metrics after the reader is draining engine
+    // frames so neither crossed pipe can deadlock during bootstrap.
+    GetClientRect(hwnd, &rc);
+    PostMessageW(hwnd, WM_SIZE, SIZE_RESTORED,
+                 MAKELPARAM(static_cast<WORD>(std::min<LONG>(rc.right - rc.left, 0xffff)),
+                            static_cast<WORD>(std::min<LONG>(rc.bottom - rc.top, 0xffff))));
+
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);
@@ -850,8 +875,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     }
 
     app.running = false;
+    app.native.Stop();
     if (reader.joinable()) reader.join();
-    poem::ipc::Close(app.toRenderer);
-    poem::ipc::Close(app.toGo);
     return 0;
 }

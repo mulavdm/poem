@@ -1,10 +1,9 @@
 param(
-    [string]$GalleryPath = (Join-Path $PSScriptRoot '..\POEM_gallery_uia.exe')
+    [string]$GalleryPath = (Join-Path $PSScriptRoot '..\dist\portable\POEM_gallery_uia.exe')
 )
 
 $ErrorActionPreference = 'Stop'
 $gallery = (Resolve-Path -LiteralPath $GalleryPath).Path
-$existingSidecars = @(Get-Process poem_cpp_sidecar -ErrorAction SilentlyContinue | ForEach-Object Id)
 $process = Start-Process -FilePath $gallery -PassThru
 
 try {
@@ -659,7 +658,4 @@ public static class PoemUiaEventCounter {
     }
 } finally {
     if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
-    Get-Process poem_cpp_sidecar -ErrorAction SilentlyContinue |
-        Where-Object { $_.Id -notin $existingSidecars } |
-        Stop-Process -Force
 }

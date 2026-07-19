@@ -66,11 +66,14 @@ func (b *Badge) Draw(p types.Painter, state *types.ApplicationState) {
 	t := activeTheme(state)
 	bg, fg := badgeVisual(t, b.Variant)
 	p.DrawRoundedRect(b.Rect, roundedRadius(b.Rect, t.Radii.Pill), bg)
-	cw := state.FontCharWidth
-	if cw <= 0 {
-		cw = 8
+	cw := 8
+	if state != nil && state.FontCharWidth > 0 {
+		cw = state.FontCharWidth
 	}
-	p.DrawText(b.Text, b.Rect.Min.X+(b.Rect.Dx()-len([]rune(b.Text))*cw)/2, b.Rect.Min.Y+b.Rect.Dy()/2+5, fg)
+	label := fitButtonLabel(b.Text, b.Rect.Dx(), cw)
+	p.PushClip(b.Rect)
+	p.DrawText(label, b.Rect.Min.X+(b.Rect.Dx()-len([]rune(label))*cw)/2, b.Rect.Min.Y+b.Rect.Dy()/2+5, fg)
+	p.PopClip()
 }
 func (b *Badge) HitTest(image.Point) string                            { return "" }
 func (b *Badge) OnKey(uint32, rune, *types.ApplicationState) bool      { return false }
@@ -370,15 +373,16 @@ type selectInteraction struct {
 }
 
 type Select struct {
-	CompID       string
-	Rect         image.Rectangle
-	Options      []SelectOption
-	Value        string
-	Open         bool
-	Disabled     bool
-	Placeholder  string
-	OnChange     func(string, *types.ApplicationState)
-	OnOpenChange func(bool, *types.ApplicationState)
+	CompID         string
+	AccessibleName string
+	Rect           image.Rectangle
+	Options        []SelectOption
+	Value          string
+	Open           bool
+	Disabled       bool
+	Placeholder    string
+	OnChange       func(string, *types.ApplicationState)
+	OnOpenChange   func(bool, *types.ApplicationState)
 }
 
 func NewSelect(id string, options []SelectOption, value string, onChange func(string, *types.ApplicationState)) *Select {
@@ -634,7 +638,11 @@ func (s *Select) Focusable() bool                                       { return
 func (s *Select) Walk(fn func(types.Component))                         { fn(s) }
 func (s *Select) Semantics(state *types.ApplicationState) semantics.Node {
 	open := s.overlayOpen(state)
-	return semantics.Node{ID: s.CompID, Role: semantics.RoleComboBox, Name: s.Placeholder, Value: s.label(), Bounds: s.Rect, State: semantics.State{Disabled: s.Disabled, Expanded: open, Focused: state != nil && state.FocusedID == s.CompID && !open}, Actions: []semantics.Action{semantics.ActionFocus, semantics.ActionExpand, semantics.ActionCollapse, semantics.ActionSetValue}}
+	name := s.AccessibleName
+	if name == "" {
+		name = s.Placeholder
+	}
+	return semantics.Node{ID: s.CompID, Role: semantics.RoleComboBox, Name: name, Value: s.label(), Bounds: s.Rect, State: semantics.State{Disabled: s.Disabled, Expanded: open, Focused: state != nil && state.FocusedID == s.CompID && !open}, Actions: []semantics.Action{semantics.ActionFocus, semantics.ActionExpand, semantics.ActionCollapse, semantics.ActionSetValue}}
 }
 func (s *Select) PerformSemanticAction(targetID string, action semantics.Action, value string, state *types.ApplicationState) bool {
 	if targetID != s.CompID || s.Disabled {

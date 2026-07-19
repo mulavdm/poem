@@ -22,28 +22,43 @@ jobs:
       - run: go test -race ./...
       - run: go vet ./...
       - run: go mod verify
-      - run: go build ./cmd/gallery
-      - run: go build ./cmd/engine
+      - uses: msys2/setup-msys2@v2
+        with:
+          update: false
+          install: mingw-w64-ucrt-x86_64-gcc
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build and verify Windows application DLLs
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = "1"
+          $env:CC = "C:\msys64\ucrt64\bin\gcc.exe"
+          go build -buildmode=c-shared -o gallery_poem_app.dll ./cmd/gallery
+          go build -buildmode=c-shared -o engine_poem_app.dll ./cmd/engine
+          $exports = (& dumpbin /exports gallery_poem_app.dll) -join "`n"
+          foreach ($name in @("PoemWindowsABIVersion", "PoemWindowsMetadata", "PoemWindowsStart", "PoemHostRead", "PoemHostWrite", "PoemWindowsStop")) {
+            if ($exports -notmatch $name) { throw "missing DLL export $name" }
+          }
       - run: git diff --check
 
-  sidecar:
+  windows-host:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: lukka/get-cmake@latest
-      - run: cmake -S cpp_sidecar -B cpp_sidecar/build
-      - run: cmake --build cpp_sidecar/build --config Release
-      # The embedded sidecar must have been built from the current cpp_sidecar
-      # sources. The check fingerprints the committed sources (git blob hashes,
-      # deterministic on any checkout) against the manifest recorded when the
-      # binary was embedded. Bit-comparing the exe against a fresh runner build
-      # is NOT viable: MSVC updates on the runner image change codegen, so that
-      # comparison has never passed on CI (v0.1.0 and v0.3.0 both failed on it).
-      - name: Verify embedded sidecar provenance
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: msys2/setup-msys2@v2
+        with:
+          update: false
+          install: mingw-w64-ucrt-x86_64-gcc
+      - run: cmake -S cpp_sidecar -B cpp_sidecar/build -A x64
+      - run: cmake --build cpp_sidecar/build --config Release --target poem_windows_host -- /m:1
+      - run: cmake --build cpp_sidecar/build --config Release --target poem_windows_host_contract_test -- /m:1
+      - run: ctest --test-dir cpp_sidecar/build -C Release --output-on-failure
+      - name: Build portable bundle and unsigned MSIX
         shell: pwsh
         run: |
-          $current = (git ls-files -s cpp_sidecar) -join "`n"
-          $fingerprint = (Get-FileHash -InputStream ([IO.MemoryStream][Text.Encoding]::UTF8.GetBytes($current)) -Algorithm SHA256).Hash
-          $manifest = (Get-Content pkg/render/assets/windows_amd64/poem_cpp_sidecar.provenance -Raw).Trim()
-          if ($fingerprint -ne $manifest) { throw "cpp_sidecar sources ($fingerprint) do not match the embedded sidecar's provenance manifest ($manifest); rebuild and re-embed per RELEASING.md" }
+          ./windows_host/build.ps1 -ProjectDirectory . -GoPackage ./cmd/gallery -Identity POEM.Gallery -DisplayName "POEM Gallery" -Version 0.0.0.0 -OutputDirectory artifacts

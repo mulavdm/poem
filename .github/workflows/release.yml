@@ -18,28 +18,36 @@ jobs:
           cache: true
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: lukka/get-cmake@latest
-      - run: cmake -S cpp_sidecar -B cpp_sidecar/build
-      - run: cmake --build cpp_sidecar/build --config Release
-      # See ci.yml: fingerprints committed sources against the embed-time
-      # manifest; bit-identity with a fresh runner build is not achievable
-      # across MSVC image updates. The fresh Release build above still gates
-      # that the sources compile, and it is what ships in the zip below.
-      - name: Verify embedded sidecar provenance
-        shell: pwsh
-        run: |
-          $current = (git ls-files -s cpp_sidecar) -join "`n"
-          $fingerprint = (Get-FileHash -InputStream ([IO.MemoryStream][Text.Encoding]::UTF8.GetBytes($current)) -Algorithm SHA256).Hash
-          $manifest = (Get-Content pkg/render/assets/windows_amd64/poem_cpp_sidecar.provenance -Raw).Trim()
-          if ($fingerprint -ne $manifest) { throw "cpp_sidecar sources ($fingerprint) do not match the embedded sidecar's provenance manifest ($manifest); rebuild and re-embed per RELEASING.md" }
+      - uses: msys2/setup-msys2@v2
+        with:
+          update: false
+          install: mingw-w64-ucrt-x86_64-gcc
       - run: go test ./...
       - run: go test -race ./...
       - run: go vet ./...
       - run: go mod verify
-      - run: go build -o POEM_gallery.exe ./cmd/gallery
-      - run: Compress-Archive -Force -Path POEM_gallery.exe,cpp_sidecar/build/Release/poem_cpp_sidecar.exe -DestinationPath POEM-${env:GITHUB_REF_NAME}-windows-amd64.zip
+      - name: Build portable ZIP and unsigned MSIX
+        shell: pwsh
+        env:
+          POEM_WINDOWS_CERT_PATH: ${{ secrets.POEM_WINDOWS_CERT_PATH }}
+          POEM_WINDOWS_CERT_THUMBPRINT: ${{ secrets.POEM_WINDOWS_CERT_THUMBPRINT }}
+          POEM_WINDOWS_CERT_PASSWORD: ${{ secrets.POEM_WINDOWS_CERT_PASSWORD }}
+        run: |
+          $semver = $env:GITHUB_REF_NAME.TrimStart('v')
+          $arguments = @{
+            ProjectDirectory = "."
+            GoPackage = "./cmd/gallery"
+            Identity = "POEM.Gallery"
+            DisplayName = "POEM Gallery"
+            Version = "$semver.0"
+            OutputDirectory = "release"
+          }
+          if ($env:POEM_WINDOWS_CERT_PATH) { $arguments.CertificatePath = $env:POEM_WINDOWS_CERT_PATH }
+          elseif ($env:POEM_WINDOWS_CERT_THUMBPRINT) { $arguments.CertificateThumbprint = $env:POEM_WINDOWS_CERT_THUMBPRINT }
+          ./windows_host/build.ps1 @arguments
       - run: gh release create "$env:GITHUB_REF_NAME" --verify-tag --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: gh release upload "$env:GITHUB_REF_NAME" POEM-${env:GITHUB_REF_NAME}-windows-amd64.zip --clobber
+      - run: gh release upload "$env:GITHUB_REF_NAME" release/*.zip release/*.msix --clobber
         env:
           GH_TOKEN: ${{ github.token }}

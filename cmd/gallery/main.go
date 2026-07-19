@@ -23,17 +23,6 @@ var (
 	selectedTableRow     = "alpha"
 )
 
-func main() {
-	render.Run(render.AppConfig{
-		Title:        "POEM Component Gallery",
-		Width:        1180,
-		Height:       780,
-		Theme:        themes,
-		BuildPagesFn: buildGallery,
-		Automation:   &render.AutomationConfig{Enabled: true, Mode: "http", Host: "127.0.0.1", Port: 47831},
-	})
-}
-
 func buildGallery(state *render.ApplicationState) {
 	w, h := state.GetWindowSize()
 	state.CurrentPage = "gallery"

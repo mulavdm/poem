@@ -3,10 +3,9 @@
 // Package mobile bridges the POEM engine to an in-process native presenter on
 // Android. The C++ presenter (android_engine) hosts the process; the Go
 // engine runs as a c-shared library inside it. Both sides speak the same
-// POEM v2 byte protocol used with the Windows sidecar — same envelope, same
-// 4-byte length framing — only the transport differs: a pair of in-memory
-// pipes crossed by the exported PoemHostRead/PoemHostWrite functions instead
-// of named pipes.
+// POEM byte protocol used by the Windows host — same envelope and 4-byte
+// length framing. Both native targets use the shared hosted in-memory runtime;
+// this package adds Android exports and logcat integration.
 //
 // Call batching matters here: a cgo call costs far more than a Go call, so
 // the presenter reads whole framed messages (one blocking PoemHostRead loop
@@ -28,13 +27,13 @@ import "C"
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"sync"
 	"syscall"
 	"unsafe"
 
+	"github.com/mulavdm/poem/pkg/hosted"
 	"github.com/mulavdm/poem/pkg/render"
 )
 
@@ -75,14 +74,7 @@ func logcat(format string, args ...any) {
 
 var (
 	startOnce sync.Once
-
-	// engine→presenter stream: runEngine writes frames, PoemHostRead drains.
-	presenterReader *io.PipeReader
-	engineWriter    *io.PipeWriter
-
-	// presenter→engine stream: PoemHostWrite feeds events, runEngine reads.
-	engineReader    *io.PipeReader
-	presenterWriter *io.PipeWriter
+	runtime   hosted.Runtime
 )
 
 // Start launches the engine against the in-process transport. It returns
@@ -92,49 +84,13 @@ var (
 // be re-created while the process lives on).
 func Start(config render.AppConfig, width, height int) {
 	startOnce.Do(func() {
-		config.Width = width
-		config.Height = height
 		log.SetOutput(logcatWriter{})
 		redirectStdio()
-		presenterReader, engineWriter = io.Pipe()
-		engineReader, presenterWriter = io.Pipe()
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logcat("engine panic: %v", r)
-				}
-			}()
-			logcat("engine starting %dx%d", width, height)
-			render.RunHosted(config, nopCloser{engineWriter}, nopCloser{engineReader})
-			logcat("engine exited")
-		}()
+		logcat("engine starting %dx%d", width, height)
+		if err := runtime.Start(config, width, height); err != nil {
+			logcat("engine failed to start: %v", err)
+		}
 	})
-}
-
-// nopCloser adapts pipe halves to io.ReadWriteCloser: the engine treats its
-// transport as a duplex conn, but each half here is one-directional; the
-// unused direction returns errors naturally.
-type nopCloser struct{ inner any }
-
-func (n nopCloser) Read(b []byte) (int, error) {
-	if r, ok := n.inner.(io.Reader); ok {
-		return r.Read(b)
-	}
-	return 0, io.EOF
-}
-
-func (n nopCloser) Write(b []byte) (int, error) {
-	if w, ok := n.inner.(io.Writer); ok {
-		return w.Write(b)
-	}
-	return 0, io.ErrClosedPipe
-}
-
-func (n nopCloser) Close() error {
-	if c, ok := n.inner.(io.Closer); ok {
-		return c.Close()
-	}
-	return nil
 }
 
 // PoemHostRead copies up to capacity bytes of the engine→presenter stream
@@ -144,11 +100,11 @@ func (n nopCloser) Close() error {
 //
 //export PoemHostRead
 func PoemHostRead(buf unsafe.Pointer, capacity C.int) C.int {
-	if presenterReader == nil || capacity <= 0 {
+	if capacity <= 0 {
 		return -1
 	}
 	dst := unsafe.Slice((*byte)(buf), int(capacity))
-	n, err := presenterReader.Read(dst)
+	n, err := runtime.Read(dst)
 	if n > 0 {
 		return C.int(n)
 	}
@@ -164,11 +120,11 @@ func PoemHostRead(buf unsafe.Pointer, capacity C.int) C.int {
 //
 //export PoemHostWrite
 func PoemHostWrite(buf unsafe.Pointer, length C.int) C.int {
-	if presenterWriter == nil || length <= 0 {
+	if length <= 0 {
 		return -1
 	}
 	src := unsafe.Slice((*byte)(buf), int(length))
-	n, err := presenterWriter.Write(src)
+	n, err := runtime.Write(src)
 	if err != nil {
 		return -1
 	}
