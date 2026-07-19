@@ -12,11 +12,14 @@ Applications can install a live theme manager through `render.AppConfig`:
 ```go
 themes := render.NewThemeManager(render.ModernDarkTheme())
 
-render.Run(render.AppConfig{
+config := render.AppConfig{
     Title:        "Example",
+    Width:        800,
+    Height:       600,
     Theme:        themes,
     BuildPagesFn: buildPages,
-})
+}
+poemwindows.MustRegister(config, poemwindows.Metadata{Identity: "Example.App", Title: config.Title, Width: 800, Height: 600})
 ```
 
 Switching is an immutable publication operation:
@@ -169,7 +172,7 @@ Semantic components publish platform-neutral roles, names, values, states,
 actions, access keys, bounds, relationships, and optional numeric-range metadata. Relationships
 use stable IDs for `LabeledBy`, `DescribedBy`, `Controls`, and `FlowsTo`; tree
 validation rejects missing, duplicate, self-referential, or oversized links. POEM flattens that tree
-into protocol v2 only when its contents change. The Windows sidecar maps the
+into the presenter protocol only when its contents change. The in-process Windows host maps the
 latest snapshot to UI Automation fragments and standard Invoke, Value, Toggle,
 Selection, SelectionItem, ExpandCollapse, RangeValue, Text, Grid, GridItem,
 Table, TableItem, and Scroll patterns. Component containers preserve their
@@ -177,7 +180,7 @@ render-tree ownership in the portable semantic tree, so viewport, toolbar,
 dialog, and overlay descendants navigate under the correct parent. UIA text ranges
 use native UTF-16 offsets while protocol actions convert them to POEM's
 rune-indexed selections. Provider actions return to Go as stable-ID semantic
-events; Win32 and COM types remain private to the sidecar. Semantic updates
+events; Win32 and COM types remain private to the native host. Semantic updates
 raise UIA property, focus, text, selection, and structure-change notifications
 from the Win32 UI apartment. Password controls advertise `IsPassword` but do
 not expose ValuePattern, TextPattern, semantic plaintext, or automation
@@ -204,7 +207,7 @@ On Windows these portable links map to UIA `LabeledBy`, `DescribedBy`,
 `ControllerFor`, and `FlowsTo` properties. `LabeledBox` publishes its visible
 title as a semantic text node and automatically labels its child control.
 
-After building `cmd/gallery` as `POEM_gallery_uia.exe` and the Release sidecar,
+After packaging `cmd/gallery` as a host EXE plus adjacent Go DLL,
 run `powershell -ExecutionPolicy Bypass -File cpp_sidecar/test_uia.ps1` to verify
 discovery, accurate range metadata, and native-to-Go actions against the live
 gallery, including delivered property/text notifications, Unicode text-range

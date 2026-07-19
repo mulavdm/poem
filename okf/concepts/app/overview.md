@@ -16,7 +16,7 @@ An application author writes exactly one thing against Trellis: a `core.App[S]`
 type App[S any] struct {
 	Init   S
 	View   func(state S) Node
-	Update func(state S, msg Msg) S
+	Update func(state S, msg Msg) (S, Cmd)
 }
 ```
 
@@ -28,10 +28,10 @@ interface. See [POEM Backend](/concepts/app/desktop-driver.md) and
 
 ## The `Node` IR
 
-`core.Node` (`pkg/app/node.go`) is a closed interface with sixteen concrete kinds today:
+`core.Node` (`pkg/app/node.go`) is a closed interface with nineteen concrete kinds today:
 `TextNode`, `ButtonNode`, `TextInputNode`, `TextAreaNode`, `CheckboxNode`, `SwitchNode`,
 `SelectNode`, `RadioGroupNode`, `SliderNode`, `BadgeNode`, `ProgressBarNode`, `TableNode`,
-`AccordionNode`, `TabsNode`, `ContainerNode`, and `ModalNode`. Each backend's `render.go`
+`AccordionNode`, `TabsNode`, `ImageNode`, `ImageViewportNode`, `ResponsiveNode`, `ContainerNode`, and `ModalNode`. Each backend's `render.go`
 translates a `Node` tree into that backend's real component tree — POEM's `components.Button`/
 `components.TextArea`/`components.Checkbox`/`components.Switch`/`components.Select`/
 `components.Radio`/`components.Slider`/`components.Badge`/`components.ProgressBar`/
@@ -76,6 +76,21 @@ translates a fired `Msg` into a call to `app.Update`, then re-renders from the r
 state; neither backend lets an `OnClick`/`OnChange` handler skip `Update` and mutate state
 directly.
 
+## `Cmd`: typed asynchronous work without concurrent state mutation
+
+`Update` may return `Cmd{Name, Run}`. `Run(context.Context) (any, error)` executes outside the
+serialized reducer/view path; its completion returns as `Msg{Name: cmd.Name, Value: value,
+Err: err}`. `Value` and `Err` are runtime-local and are never populated from an HTTP form.
+Browser events therefore keep the restricted `Name`/`Payload` wire shape, while command results
+can carry route structures, image bytes, or other typed application values without encoding them
+through `Payload`.
+
+The command name is also its concurrency key. Different names may execute concurrently. Starting
+a newer command with the same name cancels the older context and advances a generation; a late
+older result is discarded even when that command ignored cancellation. Reducers and views remain
+serialized on every target, commands may chain by returning another command from their completion,
+and in-flight work is process-local rather than durable across restart.
+
 ### Non-`string` payloads: one explicit convention, not a type system
 
 `Msg.Payload` stays `string` — it has to, to stay serializable across the web backend's HTTP
@@ -101,6 +116,23 @@ encoding: an HTML checkbox is *absent* from the POST body when unchecked, not
 present-with-value-`"false"`, unlike every other field kind. `pkg/app/web/render.go`'s `fieldKind`
 (`valueField` vs. `checkboxField`) exists because of this — presence, not a posted value, *is*
 the payload for a checkbox field.
+
+`ImageViewportNode` adds one strict JSON payload convention for its controlled
+`ImageTransform{OffsetX, OffsetY, Scale}`. Offsets are viewport fractions, positive values move
+the image right/down, and zero scale normalizes to one. `ImageTransformPayload` and
+`Msg.ImageTransform` reject unknown fields, trailing data, non-finite numbers, and values outside
+the transport envelope; the node's default interactive scale range is 0.5–8.
+
+The viewport also supports mutually exclusive activation and navigation. A short background
+click/tap emits a strict normalized `ViewportPoint`; a drag or pinch emits only the transform;
+an `ImageMarker` hit emits that marker's stable ID. Marker positions follow the transformed image
+while their accessible hit targets stay at least 44 logical pixels. Web field commits are resolved
+against the current node tree, so forged marker IDs and stale paths are rejected.
+
+`ResponsiveNode` is the nineteenth kind. It selects Compact or Wide children from assigned width,
+with a 600 logical-pixel default breakpoint. Native layout makes the choice during measurement and
+draw. Web renders both branches but keeps only one enabled; Compact is the usable no-JavaScript
+baseline and a small `matchMedia` enhancement switches branches without application state.
 
 ## `ModalNode`: the first `Node` that isn't part of `App[S]` at all
 

@@ -14,14 +14,14 @@ POEM's shared automation layer includes lightweight timing hooks intended for do
 Returns JSON with:
 
 - `frames` — rolling frame timings for rebuild/render/serialize/write and total frame cost
-- `event_batches` — timings for native input batches processed from the sidecar
+- `event_batches` — timings for native input batches processed from the presenter
 - `automation` — timings for HTTP automation commands handled inside POEM
 - `events` — a capped recent event stream for quick inspection
 
 Important interpretation notes:
 
 - frame timings are measured inside POEM's Go render loop
-- event-batch timings only reflect native sidecar input batches
+- event-batch timings only reflect native presenter input batches
 - direct HTTP automation actions like `POST /click` do not go through the native event queue, so they can update UI state without increasing `event_batches.batch_count`
 - sub-millisecond values are preserved, so very fast actions may legitimately appear as fractions like `0.18`
 

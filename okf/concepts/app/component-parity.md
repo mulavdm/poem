@@ -45,6 +45,9 @@ verification of 2026-07-16 (API 36 emulator, preferences/settings examples).
 | `TableNode`      | `DataTable`         | `data.Table`        | ✅ renders read-only | Row selection/sorting deliberately not surfaced yet. |
 | `AccordionNode`  | `Accordion`         | `widget.Disclosure` | ✅ header tap expands; nested control dispatches | Expand state is backend-local chrome, not `App[S]`. Known cosmetic overlap after expansion (TASK.md). |
 | `TabsNode`       | `Tabs` (controlled) | `widget.FormTabs`   | ✅ tab tap switches panel | Selection is `App[S]`-owned so the app can set it. |
+| `ImageNode`      | `ImageView`/`DrawImage` | data-URI `<img>` | ✅ renders through GLES texture cache | Encoded bytes and alt text. |
+| `ImageViewportNode` | `ImageViewport` | clipped `<img>` + Pointer Events | ✅ pan + two-pointer pinch + tap/markers | Controlled transform, normalized point activation, and stable accessible markers. |
+| `ResponsiveNode` | `Responsive` | compact/wide fieldsets + `matchMedia` | ✅ width-selected branch | Compact is the no-JS baseline; inactive web fields are disabled. |
 | `ContainerNode`  | `FlexBox`           | `<div>` flex        | ✅ layout correct at density | |
 | `ModalNode`      | `Modal` (overlay)   | `widget.Modal`      | ✅ trigger opens overlay; nested control dispatches; back gesture (→Escape) dismisses | Open state is not `App[S]`; content is an open-time snapshot — verified visibly on Android. |
 

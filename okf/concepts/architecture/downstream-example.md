@@ -17,17 +17,21 @@ import (
 	"image"
 
 	"github.com/mulavdm/poem/pkg/render"
+	poemwindows "github.com/mulavdm/poem/pkg/windows"
 )
 
-func main() {
-	// 1. Run the application window loop
-	render.Run(render.AppConfig{
+func init() {
+	// 1. Register the application with the native Windows host.
+	config := render.AppConfig{
 		Title:  "My Downstream POEM App",
 		Width:  800,
 		Height: 600,
 		BuildPagesFn: BuildAllPages,
-	})
+	}
+	poemwindows.MustRegister(config, poemwindows.Metadata{Identity: "Example.Dashboard", Title: config.Title, Width: config.Width, Height: config.Height})
 }
+
+func main() {}
 
 // 2. The Page builder function that is re-evaluated on state changes
 func BuildAllPages(state *render.ApplicationState) {

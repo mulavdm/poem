@@ -1,13 +1,13 @@
 ---
 type: Concept
 title: High-DPI Coordinate Translation Subsystem
-description: How POEM keeps layout in a logical coordinate space while the D3D11 sidecar presents in physical pixels.
+description: How POEM keeps layout in logical coordinates while the in-process D3D11 host presents physical pixels.
 tags: [architecture, dpi, coordinates, d3d11, scaling]
 timestamp: 2026-07-10T00:00:00Z
 ---
-# Process Isolation & High-DPI Coordinate Translation Subsystem
+# High-DPI Coordinate Translation Subsystem
 
-POEM implements a process-isolated dual-runtime architecture. The Go orchestrator manages business logic, layout generation, and state metrics, while driving a native presentation sidecar over local IPC. The current Windows runtime uses a C++ sidecar built on Win32 and D3D11 with a repo-owned binary protocol over dual named pipes. To ensure pixel-perfect rendering across varied screen resolutions, POEM incorporates a fully automated High-DPI Coordinate Translation Subsystem.
+POEM implements a single-process dual-runtime architecture. The Go DLL manages business logic, layout generation, and state metrics while the C++ Win32/D3D11 host presents the repo-owned protocol over in-memory transport. The coordinate contract is unchanged from earlier releases.
 
 ## The High-DPI Engineering Challenge
 
@@ -20,11 +20,11 @@ However, forcing the layout engine to compute high-DPI coordinates causes dynami
 POEM segregates the framework into two distinct coordinate systems:
 
 1. **Logical Coordinate Space (Go Orchestrator)**: the layout matrix, event boundaries, padding, rounding, and vector coordinates run strictly in a virtual Logical Space (e.g. standard 1024x768 units).
-2. **Physical Coordinate Space (Windows D3D11 Sidecar)**: native presentation resources, render targets, and swapchains run in the device's Physical Pixel Space (e.g. 2048x1536 pixels on 200% scaling).
+2. **Physical Coordinate Space (Windows D3D11 Host)**: native presentation resources, render targets, and swapchains run in the device's Physical Pixel Space (e.g. 2048x1536 pixels on 200% scaling).
 
 ## Dynamic Orthographic Projection Translation
 
-To bridge these coordinate spaces, the sidecar scales its render projection using the current physical size and DPI factor:
+To bridge these coordinate spaces, the host scales its render projection using the current physical size and DPI factor:
 
 ```rust
 let left = 0.0;
@@ -33,10 +33,10 @@ let bottom = physical_height as f32 / scale_factor;
 let top = 0.0;
 ```
 
-This maps logical layout coordinates into the sidecar's native render space while preserving correct physical sizing.
+This maps logical layout coordinates into the host's native render space while preserving correct physical sizing.
 
 ```
-       Go Orchestrator                     Windows D3D11 Sidecar
+       Go Engine DLL                       Windows D3D11 Host
 +----------------------------+      +------------------------------+
 | Logical Space (1024x768)   |      | Physical Pixel Space (4K)   |
 |                            |      |                              |
@@ -52,7 +52,7 @@ This maps logical layout coordinates into the sidecar's native render space whil
 
 ## Physical Presentation Alignment
 
-The Windows sidecar receives logical draw commands from Go and applies the current DPI scale when configuring projection, scissor, and presentation bounds. Using physical swapchain dimensions for native presentation prevents visual stretching, offset shifts, and coordinate mismatches on scaled displays.
+The Windows host receives logical draw commands from Go and applies the current DPI scale when configuring projection, scissor, and presentation bounds. Using physical swapchain dimensions for native presentation prevents visual stretching, offset shifts, and coordinate mismatches on scaled displays.
 
 ## Physical Scissor Clipping Boundaries
 

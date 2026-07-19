@@ -31,7 +31,7 @@ That third distinction is critical. A native app can be alive and rendering corr
 Automation is enabled through `render.AppConfig.Automation`.
 
 ```go
-render.Run(render.AppConfig{
+config := render.AppConfig{
     Title:        "My POEM App",
     Width:        1280,
     Height:       800,
@@ -44,7 +44,8 @@ render.Run(render.AppConfig{
         CaptureDir: filepath.Join(rootDir, "output", "automation"),
         Verbose:    true,
     },
-})
+}
+poemwindows.MustRegister(config, poemwindows.Metadata{Identity: "Example.App", Title: config.Title, Width: config.Width, Height: config.Height})
 ```
 
 ### `AutomationConfig`
@@ -76,7 +77,7 @@ HTTP is the recommended path because it works well across shell contexts, test r
 - [HTTP Endpoints](/concepts/automation/endpoints.md)
 - [Capture Modes](/concepts/automation/capture-modes.md)
 - [Inspect Flow](/concepts/automation/inspect-flow.md)
-- [Sidecar Protocol](/concepts/protocol.md)
+- [Native Presenter Protocol](/concepts/protocol.md)
 
 # Citations
 - [README.md](../../../README.md) — Automation

@@ -7,7 +7,7 @@ timestamp: 2026-07-10T00:00:00Z
 ---
 # Keyboard Focus & Global Hotkey Engine Architecture
 
-POEM features a dedicated, low-latency, and highly decoupled keyboard controller integrated directly into the native Win32 message procedure (`libWndProc`). It provides platform-neutral accessibility semantics with sequential focus cycling, theme-defined focus indicators, automatic scroll centering, and customizable global hotkey listeners. On Windows, the native sidecar exposes the semantic tree through UI Automation.
+POEM features a dedicated, low-latency keyboard controller integrated into the native Win32 message procedure. It provides platform-neutral accessibility semantics with sequential focus cycling, theme-defined focus indicators, automatic scroll centering, and customizable global hotkey listeners. On Windows, the in-process host exposes the semantic tree through UI Automation.
 
 Visible form labels should use `LabeledBox`; it emits a semantic text label and connects the child through the portable `LabeledBy` relationship. Custom semantic components can populate `semantics.Relationships` (`LabeledBy`, `DescribedBy`, `Controls`, and `FlowsTo`). Standard buttons expose the same optional value as `Button.Relations`. POEM validates every relationship target before publication.
 

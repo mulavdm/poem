@@ -13,10 +13,10 @@ To support large lists, telemetry streams, and logging consoles, POEM integrates
 
 To render items inside a scroll container without them bleeding onto stationary UI elements, POEM adds a native viewport clipping bounding box to the drawing tree:
 
-- **Native GPU Scissor Tests**: the active Windows sidecar executes hardware scissor tests in D3D11 render passes.
+- **Native GPU Scissor Tests**: the active Windows host executes hardware scissor tests in D3D11 render passes.
 - **Aspect Scaling Conversion**: because the native renderer operates on physical pixels, it converts the logical scissor bounds requested by Go into physical pixels using the current display DPI scale factor. The calculated bounds are safely clamped to avoid exceeding swapchain sizes, providing zero-overhead, anti-aliased sub-frame viewport clipping.
 
-Elements outside the `ScrollView` `Rect` are automatically clipped at the GPU level inside the native sidecar.
+Elements outside the `ScrollView` `Rect` are automatically clipped at the GPU level inside the native host.
 
 ## Relative Coordinate Translation
 

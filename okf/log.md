@@ -1,5 +1,33 @@
 # OKF Bundle Update Log
 
+## 2026-07-19 (M8: MAPPS map-first product experience)
+
+- Added once-only application startup commands, a complete adaptive workspace/section/interactive-collection contract, semantic action placement/icons, immutable product design overrides, and dimension-aware viewport commits with legacy compatibility. Web framework/design/component assets now run under a strict same-origin CSP without required inline styles or scripts.
+- MAPPS dogfoods the composition with a persistent map canvas, docked or bottom-sheet planner, connection settings surface, active endpoint flow, adaptive directions, startup dataset fitting, and base-map/search/route command chaining.
+
+## 2026-07-18 (M7: single-process native Windows host)
+
+- Replaced the Windows Go-process-plus-C++-sidecar topology with one product host process loading an adjacent application-specific Go c-shared DLL through ABI v1. Windows and Android now share `pkg/hosted`; renderer protocol bytes move through in-memory pipes, shutdown is cooperative, and the Go runtime is never unloaded.
+- Removed Windows presenter spawning, renderer named pipes, embedded extraction/provenance, override resolution, `render.Run`, and `desktop.Run`. Added secure loader/metadata validation, contract tests, portable ZIP/MSIX packaging, separate development trust commands, migrated examples/gallery/engine/MAPPS entrypoints, and updated CI/release gates.
+
+## 2026-07-18 (M6: adaptive native design standard)
+
+- Added `pkg/design` with cached foundation/semantic/platform resolution, exact four-class adaptation, input-driven density, accessibility preferences, contrast-safe host accents, Windows/Android/web profiles, and Adaptive House fallback. Native render context and generated web CSS now consume the same resolved tokens.
+- Added stable semantic nodes, state-derived transport-safe command references, four-branch `AdaptiveNode`, semantic design lint, and an appended presenter capability event. Migrated checked-in examples and MAPPS' Search/Route/Engine workspace while preserving its M5 asynchronous map reducer.
+
+## 2026-07-18 (M5: selectable annotated maps and responsive layout)
+
+- Extended `ImageViewportNode` with strict normalized background activation and accessible `ImageMarker` annotations. Marker taps, background taps, and pan/pinch gestures are mutually exclusive; markers follow the transformed image while keeping stable hit targets. Web commits are CSRF/path validated and reject forged marker IDs.
+- Added `ResponsiveNode`, POEM's 19th cross-target node. Native selects Compact/Wide from measured width; web uses a compact no-JavaScript baseline and disables the inactive fieldset while `matchMedia` switches branches. MAPPS dogfoods both primitives for map selection and readable narrow-screen maneuvers.
+
+## 2026-07-18 (M4: interactive image viewport)
+
+- Added `ImageViewportNode`, POEM's 18th cross-target node: a clipped controlled image with viewport-relative pan/zoom transforms, strict payload helpers, local drag/wheel/pinch preview, and one committed change at gesture completion. Protocol v3 appends phased pan/pinch events without renumbering earlier events; Android emits true two-pointer gestures and inertial pan, while web uses Pointer Events plus a CSRF/path-validated field-commit route. Existing content-hash image and texture caches remain stable while transforms animate.
+
+## 2026-07-18 (M3: asynchronous application commands)
+
+- Changed `App.Update` to return `(S, Cmd)` and added keyed, cancellable command execution shared by desktop, Android, and web. Different command names overlap; same-name work is latest-wins with late-result rejection; typed command results/errors return through runtime-local `Msg.Value`/`Msg.Err` while browser events remain name/string-only. Reducer/view access stays serialized, desktop completion requests repaint, and web sessions persist loading/final states with a no-JS conditional refresh while work is pending. MAPPS dogfoods the contract for search, routing/static-map, and status calls.
+
 ## 2026-07-18 (ImageNode — 17th Node kind, driven by the MAPPS map)
 
 - Added `ImageNode` (encoded PNG/JPEG/GIF bytes + alt text): the web driver ships it as a `data:` URI (MIME-sniffed, alt-escaped; the app driver’s CSP now allows `img-src data:`), the desktop driver decodes once per content hash into the existing `ImageView`/`DrawImage` pipeline (a 60fps rebuild must not re-decode), and the GLES presenter gained the missing `DrawImage` path — textured quads with a content-hash texture cache so the per-frame byte resend uploads once per distinct image. Verified end-to-end by the MAPPS route-overview map in the browser and on the Android emulator; the Windows presenter already rendered `DrawImage`.

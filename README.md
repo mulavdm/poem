@@ -1,5 +1,21 @@
 # POEM
 
+## Map-first adaptive workspaces (M8)
+
+`App.Start` can publish startup state and launch one keyed command exactly once per native engine or new web session. `WorkspaceNode` now keeps a primary canvas persistent while adapting its tools: docked on expanded windows, compact overlay on medium layouts, and a draggable bottom sheet on compact touch layouts. `SectionNode`, semantic action importance/placement, interactive collections, product color overrides, and viewport size commits let applications build rich workspaces without application-owned visual metrics.
+
+The web driver serves framework, design, and component CSS from same-origin endpoints under `style-src 'self'`; no required inline style or script is used. See [MIGRATION_M8.md](MIGRATION_M8.md).
+
+## Single-process native Windows host (M7)
+
+Windows applications are now shipped as an application-specific Go `poem_app.dll` beside the generic `poem_windows_host.exe` (renamed for the product). The host loads the DLL with restricted adjacent-directory search, validates the versioned C ABI, and carries the existing POEM protocol over bounded in-memory pipes. The application and reducer remain compiled Go machine code with an embedded Go runtime; Win32, D3D11, UI Automation, IME, audio, and window lifecycle remain native C++. Both live in one OS process. There is no presenter child process, extracted payload, renderer named pipe, or sidecar override.
+
+## Adaptive native design (M6)
+
+`pkg/design` resolves one semantic application tree into Windows, Android, web, or neutral Adaptive House conventions. It uses the four standard window classes, input capability and density independently of width, text scale, reduced motion, high contrast, and a contrast-safe host accent. The web renderer generates CSS variables from the same resolved tokens used by native components.
+
+Application actions come from the state-derived `App.Commands` registry and are referenced by semantic nodes with stable IDs. Messages and asynchronous commands retain the transport-safe reducer contract. See [MIGRATION_M6.md](MIGRATION_M6.md) for the breaking migration.
+
 POEM is a Go UI framework with **one application API and three targets**: an application is
 written once as a `pkg/app` `App[S]` — serializable state, a pure `View` producing a `Node`
 tree, a pure `Update` reducer — and runs as a native Windows desktop app, a server-rendered
@@ -16,19 +32,20 @@ var App = app.App[State]{
 			app.Button("Increment", app.Msg{Name: "increment"}),
 		)
 	},
-	Update: func(s State, m app.Msg) State {
+	Update: func(s State, m app.Msg) (State, app.Cmd) {
 		if m.Name == "increment" {
 			s.Count++
 		}
-		return s
+		return s, app.Cmd{}
 	},
 }
 ```
 
-Run it (see `examples/counter/` for all three mains):
+Host it (see `examples/counter/` for all three targets):
 
 ```go
-desktop.Run(App, render.AppConfig{Title: "Counter"})   // native Windows window
+config := desktop.Configure(App, render.AppConfig{Title: "Counter", Width: 480, Height: 320})
+poemwindows.MustRegister(config, poemwindows.Metadata{Identity: "POEM.Counter", Title: config.Title, Width: config.Width, Height: config.Height})
 web.Run(App, "127.0.0.1:8090", "Counter")              // stateful web server, no JS required
 // Android: examples/counter/android + android_engine/build_apk.sh → installable APK
 ```
@@ -39,18 +56,20 @@ As of 2026-07-16 the former sibling projects **Trellis** (the app layer) and **G
 
 ## Layers
 
-- **`pkg/app`** — the public application API: `App[S]`, serializable `Msg`s, and a closed set
-  of `Node` kinds (17 today) that every target renders. Drivers: `pkg/app/desktop`,
+- **`pkg/app`** — the public application API: `App[S]`, named `Msg`s, keyed asynchronous
+  `Cmd`s, and a closed set of `Node` kinds (19 today) that every target renders. Annotated
+  `ImageViewportNode`s provide controlled pan/zoom, point activation, and accessible markers;
+  `ResponsiveNode` selects compact or wide content from available width. Drivers: `pkg/app/desktop`,
   `pkg/app/web`; Android launches through `pkg/mobile`.
 - **`pkg/render`** — the engine layer: the component/theme/layout/semantics runtime, the
-  binary presenter protocol (`pkg/render/protocol`), and `render.Run`/`render.RunHosted`.
+  binary presenter protocol (`pkg/render/protocol`) and `render.RunHosted`.
   Public and usable directly for advanced native apps (see `cmd/gallery`), but its event
   handlers are Go closures — they cannot cross the web target's HTTP boundary, which is why
   `pkg/app` is the one application API (see the consolidation decision).
 - **`pkg/web`** — the server-rendered HTML component library and HTTP middleware the web
   driver renders through (formerly GopherWeb; `poem-*` CSS classes, no-JS baseline).
 - **Presenters** — native hosts that draw the engine's frames and feed input back over the
-  protocol: `cpp_sidecar/` (the active Windows presenter: Win32, D3D11, UI Automation),
+  protocol: the `poem_windows_host` target in `cpp_sidecar/` (Win32, D3D11, UI Automation),
   `android_engine/` (Android: C++/EGL/GLES2 in a zero-Java NativeActivity APK), and
   `rust_engine/` (legacy Windows/OpenGL reference, no longer the active runtime path).
   These live at the top level because they are foreign-toolchain native code; the web
@@ -64,8 +83,11 @@ As of 2026-07-16 the former sibling projects **Trellis** (the app layer) and **G
 |-- pkg/app/               # Public application API (App[S], Msg, Node) + desktop/web drivers
 |-- pkg/render/            # Engine layer: components, layout, protocol, state, engine loop
 |-- pkg/web/               # Server-rendered HTML components + HTTP middleware
-|-- pkg/mobile/            # Android in-process engine<->presenter transport (c-shared exports)
-|-- cpp_sidecar/           # Active Windows presenter (Win32 + D3D11 + UIA)
+|-- pkg/hosted/            # Shared bounded in-process engine transport
+|-- pkg/mobile/            # Android-specific c-shared bridge and logcat integration
+|-- pkg/windows/           # Versioned Windows c-shared ABI and application metadata
+|-- cpp_sidecar/           # Generic poem_windows_host C++ source (Win32 + D3D11 + UIA)
+|-- windows_host/          # Portable ZIP/MSIX packaging and development signing commands
 |-- android_engine/        # Android presenter (EGL/GLES2) + no-Gradle APK build script
 |-- rust_engine/           # Legacy Windows presenter (OpenGL), reference only
 |-- examples/              # counter, preferences, settings — one App[S], three targets each
@@ -86,7 +108,7 @@ measurement helpers, and native window state.
 Minimal example:
 
 ```go
-render.Run(render.AppConfig{
+config := render.AppConfig{
 	Title:        "POEM App",
 	Width:        1024,
 	Height:       768,
@@ -98,6 +120,9 @@ render.Run(render.AppConfig{
 		Port:       47831,
 		CaptureDir: "output/automation",
 	},
+}
+poemwindows.MustRegister(config, poemwindows.Metadata{
+	Identity: "Example.App", Title: config.Title, Width: config.Width, Height: config.Height,
 })
 ```
 
@@ -137,34 +162,26 @@ This means downstream apps should not assume "declare children and forget it" br
 
 See [okf/concepts/architecture/layout-measurement.md](./okf/concepts/architecture/layout-measurement.md) for the downstream migration pattern.
 
-## Sidecar Resolution (Windows)
+## Windows hosting and packaging
 
-At runtime, POEM resolves `poem_cpp_sidecar.exe` in this order:
+The generic host loads only an absolute adjacent `poem_app.dll`. It validates ABI version 1 and all required exports before starting the Go engine, never unloads the Go runtime, and stops it cooperatively when the window closes. Application packages export:
 
-1. `POEM_SIDECAR_PATH`
-2. the same directory as the host executable
-3. development build outputs under `cpp_sidecar/build`
-4. an embedded Windows sidecar payload extracted automatically by POEM
+- `PoemWindowsABIVersion`, `PoemWindowsMetadata`, and `PoemWindowsStart`
+- `PoemHostRead` and `PoemHostWrite`
+- `PoemWindowsStop`
 
-This keeps downstream apps simple: a consumer can import the Go API and run without
-project-specific sidecar path setup. The embedded payload's provenance is verified in CI
-against the committed sidecar sources (see [RELEASING.md](./RELEASING.md)).
+Build a portable folder/ZIP and unsigned MSIX with `windows_host/build.ps1`. Signing is optional; secrets are read from CI environment configuration. `New-DevelopmentCertificate.ps1` creates or reuses an explicitly named per-user signing certificate, while trusting its exported certificate requires the separate opt-in `Trust-DevelopmentCertificate.ps1` command.
 
 ## Build
 
-Windows sidecar and demos:
+Windows host and a complete gallery package:
 
 ```powershell
 cmake -S cpp_sidecar -B cpp_sidecar\build
 cmake --build cpp_sidecar\build --config Release
-go build ./cmd/gallery    # component-gallery acceptance surface
-go build ./cmd/engine     # legacy runtime smoke demo
-```
-
-For a Windows GUI binary without a console window:
-
-```powershell
-go build -ldflags="-s -w -H=windowsgui" -o POEM.exe ./cmd/engine
+windows_host\build.ps1 -ProjectDirectory . -GoPackage ./cmd/gallery `
+  -Identity POEM.Gallery -DisplayName "POEM Gallery" -Version 0.7.0.0 `
+  -OutputDirectory .\dist
 ```
 
 Android APK (NDK clang + aapt2 + apksigner, no Gradle):
@@ -175,14 +192,14 @@ android_engine/build_apk.sh examples/counter/android com.trellis.counter Counter
 
 ## Current Runtime Status
 
-The active Windows sidecar supports the current core path: spawn/shutdown, bootstrap atlas
-upload, render frames over the protocol, mouse/wheel/keyboard/resize/DPI events, portable
+The single-process Windows host supports cooperative start/shutdown, bootstrap atlas
+upload, in-memory protocol frames, mouse/wheel/keyboard/resize/DPI events, portable
 shortcuts and UIA-visible mnemonics, DPI-aware startup sizing, cursor switching, core draw
 commands with text atlas and clipping, sound triggers, HTTP automation transport, native
 foreground activation and window state, and the self/window/desktop capture modes.
 
 The Android presenter covers surface bring-up, density-scaled rendering of the core draw
-commands, touch input, and the in-process engine transport. Known follow-up work (tracked in
+commands, two-pointer pan/pinch gestures, touch input, and the in-process engine transport. Known follow-up work (tracked in
 `TASK.md`): IME/soft keyboard, audio, an accessibility bridge, activity-lifecycle hardening,
 and atlas re-rasterization at density. On Windows, raycaster/billboard special paths are not
 fully ported from the legacy renderer, and glass/blur are functional approximations.

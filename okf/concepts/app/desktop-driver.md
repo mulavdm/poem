@@ -1,17 +1,19 @@
 ---
 type: concept
-title: POEM Backend
-description: How poem.Run drives a core.App[S] as a real running POEM desktop window.
+title: POEM Native Configuration Driver
+description: How desktop.Configure adapts App[S] into native renderer configuration for process hosts.
 tags: [architecture, poem, backend]
 timestamp: 2026-07-10T00:00:00Z
 ---
 
 > **Ported from the Trellis/GopherWeb bundles at the 2026-07-16 consolidation.** Historical names map as: "Trellis" = `pkg/app`; "GopherWeb" = `pkg/web` (CSS prefix now `poem-`); "POEM" as a sibling project = the `pkg/render` engine layer. All are now this repository.
-# POEM Backend
+# POEM Native Configuration Driver
 
-`poem.Run(app, config)` (`poem/driver.go`) holds the running `S` in a closure and installs it
-as `config.BuildPagesFn` before calling `render.Run(config)` — every other `AppConfig` field
-passes through unchanged.
+`desktop.Configure(app, config)` holds the running `S` in a serialized command executor and
+installs the application view as `config.BuildPagesFn`; every other `AppConfig` field passes
+through unchanged. A Windows c-shared main registers that configuration with `pkg/windows`,
+while Android passes it to `pkg/mobile.Start`. The configured `OnStop` hook cancels commands
+and closes the executor when either native host stops.
 
 ## Why no new integration mechanism was needed
 
@@ -23,12 +25,13 @@ thing: call `app.View(state)`, walk the returned `Node` tree (`pkg/app/desktop/r
 construct real `*components.Button`/`*components.TextInput`/`*layout.FlexBox` instances, and
 assign the result into `rstate.Pages[rootPage]`.
 
-Each interactive node's real POEM callback (e.g. `Button.OnClick`) is a closure that calls
-`app.Update(state, msg)` and stores the result. No explicit repaint call is needed for this
+Each interactive node's real POEM callback (e.g. `Button.OnClick`) dispatches through the shared
+keyed-command executor, which serializes `Update` and `View` access. No explicit repaint call is needed for this
 path: it runs inside POEM's own mouse/key dispatch, which already marks the frame dirty
-afterward. A future addition that mutates state from outside POEM's own event dispatch (a
-timer, an async I/O callback) would need `render.RequestRepaint()` — POEM's own public,
-documented hook for exactly that case — since nothing yet in this backend does that.
+afterward. Command completions re-enter `Update` through the same executor and call
+`render.RequestRepaint()` after an accepted result, so application goroutines never mutate state
+or touch render components directly. Desktop shutdown cancels active work; Android's configured
+executor intentionally lives for the hosted engine process lifetime.
 
 ## Component IDs
 
@@ -54,7 +57,12 @@ POEM's theme variant), `ProgressBarNode` (`render.NewProgressBar`), `TableNode`
 `OnToggle`, so it self-manages expansion in POEM's transient store — see Component Parity),
 `TabsNode` (a **controlled** `render.NewTabs` strip — `App[S]` owns `Selected` — plus a
 `FlexBox` holding only the active tab's content), `ContainerNode` (`render.FlexBox`, wiring
-`Direction`/`Gap`/`Padding`), and `ModalNode` (see below). See
+`Direction`/`Gap`/`Padding`), `ImageNode` (content-hash decoded image), `ImageViewportNode`
+(clipped controlled image with local drag, wheel, pan/pinch preview, point activation, and
+accessible transformed markers), `ResponsiveNode` (compact/wide branch selected from assigned
+width), and `ModalNode` (see below). A viewport emits one strict transform message at gesture end;
+a short tap emits either a normalized point or one marker ID, never both. Decoded pixels continue
+to use the content-hash cache while its destination changes each frame. See
 [Architecture Overview](/concepts/app/overview.md) for the full `Node` set and the policy on
 adding more.
 

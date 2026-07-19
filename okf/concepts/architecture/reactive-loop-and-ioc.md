@@ -1,24 +1,24 @@
 ---
 type: Concept
 title: Reactive Loop & Inversion of Control
-description: The re-evaluation loop that drives page rebuilds, and how render.Run(AppConfig) hides Win32 wiring from consumers.
+description: The hosted re-evaluation loop that drives page rebuilds behind native process boundaries.
 tags: [architecture, ioc, reactive-loop, public-api]
 timestamp: 2026-07-10T00:00:00Z
 ---
 # Core Architecture & Reactive Loop
 
-POEM uses a process-isolated re-evaluation loop driven over local IPC. Instead of manually updating widgets, applications write a Page Builder function.
+POEM uses a hosted re-evaluation loop driven over its native presenter protocol. Instead of manually updating widgets, applications write a page builder or semantic `App[S]` view.
 
 The lifecycle:
 
-1. The native presentation sidecar captures low-level window interactions and transmits them back to Go.
+1. The native presenter captures low-level window interactions and transmits them to the hosted Go engine over in-memory transport.
 2. The Go orchestrator processes these events, mutates the global `ApplicationState`, and invokes the Page Builder function to rebuild the component hierarchy from scratch.
 3. Go serializes the new drawing commands using the repo-owned binary protocol in `pkg/render/protocol`.
-4. The sidecar processes the frame asynchronously and flushes draw calls to the GPU.
+4. The presenter processes the frame asynchronously and flushes draw calls to the GPU.
 
 ```
 +---------------------+   Input Event Batch        +-------------------+
-| Native Sidecar Core | -------------------------> |  Go Orchestrator  |
+| Native Process Host | -------------------------> |  Go Engine DLL    |
 | (Win32 / D3D11 now) | <------------------------- |    (Game Loop)    |
 +---------------------+   Render / Sound Commands  +-------------------+
                                                              |
@@ -33,7 +33,7 @@ When application-owned state changes from a goroutine after IO, model work, or a
 
 ## Design for External Integration (IoC)
 
-The library uses the Inversion of Control (IoC) pattern through `render.Run(AppConfig)`. External consumers do not have to write native Win32 window callbacks, event routers, thread locking, or frame tickers.
+The library uses inversion of control through `render.RunHosted`, called by `pkg/hosted`. External consumers do not write native Win32 callbacks, event routers, thread locking, or frame tickers. Windows applications register configuration through `pkg/windows`; Android applications start through `pkg/mobile`.
 
 To instantiate the UI, host projects import `"github.com/mulavdm/poem/pkg/render"` and declare their component layout tree inside the `BuildPagesFn` callback, which the library automatically manages and updates dynamically.
 

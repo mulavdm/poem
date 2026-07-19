@@ -9,9 +9,9 @@ timestamp: 2026-07-10T00:00:00Z
 
 ## POEM 2.0 portability boundary
 
-The shipping runtime remains Win32/D3D11. Platform-neutral packages under `pkg/render` own themes, drawing values, events, semantic accessibility, layout, and optional platform-service interfaces. Native presentation, text services, window management, and the Windows UI Automation provider stay behind the sidecar/platform boundary. Protocol v2 carries semantic snapshots without embedding Windows accessibility concepts in Go components.
+The shipping runtime remains Win32/D3D11. Platform-neutral packages under `pkg/render` own themes, drawing values, events, semantic accessibility, layout, and optional platform-service interfaces. Native presentation, text services, window management, and Windows UI Automation remain behind the C++ host boundary. M7 places that host and the compiled Go application/engine DLL in one OS process while retaining the repo-owned protocol over in-memory transport.
 
-Historical note: earlier single-process and Rust-sidecar experiments are superseded. The active runtime is a Go orchestrator plus a Windows-first C++ sidecar using Win32, D3D11, named pipes, and a repo-owned binary protocol.
+Historical note: the former Go executable plus C++ child-sidecar runtime, named renderer pipes, embedded presenter extraction, and sidecar override path were removed in M7. The legacy Rust presenter remains reference-only.
 
 `runtime.LockOSThread()` binds native window/event-loop goroutines to a single OS thread for their lifetime — see [Thread Locking](/concepts/architecture/thread-locking.md) for why this is load-bearing, not optional.
 
@@ -23,7 +23,7 @@ Historical note: earlier single-process and Rust-sidecar experiments are superse
                   +--------------------------------+
                   |           pkg/render           | <----+ (Single import path for consumers)
                   +--------------------------------+      |
-                     /           |            \           | (Exposes Run() and
+                     /           |            \           | (Exposes hosted engine and
                     v            v             v          |  type-aliases all symbols)
          +------------+    +------------+    +------------+
          |  backend   |    | components |    |   layout   |
@@ -49,6 +49,7 @@ Historical note: earlier single-process and Rust-sidecar experiments are superse
 
 ## See also
 - [Public API Surface](/concepts/public-api.md)
+- [Single-Process Windows Host](/concepts/architecture/windows-host.md)
 - [Sidecar Protocol](/concepts/protocol.md)
 - [Thread Locking](/concepts/architecture/thread-locking.md)
 - [Win32 Syscall Stabilization](/concepts/architecture/win32-syscalls.md)

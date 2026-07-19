@@ -17,7 +17,7 @@ Treat this file as the repo-level source of truth for agent behavior and guardra
 - **Immutability**: Treat shared state and blackboards as immutable once published. Produce new data rather than mutating in place.
 - **Measure Everything**: Always implement profiling, benchmarking, and maintain zero/low-allocation routing in hot paths. Measure before merging.
 - **Security by Design**: Incorporate defensive engineering, red-team testing, or attack vector simulations for any newly added feature.
-- **Robust Lifecycles**: Do not block routing threads. Actively manage child sidecars—poll for health, use timeouts, and gracefully clean up orphaned background processes on crashes.
+- **Robust Lifecycles**: Do not block routing threads. Native hosts must use cooperative cancellation, bounded shutdown, and explicit startup-failure reporting; never unload an active Go runtime.
 - **Strict Locking Discipline**: Use language-appropriate read-write locks correctly—prefer read locks for reads, and isolate write locks strictly to mutation operations.
 - **Atomic Updates**: When APIs, configuration schemas, or behaviors change, update the relevant documentation (`README.md`, architecture docs) in the exact same commit. Documentation is part of the code.
 - **Truthful & Living Documentation**: Treat architecture documents as living specifications. Remove stale references to deprecated features or deleted projects. Do not turn brainstorms or speculative plans into present-tense guarantees.
@@ -43,9 +43,9 @@ Treat this file as the repo-level source of truth for agent behavior and guardra
 
 ## Architecture & Principles
 
-1. **Go UI Semantics, Native Presentation Boundary**: Layout, page rebuilds, focus, hit-testing, automation semantics, and frame generation live in Go under `pkg/render`. Windowing, D3D11 presentation, DPI handling, and desktop-native capture hooks live behind the Windows C++ sidecar in `cpp_sidecar/`.
-2. **Stable Public Surface**: Downstream apps should continue to consume `github.com/mulavdm/poem/pkg/render` and `render.Run(render.AppConfig{...})`. Do not leak sidecar-specific details into application code unless they are intentionally exposed as reusable engine APIs.
-3. **Repo-Owned Protocol**: Cross-process communication between Go and the sidecar uses the custom binary protocol in `pkg/render/protocol`. When adding new native capabilities, update both the Go and C++ protocol implementations together and add or update round-trip tests.
+1. **Go UI Semantics, Native Presentation Boundary**: Layout, page rebuilds, focus, hit-testing, automation semantics, and frame generation live in Go under `pkg/render`. Windowing, D3D11 presentation, DPI handling, and desktop-native capture hooks live in the generic C++ Windows host. The host and application-specific Go DLL share one OS process.
+2. **Stable Public Surface**: Downstream apps consume `pkg/app`, prepare native configuration through `desktop.Configure`, and register the Windows c-shared entrypoint through `pkg/windows`. The versioned six-function C ABI and adjacent `poem_app.dll` name are contracts.
+3. **Repo-Owned Protocol**: Windows and Android preserve the custom binary protocol in `pkg/render/protocol` across their in-memory transports. When adding native capabilities, update both Go and C++ implementations and round-trip fixtures together.
 4. **Shared Automation, Not App-Specific Hacks**: If a downstream app needs automation, inspection, screenshots, or lightweight window control, implement it in POEM's shared automation layer rather than baking one-off app helpers into product code.
 5. **One Application API, Three Layers**: Since the 2026-07-16 consolidation ([okf/concepts/decisions/consolidation.md](okf/concepts/decisions/consolidation.md)), the former siblings live in this repo: `pkg/app` is the single public application API (`App[S]`/`Msg`/`Node`), `pkg/render` is the native engine layer, `pkg/web` is the server-rendered HTML component library (formerly GopherWeb). When adding or changing a public component in `pkg/render/components` or `pkg/web/components`, check the other catalog for the same concept and converge naming/shape when the need is genuinely the same; leave it alone when the difference is structural (`pkg/render`'s stateful closure-based tree vs. `pkg/web`'s per-request rendering and caller-trusted HTML fields — see the superseded-but-still-true findings in [okf/concepts/decisions/gopherweb-parity.md](okf/concepts/decisions/gopherweb-parity.md)). New app-facing capability is exposed by adding a `Node` kind in `pkg/app` plus a case in **both** drivers' `render.go` — there is no partial-coverage state; track coverage in [okf/concepts/app/component-parity.md](okf/concepts/app/component-parity.md).
 
@@ -67,11 +67,11 @@ Treat this file as the repo-level source of truth for agent behavior and guardra
 - Prefer targeted validation:
   - `go test ./pkg/render/...`
   - `go test -race ./pkg/render/...` for changes touching concurrency, locking, or the sidecar protocol
-  - `go build ./cmd/engine`
-- Rebuild the native sidecar when changing `cpp_sidecar/` or the shared protocol:
+  - `go build -buildmode=c-shared -o poem_app.dll ./cmd/engine`
+- Rebuild the native Windows host when changing `cpp_sidecar/` or the shared protocol:
   - `cmake -S cpp_sidecar -B cpp_sidecar/build`
   - `cmake --build cpp_sidecar/build --config Release`
-- If the sidecar binary is locked during rebuild, stop `poem_cpp_sidecar.exe` and any downstream POEM app currently using it before rebuilding.
+- If the host binary is locked during rebuild, stop the product-named host application currently using it.
 - Stop any process you started solely for manual verification (engine binary, sidecar, HTTP automation server) once you're done — don't leave orphaned instances running.
 
 ## Documentation-as-Code (OKF)
@@ -98,5 +98,5 @@ Treat this file as the repo-level source of truth for agent behavior and guardra
 - `README.md`: project overview and build/run entrypoints
 - `okf/concepts/architecture/index.md`: runtime architecture, UI authoring, and component/layout concepts (replaces the removed `ARCHITECTURE.md` and `GUIDE.md`)
 - `okf/concepts/automation/index.md`: HTTP automation API, capture semantics, and inspection workflow (replaces the removed `docs/AUTOMATION.md`)
-- `okf/concepts/public-api.md`, `okf/concepts/protocol.md`: the `pkg/render` public contract and the sidecar wire protocol
+- `okf/concepts/public-api.md`, `okf/concepts/protocol.md`: public contracts and the shared presenter protocol
 - `okf/index.md`: local OKF knowledge bundle root

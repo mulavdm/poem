@@ -30,11 +30,11 @@ Check:
 - that automation is enabled in `render.AutomationConfig`
 - the host and port
 - whether the app actually stayed alive after startup
-- whether the sidecar path resolved correctly
+- whether the adjacent `poem_app.dll` exists and exports ABI v1
 
-## The sidecar does not rebuild
+## The Windows host does not rebuild
 
-The binary is often still in use by a running POEM app. Stop the downstream app and `poem_cpp_sidecar.exe`, then rebuild.
+The binary is often still in use by a running POEM app. Stop the product-named host process, then rebuild `poem_windows_host`.
 
 # Testing And Validation
 
@@ -50,7 +50,7 @@ go test ./pkg/render/...
 cmake --build cpp_sidecar/build --config Release
 ```
 
-When changing protocol or sidecar behavior, validate both Go and native sides together.
+When changing protocol or native-host behavior, validate both Go and C++ sides together, including CTest and a c-shared DLL smoke test.
 
 # Documentation Maintenance
 
@@ -67,4 +67,4 @@ update the corresponding `okf/concepts/automation/` concept in the same change.
 
 ## See also
 - [Automation Overview](/concepts/automation/overview.md)
-- [Sidecar Protocol](/concepts/protocol.md)
+- [Native Presenter Protocol](/concepts/protocol.md)

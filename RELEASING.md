@@ -1,25 +1,21 @@
 # Releasing POEM
 
-POEM is released independently as `github.com/mulavdm/poem`. Since the 2026-07-16
-consolidation it is the only released module — the former GopherWeb/Trellis sibling-tag
-ordering is gone.
+POEM is released independently as `github.com/mulavdm/poem`. M7 ships Windows applications through the generic single-process native host; there is no embedded or separately resolved sidecar artifact.
 
-1. Protect `v*.*.*` tags in the private repository.
-2. Build and test the Release CMake sidecar, then run Go tests, race tests, vet, and `go mod verify`.
-3. If `cpp_sidecar/` sources changed since the embedded sidecar was last built: rebuild
-   Release, copy `cpp_sidecar/build/Release/poem_cpp_sidecar.exe` to
-   `pkg/render/assets/windows_amd64/`, and regenerate the provenance manifest in the same
-   commit:
+1. Protect `v*.*.*` tags in the repository.
+2. Run `gofmt`, all Go tests (including race tests), `go vet`, `go mod verify`, the CMake Release build, and CTest.
+3. Verify an application DLL with `go build -buildmode=c-shared` and confirm all six ABI v1 exports are present.
+4. Run `windows_host/build.ps1` to construct the portable folder/ZIP and unsigned MSIX. The portable bundle contains the product-named host EXE and adjacent `poem_app.dll`; the MSIX exposes one installed full-trust Win32 application identity.
+5. For development signing, run `New-DevelopmentCertificate.ps1`, then pass its thumbprint to the builder. Trust installation is intentionally separate and opt-in through `Trust-DevelopmentCertificate.ps1`.
+6. Production signing supplies a certificate path or thumbprint and certificate password environment variable from CI secrets. Do not commit PFX files or passwords.
+7. Push an annotated `vX.Y.Z` tag. `.github/workflows/release.yml` builds and publishes the portable ZIP and MSIX. Signing hooks activate only when release CI provides external credentials.
 
-   ```pwsh
-   $current = (git ls-files -s cpp_sidecar) -join "`n"
-   $hash = (Get-FileHash -InputStream ([IO.MemoryStream][Text.Encoding]::UTF8.GetBytes($current)) -Algorithm SHA256).Hash
-   Set-Content -NoNewline -Encoding ascii pkg/render/assets/windows_amd64/poem_cpp_sidecar.provenance $hash
-   ```
+Example package build:
 
-   CI verifies this manifest against the committed sources (git blob hashes), proving the
-   embedded binary was built from the sources in the tree. It deliberately does **not**
-   bit-compare against a fresh runner build — MSVC image updates change codegen, so that
-   comparison can never stay green.
-4. Push an annotated `vX.Y.Z` tag to start `.github/workflows/release.yml`, which packages
-   the Windows gallery executable and a freshly built sidecar.
+```powershell
+windows_host\build.ps1 -ProjectDirectory . -GoPackage ./cmd/gallery `
+  -Identity POEM.Gallery -DisplayName "POEM Gallery" -Version 0.7.0.0 `
+  -OutputDirectory .\dist
+```
+
+“Single process” describes the OS process topology, not a source-language translation: the installed process contains the C++ Windows presenter and the Go application/engine DLL with its embedded Go runtime.

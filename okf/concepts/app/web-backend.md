@@ -27,6 +27,12 @@ state persistence to the public `StateStore[S]` contract. The default store is b
 single-process; `FileStateStore` provides atomic JSON persistence for a single host, while
 multi-instance deployments require a transactional external implementation.
 
+Each session also owns a process-local keyed-command executor. The loading-state update is saved
+before a command starts; completion re-enters the reducer under the same serialized session path
+and saves the final state. Session expiry or bounded-store eviction cancels active work. Commands
+are not durable jobs: a process restart loses in-flight work even when application state uses a
+durable `StateStore`.
+
 `sessionMiddleware[S]` follows the same `func(http.Handler) http.Handler` shape and
 unexported-context-key pattern as GopherWeb's own `middleware.RequestID` — the one piece of
 GopherWeb's own middleware convention this backend deliberately mirrors, even though
@@ -61,6 +67,26 @@ then decodes the submission, applies every
 changed field's `Msg` first — via `collectFields` walking the just-computed `View` and
 branching on `fieldKind` — then the submitting button's `Msg`, saves the resulting state to
 the session, and redirects back to `/` (303, avoiding form-resubmission-on-refresh).
+
+If that event started a command, the redirected page renders the application's loading state and
+includes a conditional one-second `<meta http-equiv="refresh">`. The marker remains only while
+that session has pending commands, so completion becomes visible without adding a fetch, polling,
+or SSE endpoint and without requiring JavaScript. Completion-only message names are not accepted
+from forms because event validation still allows only messages present on enabled nodes.
+
+`ImageViewportNode` is progressively enhanced by `/__poem/image-viewport.js`: Pointer Events
+apply drag and true two-pointer pinch transforms locally, wheel zoom is debounced, and only the
+final controlled value is committed. Short background taps commit a strict normalized point;
+accessible marker buttons commit only an ID that exists at their current node path. The
+CSRF-protected `POST /__field` route revalidates the current node path, enabled state, field kind,
+strict payload, and marker identity before dispatching
+the node's current `OnChange` message. It then uses the same redirect/loading path. Without
+JavaScript the image and application-provided zoom/fit buttons remain usable.
+
+`ResponsiveNode` renders Compact as the no-JavaScript baseline. `/__poem/responsive.js` uses
+`matchMedia` to toggle Compact and Wide fieldsets, setting both `hidden` and `disabled` so controls
+in the inactive branch cannot submit. Both branch paths are collected from the current View, which
+allows resize without a server round trip while preserving normal event validation.
 
 This is a deliberate design choice, not a placeholder: it matches GopherWeb's own
 no-JS-baseline philosophy exactly, and it needed no client-side event protocol to design or

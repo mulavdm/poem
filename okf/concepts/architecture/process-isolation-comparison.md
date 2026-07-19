@@ -1,26 +1,27 @@
 ---
 type: Concept
-title: Process Isolation Comparison
-description: Architectural comparison between the original single-process GDI/OpenGL runtime and the active Go + C++ D3D11 sidecar.
-tags: [architecture, comparison, d3d11, ipc]
-timestamp: 2026-07-10T00:00:00Z
+title: Windows Hosting Evolution
+description: Comparison of the removed child-sidecar topology and M7's single-process Go DLL host.
+tags: [architecture, comparison, d3d11, cgo, hosting]
+timestamp: 2026-07-18T00:00:00Z
 ---
-# Architectural Comparison: Single-Process GDI/OpenGL vs. Process-Isolated Native Presentation
+# Windows Hosting Evolution
 
-Rigorous architectural comparison matrix (porting metrics):
-
-| Architectural Vector | Original Single-Process GDI/OpenGL | Active Go + C++ D3D11 Sidecar |
+| Architectural vector | M6 child-sidecar runtime | M7 single-process host |
 | :--- | :--- | :--- |
-| **Runtime Isolation** | None (Any native crash terminates Go main program) | **Process Isolation** (native presentation sidecar runs separately) |
-| **Graphics API** | GDI / OpenGL Core Profile 3.3 | **Direct3D 11** in the active Windows sidecar |
-| **Windowing & Input** | Custom Win32 Syscalls (Go thread-locked) | **Win32** in the active Windows sidecar |
-| **IPC Strategy** | Direct heap pointer sharing (same process thread) | **Win32 Named Pipes** with a repo-owned custom binary protocol |
-| **Acoustic Audio** | Win32 DSP (winmm.dll) in Go | **Native sidecar playback** via Windows multimedia APIs |
-| **CGO Required** | Yes (when building `-tags gpu` with `go-gl`) | **No CGO Required** for the active Go + C++ sidecar runtime |
-| **High-DPI / 4K Scaling** | None (Microscopic elements, layout coordinate clash) | **Automated Coordinate Translation Subsystem** (Logical vs. Physical) |
-| **Frame Telemetry** | CPU bound (~1.1ms), thrashes Go GC on VBO arrays | **Batched protocol frames** with low-allocation Go serialization and native D3D11 presentation |
+| Process topology | Go executable plus C++ child | One product-named C++ process loading Go DLL |
+| Application implementation | Compiled Go | Same compiled Go application and embedded runtime |
+| Presentation | Win32, D3D11, UIA, IME, audio | Same native presenter code |
+| Protocol transport | Two fixed renderer named pipes | Crossed in-memory pipes behind exported blocking calls |
+| Deployment | Go EXE, resolved/extracted presenter | Portable host EXE + adjacent `poem_app.dll`, or MSIX identity |
+| Failure boundary | Either process could orphan or disconnect | Native failure terminates the application process; cooperative close cancels Go |
+| Native loading | Spawn/path/environment resolution | Absolute adjacent DLL, restricted search flags, ABI/export validation |
+| Renderer protocol | POEM binary frames | Byte-identical POEM binary frames |
+
+M7 trades process crash isolation for a simpler lifecycle, lower transport overhead, no extracted executable, and one observable application process. It does not translate application Go into C++ and does not duplicate product logic.
 
 ## See also
-- [Architecture Overview](/concepts/architecture/overview.md)
-- [Sidecar Protocol](/concepts/protocol.md)
+
+- [Single-Process Windows Host](/concepts/architecture/windows-host.md)
+- [Native Presenter Protocol](/concepts/protocol.md)
 - [DPI Coordinate Translation](/concepts/architecture/dpi-coordinate-translation.md)
