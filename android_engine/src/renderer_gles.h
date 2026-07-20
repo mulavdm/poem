@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "protocol.h"
+#include "poem/protocol.h"
 
 namespace poem {
 

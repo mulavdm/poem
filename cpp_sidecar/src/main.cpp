@@ -1,7 +1,7 @@
 #include "audio.h"
 #include "accessibility.h"
 #include "native_app.h"
-#include "protocol.h"
+#include "poem/protocol.h"
 #include "renderer_d3d11.h"
 
 #include <shellscalingapi.h>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "protocol.h"
+#include "poem/protocol.h"
 
 #include <vector>
 

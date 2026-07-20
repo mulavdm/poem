@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "protocol.h"
+#include "poem/protocol.h"
 
 namespace poem {
 

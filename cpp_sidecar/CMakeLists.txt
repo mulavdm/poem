@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_executable(poem_windows_host WIN32
   src/main.cpp
   src/native_app.cpp
-  src/protocol.cpp
+  ../shared/poem/protocol.cpp
   src/audio.cpp
   src/renderer_d3d11.cpp
   src/accessibility.cpp

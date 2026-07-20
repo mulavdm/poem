@@ -27,7 +27,7 @@
 
 #include "audio_aaudio.h"
 #include "ime_jni.h"
-#include "protocol.h"
+#include "poem/protocol.h"
 #include "renderer_gles.h"
 
 #define HLOGI(...) __android_log_print(ANDROID_LOG_INFO, "poem-host", __VA_ARGS__)

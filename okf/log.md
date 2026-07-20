@@ -1,5 +1,11 @@
 # OKF Bundle Update Log
 
+## 2026-07-20 (protocol moved into shared/)
+
+- Moved `protocol.h`/`protocol.cpp` from `cpp_sidecar/src/` to `shared/poem/`, and updated all eight include sites to `#include "poem/protocol.h"`. The wire protocol was always shared code — the Android host compiled the very same `protocol.cpp` — but it lived under the Windows host's directory, so `build_apk.sh` had to reach into `cpp_sidecar/` to build an Android APK. That is the inverted dependency the framework TDD warns about (§4.1 shared core vs thin platform hosts; §6 separates shared `src/` from `platform/`).
+- **The Android build no longer references `cpp_sidecar` at all** (its `-I` and source entry are gone), so the two platform hosts are now siblings over a shared layer rather than one depending on the other. `shared/poem/` currently holds the wire protocol and the map view maths.
+- Verified rather than assumed: clean CMake reconfigure + rebuild of the Windows host, both CTest suites pass, the Android APK rebuilds, and on-device the scene still decodes and renders (`map scene: viewport=route-map gen=1 resources=11 draws=5 sun=277.2/20.7`, map identical to previous captures).
+
 ## 2026-07-20 (shared map view maths: one implementation, three backends)
 
 - Extracted the map camera transform and solar shading into `shared/poem/map_view.h`, a header-only, platform-neutral module (`View`, `Make`, `Local`, `Project`, `Depth`, `SunDirection`, `ShadeTriangle`, `NeedsDepthSort`). The D3D11 and GLES presenters had independently copied the *same* mercator projection, `worldPixels`/`metersToPixels` derivation and perspective divide, and the new sun shading had just become a second copy — with the WebGL bridge queued to make a third. This applies the framework TDD directly: portable behaviour belongs in shared code (§4.1), shared headers expose no platform types (§4.2), and backend divergence is mitigated by "one renderer contract, shared validation" (§40.3). Nothing in the header touches D3D11, GLES, EGL, Win32 or JNI.
