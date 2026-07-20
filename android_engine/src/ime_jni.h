@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 // JNI bridges for text input on the Android presenter. Zero Java ships in the
 // APK, but a NativeActivity still carries a JavaVM and an Activity instance,
 // which is enough to drive InputMethodManager (the reliable way to summon the
@@ -34,4 +36,12 @@ namespace poem {
 // px (0 when hidden, or on pre-API-30 devices where adjustResize resizes the
 // surface instead).
 int GetImeInset(ANativeActivity* activity);
+} // namespace poem
+
+namespace poem {
+// AppFilesDir returns the app's private internal files directory
+// (Context.getFilesDir().getAbsolutePath()) via JNI. This is the reliable
+// source for the writable data directory: ANativeActivity::internalDataPath is
+// null on some devices/emulators. Returns "" if JNI is unavailable.
+std::string AppFilesDir(ANativeActivity* activity);
 } // namespace poem

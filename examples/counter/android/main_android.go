@@ -21,7 +21,8 @@ import (
 // physical pixels.
 //
 //export PoemAndroidStart
-func PoemAndroidStart(width, height C.int) {
+func PoemAndroidStart(width, height C.int, dataDir *C.char) {
+	_ = dataDir // this example keeps no device data
 	config := desktop.Configure(counter.App, render.AppConfig{Title: "Counter"})
 	mobile.Start(config, int(width), int(height))
 }

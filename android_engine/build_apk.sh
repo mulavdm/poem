@@ -57,7 +57,12 @@ for extra in ${EXTRA_LIBS:-}; do
 done
 
 echo "==> Manifest + package"
+# DEBUGGABLE=1 marks the app debuggable so `adb run-as` can reach its sandbox
+# (used to stage test data). Off by default; never set it for a release build.
+debug_attr=""
+[ -n "${DEBUGGABLE:-}" ] && debug_attr=' android:debuggable="true"'
 sed -e "s/__PACKAGE__/$PACKAGE_ID/" -e "s/__LABEL__/$APP_LABEL/" \
+  -e "s#<application #<application${debug_attr} #" \
   "$ENGINE_DIR/AndroidManifest.template.xml" > "$WORK/AndroidManifest.xml"
 "$BT/aapt2.exe" link -o "$WORK/unaligned.apk" --manifest "$WORK/AndroidManifest.xml" \
   -I "$SDK/platforms/android-36.1/android.jar"

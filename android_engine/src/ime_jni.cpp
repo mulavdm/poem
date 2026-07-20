@@ -3,6 +3,7 @@
 #include <android/log.h>
 #include <android/native_activity.h>
 #include <jni.h>
+#include <string>
 
 #define ILOGE(...) __android_log_print(ANDROID_LOG_ERROR, "poem-ime", __VA_ARGS__)
 
@@ -224,6 +225,35 @@ int GetImeInset(ANativeActivity* activity) {
     jfieldID bottomField = env->GetFieldID(gInsetsClass, "bottom", "I");
     const int bottom = env->GetIntField(imeInsets, bottomField);
     return ClearException(env) ? 0 : bottom;
+}
+
+std::string AppFilesDir(ANativeActivity* activity) {
+    AttachedEnv scoped(activity);
+    JNIEnv* env = scoped.get();
+    if (!env) return "";
+    jobject activityObj = activity->clazz;
+    jclass activityClass = env->GetObjectClass(activityObj);
+    // File dir = activity.getFilesDir();
+    jmethodID getFilesDir = env->GetMethodID(activityClass, "getFilesDir", "()Ljava/io/File;");
+    if (!getFilesDir) {
+        ClearException(env);
+        return "";
+    }
+    jobject fileObj = env->CallObjectMethod(activityObj, getFilesDir);
+    if (ClearException(env) || !fileObj) return "";
+    // String path = dir.getAbsolutePath();
+    jclass fileClass = env->GetObjectClass(fileObj);
+    jmethodID getAbsolutePath = env->GetMethodID(fileClass, "getAbsolutePath", "()Ljava/lang/String;");
+    if (!getAbsolutePath) {
+        ClearException(env);
+        return "";
+    }
+    jstring pathStr = static_cast<jstring>(env->CallObjectMethod(fileObj, getAbsolutePath));
+    if (ClearException(env) || !pathStr) return "";
+    const char* chars = env->GetStringUTFChars(pathStr, nullptr);
+    std::string result(chars ? chars : "");
+    if (chars) env->ReleaseStringUTFChars(pathStr, chars);
+    return result;
 }
 
 } // namespace poem

@@ -21,7 +21,8 @@ import (
 // physical pixels.
 //
 //export PoemAndroidStart
-func PoemAndroidStart(width, height C.int) {
+func PoemAndroidStart(width, height C.int, dataDir *C.char) {
+	_ = dataDir // preferences resolve via HOME (set by the host)
 	config := desktop.Configure(preferences.App, render.AppConfig{Title: "Preferences", Effects: render.EffectsConfig{Audio: true}})
 	mobile.Start(config, int(width), int(height))
 }

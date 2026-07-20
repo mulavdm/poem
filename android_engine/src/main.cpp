@@ -21,6 +21,7 @@
 #include <cstring>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -33,18 +34,20 @@
 #define HLOGE(...) __android_log_print(ANDROID_LOG_ERROR, "poem-host", __VA_ARGS__)
 
 extern "C" {
-// Exported by the Go engine library (pkg/mobile).
+// Exported by the Go application library. dataDir is the app's private writable
+// directory (see PoemAndroidStart call site).
 int PoemHostRead(void* buf, int capacity);
 int PoemHostWrite(void* buf, int length);
 // Exported by the application's Go main package: registers the app and calls
 // mobile.Start with the initial surface size in physical pixels.
-void PoemAndroidStart(int width, int height);
+void PoemAndroidStart(int width, int height, const char* dataDir);
 }
 
 namespace {
 
 struct Host {
     android_app* app = nullptr;
+    std::string dataDir;         // app private writable dir, passed to the Go app
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
     EGLContext context = EGL_NO_CONTEXT;
@@ -270,7 +273,7 @@ void InitDisplay(Host* host) {
 
     if (!host->engineStarted) {
         host->engineStarted = true;
-        PoemAndroidStart(host->logicalW, host->logicalH);
+        PoemAndroidStart(host->logicalW, host->logicalH, g_host.dataDir.c_str());
         host->transportRunning.store(true);
         std::thread(TransportLoop).detach(); // process-lifetime thread
         HLOGI("Go engine started");
@@ -729,11 +732,21 @@ void android_main(android_app* app) {
     app->userData = &g_host;
     app->onAppCmd = HandleCmd;
     app->onInputEvent = HandleInput;
-    // Point the Go app's user-config/data lookups at the app's private, writable
-    // directory. Without this HOME is "/" on Android, so os.UserConfigDir fails
-    // and preferences and downloaded region packages have nowhere to live.
-    if (app->activity && app->activity->internalDataPath) {
-        setenv("HOME", app->activity->internalDataPath, 1);
+    // Resolve the app's private, writable data directory and hand it to the Go
+    // app explicitly (see PoemAndroidStart). internalDataPath is null on some
+    // devices/emulators, so fall back to Context.getFilesDir() over JNI. HOME is
+    // also set as a convenience for os.UserConfigDir-based lookups.
+    if (app->activity) {
+        if (app->activity->internalDataPath) {
+            g_host.dataDir = app->activity->internalDataPath;
+        }
+        if (g_host.dataDir.empty()) {
+            g_host.dataDir = poem::AppFilesDir(app->activity);
+        }
+        if (!g_host.dataDir.empty()) {
+            setenv("HOME", g_host.dataDir.c_str(), 1);
+        }
+        HLOGI("app data dir: %s", g_host.dataDir.empty() ? "(unresolved)" : g_host.dataDir.c_str());
     }
     HLOGI("poem android host entered");
 
