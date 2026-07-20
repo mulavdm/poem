@@ -91,6 +91,10 @@ class RendererGLES {
     struct RetainedMapScene {
         std::uint64_t generation = 0;
         protocol::MapCamera camera{};
+        // Solar position for the scene (degrees). Extruded geometry is shaded
+        // against it; the defaults are the engine's north-west key light.
+        float sunAzimuth = 315.0f;
+        float sunElevation = 45.0f;
         std::vector<protocol::MapDrawBatch> draws;
         std::unordered_map<std::string, protocol::MapSceneResource> resources;
 		GLuint vertexBuffer = 0;

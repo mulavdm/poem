@@ -211,9 +211,14 @@ void TransportLoop() {
             }
             case poem::protocol::MessageType::MapSceneDelta: {
                 auto scene = poem::protocol::DecodeMapSceneDelta(envelope.body);
-                HLOGI("map scene: viewport=%s gen=%llu resources=%zu draws=%zu",
+                HLOGI("map scene: viewport=%s gen=%llu resources=%zu draws=%zu sun=%.1f/%.1f",
                       scene.viewportId.c_str(), static_cast<unsigned long long>(scene.generation),
-                      scene.resources.size(), scene.draws.size());
+                      scene.resources.size(), scene.draws.size(), scene.sunAzimuth, scene.sunElevation);
+                for (std::size_t i = 0; i < scene.draws.size(); ++i) {
+                    const auto& d = scene.draws[i];
+                    HLOGI("  draw[%zu] prim=%d count=%u layer=%d opacity=%.2f depthTest=%d",
+                          i, static_cast<int>(d.primitive), d.count, d.layer, d.opacity, d.depthTest ? 1 : 0);
+                }
                 std::lock_guard<std::mutex> lock(g_host.frameMutex);
                 g_host.renderer.ApplyMapScene(scene);
                 break;

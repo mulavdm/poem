@@ -229,6 +229,8 @@ void RendererGLES::ApplyMapScene(const protocol::MapSceneDelta& scene) {
     }
     retained.generation = scene.generation;
     retained.camera = scene.camera;
+    retained.sunAzimuth = scene.sunAzimuth;
+    retained.sunElevation = scene.sunElevation;
     retained.draws = scene.draws;
 	retained.geometryDirty = true;
 	std::unordered_set<std::string> referenced;
@@ -295,6 +297,44 @@ void RendererGLES::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<
         const double metersToPixels = worldPixels / (40075016.68557849 * std::max(.01, std::cos(scene.camera.latitude * M_PI / 180.0)));
 		const double cameraDistance = std::max(1.0, static_cast<double>(bottom-top)*.5/std::tan(M_PI/8.0));
 		auto screen = [&](float x, float y, float elevation) { double dx=x-centerX;if(dx>.5)dx-=1;else if(dx<-.5)dx+=1;const double dy=y-centerY,localX=(dx*cs-dy*sn)*worldPixels,localY=(dx*sn+dy*cs)*worldPixels,localZ=elevation*metersToPixels,projectedY=localY*pitchCos-localZ*pitchSin,depth=localY*pitchSin+localZ*pitchCos,perspective=cameraDistance/std::max(cameraDistance*.05,cameraDistance-depth);return std::array<float,2>{static_cast<float>((left+right)*.5+localX*perspective),static_cast<float>((top+bottom)*.5+projectedY*perspective)};};
+		// Lighting works in the same local pixel space the projection builds
+		// from: +x right (after bearing), +y south, +z up. Only extruded
+		// batches (draw.depthTest, set from the style's Extrude) are shaded, so
+		// flat land/water keep exactly the colours the style asked for.
+		auto localSpace = [&](float x, float y, float elevation) {
+			double dx = x - centerX; if (dx > .5) dx -= 1; else if (dx < -.5) dx += 1;
+			const double dy = y - centerY;
+			return std::array<double, 3>{(dx*cs - dy*sn)*worldPixels, (dx*sn + dy*cs)*worldPixels, elevation*metersToPixels};
+		};
+		// Sun azimuth is clockwise from north; map y grows southward, so north
+		// is -y. The bearing rotation matches the one applied to positions.
+		const double sunAz = scene.sunAzimuth * M_PI/180.0, sunEl = scene.sunElevation * M_PI/180.0;
+		const double sunEast = std::cos(sunEl)*std::sin(sunAz), sunNorth = std::cos(sunEl)*std::cos(sunAz);
+		double sunX = sunEast*cs + sunNorth*sn, sunY = sunEast*sn - sunNorth*cs, sunZ = std::sin(sunEl);
+		{
+			const double length = std::sqrt(sunX*sunX + sunY*sunY + sunZ*sunZ);
+			if (length > 1e-9) { sunX/=length; sunY/=length; sunZ/=length; }
+		}
+		constexpr double kAmbient = 0.45; // unlit faces stay readable, never black
+		auto shadeTriangle = [&](const MapVertex& a, const MapVertex& b, const MapVertex& c) {
+			const auto pa = localSpace(a.x,a.y,a.z), pb = localSpace(b.x,b.y,b.z), pc = localSpace(c.x,c.y,c.z);
+			const double ux=pb[0]-pa[0], uy=pb[1]-pa[1], uz=pb[2]-pa[2];
+			const double vx=pc[0]-pa[0], vy=pc[1]-pa[1], vz=pc[2]-pa[2];
+			double nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+			const double length = std::sqrt(nx*nx+ny*ny+nz*nz);
+			if (length < 1e-9) return 1.0f;
+			const double lambert = std::max(0.0, (nx*sunX + ny*sunY + nz*sunZ)/length);
+			return static_cast<float>(kAmbient + (1.0-kAmbient)*lambert);
+		};
+		auto applyShade = [](MapVertex& v, float shade) { v.r*=shade; v.g*=shade; v.b*=shade; };
+		// Camera-space depth, matching the projection: it grows toward the
+		// camera (the perspective divide uses cameraDistance - depth).
+		auto depthOf = [&](float x, float y, float elevation) {
+			double dx = x - centerX; if (dx > .5) dx -= 1; else if (dx < -.5) dx += 1;
+			const double dy = y - centerY;
+			return (dx*sn + dy*cs)*worldPixels*pitchSin + elevation*metersToPixels*pitchCos;
+		};
+
         for (const auto& draw : scene.draws) {
 			const auto rangeStart = static_cast<std::uint32_t>(vertices.size());
 			const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
@@ -304,7 +344,40 @@ void RendererGLES::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<
             if (draw.primitive == protocol::MapPrimitive::Triangles && textured) {
 				for (std::uint32_t i=0; i+2<draw.count; i+=3) { MapVertex points[3]{}; bool valid=true; for(int p=0;p<3;p++) valid=valid&&readVertex(verticesIt->second,indexAt(i+p),points[p]); if(!valid||verticesIt->second.stride<44) continue; for(auto& point:points){auto at=screen(point.x,point.y,point.z);vertices.push_back(Vertex{at[0]+point.offsetX,at[1]+point.offsetY,point.u,point.v,point.r,point.g,point.b,point.a*draw.opacity,0,0,0,0,1,0,0,0});}}
             } else if (draw.primitive == protocol::MapPrimitive::Triangles) {
+                if (draw.depthTest) {
+                    // Extruded geometry: the map is CPU-projected to 2D and there
+                    // is no depth buffer, so sort triangles back-to-front
+                    // (painter's algorithm) or buildings behind paint over the
+                    // ones in front and the block reads as translucent. Shade
+                    // each face against the sun while we have its 3D positions.
+                    struct Face { std::array<float,2> pa, pb, pc; MapVertex a, b, c; double depth; };
+                    std::vector<Face> faces;
+                    faces.reserve(draw.count / 3);
+                    for (std::uint32_t i=0; i+2<draw.count; i+=3) {
+                        MapVertex a{},b{},c{};
+                        if(!readVertex(verticesIt->second,indexAt(i),a)||!readVertex(verticesIt->second,indexAt(i+1),b)||!readVertex(verticesIt->second,indexAt(i+2),c)) continue;
+                        a.a*=draw.opacity; b.a*=draw.opacity; c.a*=draw.opacity;
+                        const float shade = shadeTriangle(a,b,c);
+                        applyShade(a,shade); applyShade(b,shade); applyShade(c,shade);
+                        faces.push_back(Face{screen(a.x,a.y,a.z),screen(b.x,b.y,b.z),screen(c.x,c.y,c.z),a,b,c,
+                                             (depthOf(a.x,a.y,a.z)+depthOf(b.x,b.y,b.z)+depthOf(c.x,c.y,c.z))/3.0});
+                    }
+                    // Depth grows toward the camera, so ascending draws far
+                    // first. Looking straight down there is nothing to occlude,
+                    // so skip the sort — it is the expensive part of a rebuild
+                    // (this batch alone is ~167k faces) and pan/zoom rebuilds
+                    // run per frame.
+                    if (scene.camera.pitch > 1.0f) {
+                        std::sort(faces.begin(), faces.end(), [](const Face& l, const Face& r){ return l.depth < r.depth; });
+                    }
+                    for (const auto& face : faces) {
+                        vertices.push_back(solid(face.pa[0],face.pa[1],face.a));
+                        vertices.push_back(solid(face.pb[0],face.pb[1],face.b));
+                        vertices.push_back(solid(face.pc[0],face.pc[1],face.c));
+                    }
+                } else {
                 for (std::uint32_t i=0; i+2<draw.count; i+=3) { MapVertex a{},b{},c{}; if(!readVertex(verticesIt->second,indexAt(i),a)||!readVertex(verticesIt->second,indexAt(i+1),b)||!readVertex(verticesIt->second,indexAt(i+2),c)) continue; auto pa=screen(a.x,a.y,a.z),pb=screen(b.x,b.y,b.z),pc=screen(c.x,c.y,c.z); a.a*=draw.opacity;b.a*=draw.opacity;c.a*=draw.opacity; vertices.push_back(solid(pa[0],pa[1],a));vertices.push_back(solid(pb[0],pb[1],b));vertices.push_back(solid(pc[0],pc[1],c)); }
+                }
             } else if (draw.primitive == protocol::MapPrimitive::Lines) {
                 for (std::uint32_t i=0; i+1<draw.count; i+=2) { MapVertex a{},b{}; if(!readVertex(verticesIt->second,indexAt(i),a)||!readVertex(verticesIt->second,indexAt(i+1),b)) continue; auto pa=screen(a.x,a.y,a.z),pb=screen(b.x,b.y,b.z); float dx=pb[0]-pa[0],dy=pb[1]-pa[1],length=std::sqrt(dx*dx+dy*dy); if(length<.01f) continue; float half=std::max(1.0f,a.width)*.5f,nx=-dy/length*half,ny=dx/length*half; a.a*=draw.opacity; vertices.push_back(solid(pa[0]+nx,pa[1]+ny,a));vertices.push_back(solid(pb[0]+nx,pb[1]+ny,a));vertices.push_back(solid(pa[0]-nx,pa[1]-ny,a));vertices.push_back(solid(pa[0]-nx,pa[1]-ny,a));vertices.push_back(solid(pb[0]+nx,pb[1]+ny,a));vertices.push_back(solid(pb[0]-nx,pb[1]-ny,a)); }
             } else {

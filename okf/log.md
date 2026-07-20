@@ -1,5 +1,9 @@
 # OKF Bundle Update Log
 
+## 2026-07-20 (M9 sun-lit building extrusions, GLES)
+
+- The Android presenter now shades extruded geometry against the scene's real solar position. `RetainedMapScene` keeps `sunAzimuth`/`sunElevation` (previously decoded and dropped); the geometry builder derives a sun vector in the projection's local pixel space (+x right after bearing, +y south, +z up), computes a per-face normal from the triangle's 3D positions, and applies Lambert shading with a 0.45 ambient floor. Only batches flagged `depthTest` (i.e. the style's `Extrude`) are shaded, so flat land/water keep exactly the styled colours. Because the map is CPU-projected to 2D with no depth buffer, extruded faces are additionally sorted back-to-front (painter's algorithm) — skipped when the camera is within 1° of top-down, where nothing occludes and the sort would cost a per-frame pass over ~167k faces. Verified on the emulator over Amsterdam centrum at pitch 55°: measured shade spans ambient-only to fully lit (red channel 0.348→0.773) with visible face contrast on building boxes. **Not yet done:** the same treatment in the D3D11 presenter (desktop is still unlit), height fog, and per-quality shadow cascades.
+
 ## 2026-07-19 (M9 quality governor)
 
 - Added `app.QualityGovernor`: resolves `MapQualityAuto` from a GPU-capability ceiling (`app.QualityCeiling`) and an EMA of measured frame time with dwell hysteresis, stepping one tier at a time and biasing toward downgrade before instability. Explicit tiers are honored but capped by the ceiling. Tested. Wiring it to a presenter frame-time feedback signal (a field on the capability channel) and to the runtime's quality-aware coverage/label/terrain limits remains a follow-up; shadow-cascade and height-fog shaders remain presenter-side gates.
