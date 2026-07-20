@@ -157,3 +157,23 @@ func TestNativeMapQualityBoundsTileWork(t *testing.T) {
 		t.Fatal("unexpected native quality tile limits")
 	}
 }
+
+// A map placed inside the semantic container nodes (the normal MAPPS
+// composition puts it in a WorkspaceNode's content) must still be found, or the
+// runtime silently never builds a scene.
+func TestCollectMapNodesTraversesSemanticContainers(t *testing.T) {
+	mapNode := app.MapViewportNode{Semantic: app.Semantic{ID: "route-map"}}
+	cases := map[string]app.Node{
+		"workspace-content": app.WorkspaceNode{Content: []app.Node{mapNode}},
+		"workspace-tools":   app.WorkspaceNode{Tools: []app.Node{mapNode}},
+		"section":           app.SectionNode{Children: []app.Node{mapNode}},
+		"adaptive-compact":  app.AdaptiveNode{Compact: []app.Node{mapNode}},
+		"nested":            app.WorkspaceNode{Content: []app.Node{app.SectionNode{Children: []app.Node{app.ContainerNode{Children: []app.Node{mapNode}}}}}},
+	}
+	for name, root := range cases {
+		found := collectMapNodes(root, nil)
+		if len(found) != 1 || found[0].Semantic.ID != "route-map" {
+			t.Fatalf("%s: collectMapNodes found %d map nodes, want 1", name, len(found))
+		}
+	}
+}

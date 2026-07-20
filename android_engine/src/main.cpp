@@ -211,6 +211,9 @@ void TransportLoop() {
             }
             case poem::protocol::MessageType::MapSceneDelta: {
                 auto scene = poem::protocol::DecodeMapSceneDelta(envelope.body);
+                HLOGI("map scene: viewport=%s gen=%llu resources=%zu draws=%zu",
+                      scene.viewportId.c_str(), static_cast<unsigned long long>(scene.generation),
+                      scene.resources.size(), scene.draws.size());
                 std::lock_guard<std::mutex> lock(g_host.frameMutex);
                 g_host.renderer.ApplyMapScene(scene);
                 break;

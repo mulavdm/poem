@@ -667,6 +667,31 @@ func collectMapNodes(node app.Node, output []app.MapViewportNode) []app.MapViewp
 		for _, child := range value.Wide {
 			output = collectMapNodes(child, output)
 		}
+	// The semantic container nodes below survive LowerSemantic (it lowers their
+	// children but keeps the node), so they must be traversed here too — a map
+	// placed in a WorkspaceNode's content is the normal composition.
+	case app.WorkspaceNode:
+		output = collectMapNodes(value.Status, output)
+		output = collectMapNodes(value.Navigation, output)
+		for _, child := range value.Header {
+			output = collectMapNodes(child, output)
+		}
+		for _, child := range value.Content {
+			output = collectMapNodes(child, output)
+		}
+		for _, child := range value.Tools {
+			output = collectMapNodes(child, output)
+		}
+	case app.SectionNode:
+		for _, child := range value.Children {
+			output = collectMapNodes(child, output)
+		}
+	case app.AdaptiveNode:
+		for _, children := range [][]app.Node{value.Compact, value.Medium, value.Expanded, value.UltraWide} {
+			for _, child := range children {
+				output = collectMapNodes(child, output)
+			}
+		}
 	}
 	return output
 }
