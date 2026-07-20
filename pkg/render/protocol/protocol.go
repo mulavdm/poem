@@ -277,6 +277,13 @@ type MapSceneDelta struct {
 	Camera       MapCamera
 	SunAzimuth   float32
 	SunElevation float32
+	// Height fog. Density 0 disables it; the colour is the haze distant ground
+	// geometry fades into (normally the map's own land tone, so the horizon
+	// dissolves into the background rather than into an arbitrary grey).
+	FogDensity float32
+	FogRed     float32
+	FogGreen   float32
+	FogBlue    float32
 }
 
 type NativeDebugRequest struct {

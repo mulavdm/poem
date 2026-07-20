@@ -62,6 +62,11 @@ func EncodeMapSceneDelta(msg MapSceneDelta) ([]byte, error) {
 	writeMapCamera(&body, msg.Camera)
 	writeFloat32(&body, msg.SunAzimuth)
 	writeFloat32(&body, msg.SunElevation)
+	// Appended after the sun fields; existing values keep their positions.
+	writeFloat32(&body, msg.FogDensity)
+	writeFloat32(&body, msg.FogRed)
+	writeFloat32(&body, msg.FogGreen)
+	writeFloat32(&body, msg.FogBlue)
 	return wrapEnvelope(MessageMapSceneDelta, body.Bytes()), nil
 }
 
@@ -174,10 +179,18 @@ func DecodeMapSceneDelta(payload []byte) (MapSceneDelta, error) {
 	if err != nil {
 		return MapSceneDelta{}, err
 	}
+	fog := [4]float32{}
+	for index := range fog {
+		if fog[index], err = readFloat32(r); err != nil {
+			return MapSceneDelta{}, err
+		}
+	}
 	if r.Len() != 0 {
 		return MapSceneDelta{}, fmt.Errorf("map scene has trailing bytes")
 	}
-	return MapSceneDelta{ViewportID: viewportID, Generation: generation, Resources: resources, Draws: draws, Camera: camera, SunAzimuth: sunAzimuth, SunElevation: sunElevation}, nil
+	return MapSceneDelta{ViewportID: viewportID, Generation: generation, Resources: resources, Draws: draws, Camera: camera,
+		SunAzimuth: sunAzimuth, SunElevation: sunElevation,
+		FogDensity: fog[0], FogRed: fog[1], FogGreen: fog[2], FogBlue: fog[3]}, nil
 }
 
 func validateMapResource(resource MapSceneResource) error {

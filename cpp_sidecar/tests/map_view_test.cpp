@@ -6,6 +6,7 @@
 #include "poem/map_view.h"
 
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 
@@ -103,21 +104,61 @@ void DegenerateFaceIsUnshaded() {
     Require(Near(shade, 1.0f, 1e-6), "a zero-area face is left unshaded rather than dividing by zero");
 }
 
+void FogGrowsWithDistanceAndThinsWithHeight() {
+    const auto flat = FlatView();
+    Require(FogFactor(flat, flat.centerX + 0.01, flat.centerY, 0, 1.5) == 0.0f,
+            "a top-down view is never hazed");
+
+    const auto pitched = Make(52.3676, 4.9041, 15, 0, 60, 1, 0, 0, 800, 600);
+    Require(FogFactor(pitched, pitched.centerX, pitched.centerY, 0, 0) == 0.0f, "density 0 disables fog");
+
+    // Roughly 250 m and 2 km of ground distance. Distances this ordinary must
+    // not already be saturated, which a pixel-based density was.
+    const float nearHaze = FogFactor(pitched, pitched.centerX + 0.00001, pitched.centerY, 0, 1.5);
+    const float farHaze = FogFactor(pitched, pitched.centerX + 0.00008, pitched.centerY, 0, 1.5);
+    Require(farHaze > nearHaze, "fog grows with ground distance");
+    Require(nearHaze >= 0.0f && farHaze <= 1.0f, "fog stays within [0,1]");
+    Require(nearHaze < 0.9f, "nearby ground is not already saturated");
+
+    // Ground vs a tower top at the same place: the tower rises out of the haze.
+    const float ground = FogFactor(pitched, pitched.centerX + 0.00008, pitched.centerY, 0, 1.5);
+    const float tower = FogFactor(pitched, pitched.centerX + 0.00008, pitched.centerY, 300, 1.5);
+    Require(tower < ground, "fog thins with altitude");
+}
+
+void FogMixIsABlend() {
+    Require(Near(MixFog(0.2f, 0.9f, 0.0f), 0.2, 1e-6), "no fog leaves the colour alone");
+    Require(Near(MixFog(0.2f, 0.9f, 1.0f), 0.9, 1e-6), "full fog reaches the haze colour");
+    Require(Near(MixFog(0.0f, 1.0f, 0.5f), 0.5, 1e-6), "half fog is halfway");
+}
+
 void DepthSortOnlyWhenPitched() {
     Require(!NeedsDepthSort(0), "top-down needs no painter sort");
     Require(!NeedsDepthSort(0.5), "a hair off top-down still needs no sort");
     Require(NeedsDepthSort(45), "a pitched camera needs the painter sort");
 }
 
-} // namespace
-
-int main() {
+void RunAll() {
     ProjectsCameraToViewportCentre();
     HorizontalWrapTakesShortestPath();
     ElevationRaisesAndNears();
     SunDirectionIsUnitAndOriented();
     ShadingSpansAmbientToFull();
     DegenerateFaceIsUnshaded();
+    FogGrowsWithDistanceAndThinsWithHeight();
+    FogMixIsABlend();
     DepthSortOnlyWhenPitched();
+}
+
+} // namespace
+
+int main() {
+    try {
+        RunAll();
+    } catch (const std::exception& error) {
+        // Report which contract broke; a bare terminate tells you nothing.
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
     return 0;
 }

@@ -246,6 +246,10 @@ MapSceneDelta DecodeMapSceneDelta(const std::vector<std::uint8_t>& body) {
     out.camera = ReadMapCamera(r);
     out.sunAzimuth = r.Read<float>();
     out.sunElevation = r.Read<float>();
+    out.fogDensity = r.Read<float>();
+    out.fogRed = r.Read<float>();
+    out.fogGreen = r.Read<float>();
+    out.fogBlue = r.Read<float>();
     r.RequireEnd();
     return out;
 }

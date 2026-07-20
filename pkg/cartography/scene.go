@@ -59,6 +59,18 @@ func BuildSceneLit(viewportID string, generation uint64, camera Camera, style St
 	azimuth, elevation := lighting.resolve(camera.Latitude, camera.Longitude)
 	scene.Delta.SunAzimuth = float32(azimuth)
 	scene.Delta.SunElevation = float32(elevation)
+	if lighting.FogDensity > 0 {
+		// Callers pass the land tone so the horizon dissolves into the map's own
+		// background; the fallback is a neutral haze for callers that do not.
+		fog := Color{R: 226, G: 232, B: 240, A: 255}
+		if lighting.FogColor != nil {
+			fog = *lighting.FogColor
+		}
+		scene.Delta.FogDensity = lighting.FogDensity
+		scene.Delta.FogRed = float32(fog.R) / 255
+		scene.Delta.FogGreen = float32(fog.G) / 255
+		scene.Delta.FogBlue = float32(fog.B) / 255
+	}
 	return scene, nil
 }
 

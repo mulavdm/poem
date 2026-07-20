@@ -223,7 +223,14 @@ func buildNativeMapScene(ctx context.Context, cache *nativeTileCache, rawCache *
 	if ctx.Err() != nil || len(tiles) == 0 {
 		return
 	}
-	scene, err := cartography.BuildSceneLit(node.Semantic.ID, generation, camera, style, tiles, cartography.Lighting{DynamicSun: semanticStyle.DynamicSun, Clock: time.Now()})
+	// Fog fades distant ground into the map's own land tone, so a pitched view
+	// dissolves at the horizon instead of ending in a hard edge. The presenter
+	// fades it in with pitch, so a top-down map is unaffected.
+	fogColor := palette.Land
+	scene, err := cartography.BuildSceneLit(node.Semantic.ID, generation, camera, style, tiles, cartography.Lighting{
+		DynamicSun: semanticStyle.DynamicSun, Clock: time.Now(),
+		FogDensity: cartography.DefaultFogDensity, FogColor: &fogColor,
+	})
 	if err == nil {
 		scene, err = cartography.AddSceneFeatures(scene, nativeSceneFeatures(node, palette))
 	}

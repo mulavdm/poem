@@ -1,5 +1,11 @@
 # OKF Bundle Update Log
 
+## 2026-07-20 (height fog, both presenters from one implementation)
+
+- Added height fog. `MapSceneDelta` gains `FogDensity` and an RGB fog colour, **appended after the sun fields** so existing protocol values keep their positions; `cartography.Lighting` gains `FogDensity`/`FogColor`, and the desktop runtime passes the palette's land tone so distant ground dissolves into the map's own background instead of an arbitrary grey. The maths live in `shared/poem/map_view.h` (`FogFactor`, `MixFog`): haze grows with ground distance, thins with altitude (~140 m scale height, so towers rise out of it), and **fades in with pitch, so a top-down map is never hazed**. Fog is applied to ground and extruded geometry but deliberately not to labels or POI markers — geometry recedes, annotations stay legible.
+- The unit test caught a genuine design bug before it ever ran on a device: the first implementation normalised distance by *pixels*, which scales with zoom, so fog saturated to solid white within a block or two at city zoom (`far > near` failed because both were already 1.0). Fog now accumulates over **world metres** (`kFogReferenceMeters`), making it zoom-independent.
+- **One implementation, both backends.** Because the shading refactor had already moved this maths into `shared/`, fog was written once and both presenters picked it up; confirmed by sight on each (Android emulator and Windows, same Amsterdam view: crisp foreground, horizon dissolving into haze). That is the duplication payoff the shared module was extracted for.
+
 ## 2026-07-20 (protocol moved into shared/)
 
 - Moved `protocol.h`/`protocol.cpp` from `cpp_sidecar/src/` to `shared/poem/`, and updated all eight include sites to `#include "poem/protocol.h"`. The wire protocol was always shared code — the Android host compiled the very same `protocol.cpp` — but it lived under the Windows host's directory, so `build_apk.sh` had to reach into `cpp_sidecar/` to build an Android APK. That is the inverted dependency the framework TDD warns about (§4.1 shared core vs thin platform hosts; §6 separates shared `src/` from `platform/`).

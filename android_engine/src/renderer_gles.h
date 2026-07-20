@@ -95,6 +95,9 @@ class RendererGLES {
         // against it; the defaults are the engine's north-west key light.
         float sunAzimuth = 315.0f;
         float sunElevation = 45.0f;
+        // Height fog: density 0 disables it.
+        float fogDensity = 0.0f;
+        float fogRed = 1.0f, fogGreen = 1.0f, fogBlue = 1.0f;
         std::vector<protocol::MapDrawBatch> draws;
         std::unordered_map<std::string, protocol::MapSceneResource> resources;
 		GLuint vertexBuffer = 0;

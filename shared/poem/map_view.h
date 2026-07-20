@@ -147,6 +147,34 @@ inline float ShadeTriangle(const View& view, const Sun& sun,
     return static_cast<float>(ambient + (1.0 - ambient) * lambert);
 }
 
+// kFogScaleHeightMeters is the altitude over which haze thins by 1/e. Fog is a
+// ground effect: towers rise out of it while the far ground dissolves, which is
+// what reads as depth on a pitched view.
+inline constexpr double kFogScaleHeightMeters = 140.0;
+
+// kFogReferenceMeters is the ground distance at which density 1 produces about
+// 63% haze. Fog must accumulate over *world* distance, not pixels: pixel extent
+// scales with zoom, so a pixel-based density saturates to solid white within a
+// block or two when you zoom in.
+inline constexpr double kFogReferenceMeters = 3000.0;
+
+// FogFactor returns how much a point is hazed, 0 (clear) to 1 (fully fogged).
+// It grows with ground distance from the camera, thins with altitude, and fades
+// in with pitch so a top-down map is never hazed. Density 0 disables it.
+inline float FogFactor(const View& view, double x, double y, double elevation, double density) {
+    if (!(density > 0) || view.pitchSin <= 0 || view.metersToPixels <= 0) return 0.0f;
+    const auto local = Local(view, x, y, elevation);
+    const double meters = std::sqrt(local[0] * local[0] + local[1] * local[1]) / view.metersToPixels;
+    const double altitude = std::exp(-std::max(0.0, elevation) / kFogScaleHeightMeters);
+    const double fog = 1.0 - std::exp(-density * (meters / kFogReferenceMeters) * altitude * view.pitchSin);
+    return static_cast<float>(std::min(1.0, std::max(0.0, fog)));
+}
+
+// MixFog blends one colour channel toward the haze by factor.
+inline float MixFog(float channel, float fogChannel, float factor) {
+    return channel + (fogChannel - channel) * factor;
+}
+
 // NeedsDepthSort reports whether extruded geometry must be painter-sorted.
 // Looking straight down nothing occludes, and the sort is the expensive part of
 // a geometry rebuild (a city block is ~10^5 faces), so it is skipped there.

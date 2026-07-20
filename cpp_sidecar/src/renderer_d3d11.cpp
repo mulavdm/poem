@@ -708,6 +708,10 @@ void RendererD3D11::ApplyMapScene(const protocol::MapSceneDelta& scene) {
     retained.camera = scene.camera;
     retained.sunAzimuth = scene.sunAzimuth;
     retained.sunElevation = scene.sunElevation;
+    retained.fogDensity = scene.fogDensity;
+    retained.fogRed = scene.fogRed;
+    retained.fogGreen = scene.fogGreen;
+    retained.fogBlue = scene.fogBlue;
     retained.draws = scene.draws;
 	retained.vertexBuffer.Reset();
 	retained.vertexCount = 0;
@@ -794,6 +798,15 @@ void RendererD3D11::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector
 		  return poem::mapview::ShadeTriangle(view, sun, a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
 	  };
 	  auto applyShade = [](MapVertex& v, float shade) { v.r *= shade; v.g *= shade; v.b *= shade; };
+	  // Height fog applies to every map layer, not just extrusions: the ground
+	  // has to recede too, or buildings fade into a crisp landscape.
+	  auto applyFog = [&](MapVertex& v) {
+		  const float factor = poem::mapview::FogFactor(view, v.x, v.y, v.z, retained.fogDensity);
+		  if (factor <= 0.0f) return;
+		  v.r = poem::mapview::MixFog(v.r, retained.fogRed, factor);
+		  v.g = poem::mapview::MixFog(v.g, retained.fogGreen, factor);
+		  v.b = poem::mapview::MixFog(v.b, retained.fogBlue, factor);
+	  };
 	  auto depthOf = [&](float worldX, float worldY, float elevation) {
 		  return poem::mapview::Depth(view, worldX, worldY, elevation);
 	  };
@@ -837,6 +850,7 @@ void RendererD3D11::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector
                 a.a *= draw.opacity; b.a *= draw.opacity; c.a *= draw.opacity;
                 const float shade = shadeTriangle(a, b, c);
                 applyShade(a, shade); applyShade(b, shade); applyShade(c, shade);
+                applyFog(a); applyFog(b); applyFog(c);
                 faces.push_back(Face{screen(a.x, a.y, a.z), screen(b.x, b.y, b.z), screen(c.x, c.y, c.z), a, b, c,
                                      (depthOf(a.x, a.y, a.z) + depthOf(b.x, b.y, b.z) + depthOf(c.x, c.y, c.z)) / 3.0});
             }
@@ -856,6 +870,7 @@ void RendererD3D11::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector
                 MapVertex a{}, b{}, c{}; if (!readVertex(vertexResource, indexAt(i), a) || !readVertex(vertexResource, indexAt(i + 1), b) || !readVertex(vertexResource, indexAt(i + 2), c)) continue;
                 const auto pa = screen(a.x, a.y, a.z), pb = screen(b.x, b.y, b.z), pc = screen(c.x, c.y, c.z);
                 a.a *= draw.opacity; b.a *= draw.opacity; c.a *= draw.opacity;
+                applyFog(a); applyFog(b); applyFog(c);
                 vertices.push_back(solidVertex(pa[0], pa[1], a)); vertices.push_back(solidVertex(pb[0], pb[1], b)); vertices.push_back(solidVertex(pc[0], pc[1], c));
             }
         } else {

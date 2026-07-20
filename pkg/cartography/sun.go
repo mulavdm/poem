@@ -27,7 +27,20 @@ const (
 type Lighting struct {
 	DynamicSun bool
 	Clock      time.Time
+	// FogDensity controls height fog: 0 disables it, and larger values haze
+	// distant ground sooner. Fog thins with altitude, so towers stay legible
+	// while the far ground dissolves — which is what gives a pitched view its
+	// sense of depth. The presenter fades it in with pitch, so a top-down map
+	// is never hazed.
+	FogDensity float32
+	// FogColor is the haze colour. Leave it zero to fade into the style's land
+	// tone, which keeps the horizon dissolving into the map background.
+	FogColor *Color
 }
+
+// DefaultFogDensity is a restrained default: clearly readable as depth on a
+// pitched city view without washing the map out.
+const DefaultFogDensity = 1.15
 
 // resolve returns the azimuth and clamped visual elevation to light a scene at
 // the given location. Elevation is clamped to a usable range: a low daytime sun

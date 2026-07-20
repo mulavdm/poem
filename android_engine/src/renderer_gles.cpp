@@ -233,6 +233,10 @@ void RendererGLES::ApplyMapScene(const protocol::MapSceneDelta& scene) {
     retained.camera = scene.camera;
     retained.sunAzimuth = scene.sunAzimuth;
     retained.sunElevation = scene.sunElevation;
+    retained.fogDensity = scene.fogDensity;
+    retained.fogRed = scene.fogRed;
+    retained.fogGreen = scene.fogGreen;
+    retained.fogBlue = scene.fogBlue;
     retained.draws = scene.draws;
 	retained.geometryDirty = true;
 	std::unordered_set<std::string> referenced;
@@ -309,6 +313,16 @@ void RendererGLES::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<
 		auto depthOf = [&](float x, float y, float elevation) {
 			return poem::mapview::Depth(view, x, y, elevation);
 		};
+		// Height fog is applied per vertex to every map layer, not just
+		// extrusions: the ground has to recede too, or buildings fade into a
+		// crisp landscape and the depth cue reads as a bug.
+		auto applyFog = [&](MapVertex& v) {
+			const float factor = poem::mapview::FogFactor(view, v.x, v.y, v.z, scene.fogDensity);
+			if (factor <= 0.0f) return;
+			v.r = poem::mapview::MixFog(v.r, scene.fogRed, factor);
+			v.g = poem::mapview::MixFog(v.g, scene.fogGreen, factor);
+			v.b = poem::mapview::MixFog(v.b, scene.fogBlue, factor);
+		};
 
         for (const auto& draw : scene.draws) {
 			const auto rangeStart = static_cast<std::uint32_t>(vertices.size());
@@ -334,6 +348,7 @@ void RendererGLES::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<
                         a.a*=draw.opacity; b.a*=draw.opacity; c.a*=draw.opacity;
                         const float shade = shadeTriangle(a,b,c);
                         applyShade(a,shade); applyShade(b,shade); applyShade(c,shade);
+                        applyFog(a); applyFog(b); applyFog(c);
                         faces.push_back(Face{screen(a.x,a.y,a.z),screen(b.x,b.y,b.z),screen(c.x,c.y,c.z),a,b,c,
                                              (depthOf(a.x,a.y,a.z)+depthOf(b.x,b.y,b.z)+depthOf(c.x,c.y,c.z))/3.0});
                     }
@@ -351,10 +366,10 @@ void RendererGLES::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<
                         vertices.push_back(solid(face.pc[0],face.pc[1],face.c));
                     }
                 } else {
-                for (std::uint32_t i=0; i+2<draw.count; i+=3) { MapVertex a{},b{},c{}; if(!readVertex(verticesIt->second,indexAt(i),a)||!readVertex(verticesIt->second,indexAt(i+1),b)||!readVertex(verticesIt->second,indexAt(i+2),c)) continue; auto pa=screen(a.x,a.y,a.z),pb=screen(b.x,b.y,b.z),pc=screen(c.x,c.y,c.z); a.a*=draw.opacity;b.a*=draw.opacity;c.a*=draw.opacity; vertices.push_back(solid(pa[0],pa[1],a));vertices.push_back(solid(pb[0],pb[1],b));vertices.push_back(solid(pc[0],pc[1],c)); }
+                for (std::uint32_t i=0; i+2<draw.count; i+=3) { MapVertex a{},b{},c{}; if(!readVertex(verticesIt->second,indexAt(i),a)||!readVertex(verticesIt->second,indexAt(i+1),b)||!readVertex(verticesIt->second,indexAt(i+2),c)) continue; auto pa=screen(a.x,a.y,a.z),pb=screen(b.x,b.y,b.z),pc=screen(c.x,c.y,c.z); a.a*=draw.opacity;b.a*=draw.opacity;c.a*=draw.opacity; applyFog(a);applyFog(b);applyFog(c); vertices.push_back(solid(pa[0],pa[1],a));vertices.push_back(solid(pb[0],pb[1],b));vertices.push_back(solid(pc[0],pc[1],c)); }
                 }
             } else if (draw.primitive == protocol::MapPrimitive::Lines) {
-                for (std::uint32_t i=0; i+1<draw.count; i+=2) { MapVertex a{},b{}; if(!readVertex(verticesIt->second,indexAt(i),a)||!readVertex(verticesIt->second,indexAt(i+1),b)) continue; auto pa=screen(a.x,a.y,a.z),pb=screen(b.x,b.y,b.z); float dx=pb[0]-pa[0],dy=pb[1]-pa[1],length=std::sqrt(dx*dx+dy*dy); if(length<.01f) continue; float half=std::max(1.0f,a.width)*.5f,nx=-dy/length*half,ny=dx/length*half; a.a*=draw.opacity; vertices.push_back(solid(pa[0]+nx,pa[1]+ny,a));vertices.push_back(solid(pb[0]+nx,pb[1]+ny,a));vertices.push_back(solid(pa[0]-nx,pa[1]-ny,a));vertices.push_back(solid(pa[0]-nx,pa[1]-ny,a));vertices.push_back(solid(pb[0]+nx,pb[1]+ny,a));vertices.push_back(solid(pb[0]-nx,pb[1]-ny,a)); }
+                for (std::uint32_t i=0; i+1<draw.count; i+=2) { MapVertex a{},b{}; if(!readVertex(verticesIt->second,indexAt(i),a)||!readVertex(verticesIt->second,indexAt(i+1),b)) continue; auto pa=screen(a.x,a.y,a.z),pb=screen(b.x,b.y,b.z); float dx=pb[0]-pa[0],dy=pb[1]-pa[1],length=std::sqrt(dx*dx+dy*dy); if(length<.01f) continue; float half=std::max(1.0f,a.width)*.5f,nx=-dy/length*half,ny=dx/length*half; a.a*=draw.opacity; applyFog(a); vertices.push_back(solid(pa[0]+nx,pa[1]+ny,a));vertices.push_back(solid(pb[0]+nx,pb[1]+ny,a));vertices.push_back(solid(pa[0]-nx,pa[1]-ny,a));vertices.push_back(solid(pa[0]-nx,pa[1]-ny,a));vertices.push_back(solid(pb[0]+nx,pb[1]+ny,a));vertices.push_back(solid(pb[0]-nx,pb[1]-ny,a)); }
             } else {
                 for(std::uint32_t i=0;i<draw.count;i++){MapVertex p{};if(!readVertex(verticesIt->second,indexAt(i),p))continue;auto at=screen(p.x,p.y,p.z);float r=std::max(3.0f,p.width);AppendQuad(vertices,at[0]-r,at[1]-r,at[0]+r,at[1]+r,0,0,1,1,p.r,p.g,p.b,p.a*draw.opacity,0,0,0,r);}
             }
