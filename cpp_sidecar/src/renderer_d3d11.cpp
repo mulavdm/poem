@@ -1,5 +1,7 @@
 #include "renderer_d3d11.h"
 
+#include "poem/map_view.h"
+
 #include <d3dcompiler.h>
 #include <dxgi.h>
 #include <algorithm>
@@ -775,65 +777,25 @@ void RendererD3D11::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector
       if (sceneEntry.first != viewportId) continue;
       const auto& retained = sceneEntry.second;
       if (retained.draws.empty() || retained.camera.viewportWidth == 0 || retained.camera.viewportHeight == 0) continue;
-      const auto center = project(retained.camera.longitude, retained.camera.latitude);
-      const double worldPixels = 512.0 * std::pow(2.0, retained.camera.zoom) * std::max(.01f, previewScale);
-      const double angle = -retained.camera.bearing * 3.14159265358979323846 / 180.0;
-      const double cosine = std::cos(angle), sine = std::sin(angle);
-      const double pitch = retained.camera.pitch * 3.14159265358979323846 / 180.0;
-      const double pitchCos = std::cos(pitch), pitchSin = std::sin(pitch);
-      const double metersToPixels = worldPixels / (40075016.68557849 * std::max(.01, std::cos(retained.camera.latitude * 3.14159265358979323846 / 180.0)));
-	  const double cameraDistance = std::max(1.0, static_cast<double>(bottom - top) * .5 / std::tan(3.14159265358979323846 / 8.0));
+      // Camera transform, solar direction and face shading all come from the
+      // shared, platform-neutral module so this presenter cannot drift from the
+      // GLES one (see shared/poem/map_view.h).
+      const auto view = poem::mapview::Make(retained.camera.latitude, retained.camera.longitude, retained.camera.zoom,
+                                            retained.camera.bearing, retained.camera.pitch, previewScale,
+                                            left, top, right, bottom);
+      const auto sun = poem::mapview::SunDirection(view, retained.sunAzimuth, retained.sunElevation);
       auto screen = [&](float worldX, float worldY, float elevation) {
-          double dx = static_cast<double>(worldX) - center[0];
-          if (dx > .5) dx -= 1.0; else if (dx < -.5) dx += 1.0;
-          const double dy = static_cast<double>(worldY) - center[1];
-          const double localX = (dx * cosine - dy * sine) * worldPixels;
-		  const double localY = (dx * sine + dy * cosine) * worldPixels;
-		  const double localZ = elevation * metersToPixels;
-		  const double projectedY = localY * pitchCos - localZ * pitchSin;
-		  const double depth = localY * pitchSin + localZ * pitchCos;
-		  const double perspective = cameraDistance / std::max(cameraDistance * .05, cameraDistance - depth);
-          return std::array<float, 2>{static_cast<float>((left + right) * .5 + localX * perspective), static_cast<float>((top + bottom) * .5 + projectedY * perspective)};
+          const auto point = poem::mapview::Project(view, worldX, worldY, elevation);
+          return std::array<float, 2>{point.x, point.y};
       };
-	  // Lighting works in the same local pixel space the projection builds from:
-	  // +x right (after bearing), +y south, +z up. Only extruded batches
-	  // (draw.depthTest, set from the style's Extrude) are shaded, so flat
-	  // land/water keep exactly the colours the style asked for. Mirrors the
-	  // GLES presenter so both targets light the scene identically.
-	  auto localSpace = [&](float worldX, float worldY, float elevation) {
-		  double dx = static_cast<double>(worldX) - center[0];
-		  if (dx > .5) dx -= 1.0; else if (dx < -.5) dx += 1.0;
-		  const double dy = static_cast<double>(worldY) - center[1];
-		  return std::array<double, 3>{(dx * cosine - dy * sine) * worldPixels, (dx * sine + dy * cosine) * worldPixels, elevation * metersToPixels};
-	  };
-	  // Sun azimuth is clockwise from north; map y grows southward, so north is
-	  // -y. The bearing rotation matches the one applied to positions.
-	  const double sunAz = retained.sunAzimuth * 3.14159265358979323846 / 180.0;
-	  const double sunEl = retained.sunElevation * 3.14159265358979323846 / 180.0;
-	  const double sunEast = std::cos(sunEl) * std::sin(sunAz), sunNorth = std::cos(sunEl) * std::cos(sunAz);
-	  double sunX = sunEast * cosine + sunNorth * sine, sunY = sunEast * sine - sunNorth * cosine, sunZ = std::sin(sunEl);
-	  {
-		  const double length = std::sqrt(sunX * sunX + sunY * sunY + sunZ * sunZ);
-		  if (length > 1e-9) { sunX /= length; sunY /= length; sunZ /= length; }
-	  }
-	  constexpr double kAmbient = 0.45; // unlit faces stay readable, never black
+	  // Only extruded batches (draw.depthTest, set from the style's Extrude) are
+	  // shaded, so flat land/water keep exactly the colours the style asked for.
 	  auto shadeTriangle = [&](const MapVertex& a, const MapVertex& b, const MapVertex& c) {
-		  const auto pa = localSpace(a.x, a.y, a.z), pb = localSpace(b.x, b.y, b.z), pc = localSpace(c.x, c.y, c.z);
-		  const double ux = pb[0] - pa[0], uy = pb[1] - pa[1], uz = pb[2] - pa[2];
-		  const double vx = pc[0] - pa[0], vy = pc[1] - pa[1], vz = pc[2] - pa[2];
-		  const double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-		  const double length = std::sqrt(nx * nx + ny * ny + nz * nz);
-		  if (length < 1e-9) return 1.0f;
-		  const double lambert = std::max(0.0, (nx * sunX + ny * sunY + nz * sunZ) / length);
-		  return static_cast<float>(kAmbient + (1.0 - kAmbient) * lambert);
+		  return poem::mapview::ShadeTriangle(view, sun, a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
 	  };
 	  auto applyShade = [](MapVertex& v, float shade) { v.r *= shade; v.g *= shade; v.b *= shade; };
-	  // Camera-space depth, matching the projection: it grows toward the camera.
 	  auto depthOf = [&](float worldX, float worldY, float elevation) {
-		  double dx = static_cast<double>(worldX) - center[0];
-		  if (dx > .5) dx -= 1.0; else if (dx < -.5) dx += 1.0;
-		  const double dy = static_cast<double>(worldY) - center[1];
-		  return (dx * sine + dy * cosine) * worldPixels * pitchSin + elevation * metersToPixels * pitchCos;
+		  return poem::mapview::Depth(view, worldX, worldY, elevation);
 	  };
 
       for (const auto& draw : retained.draws) {
@@ -881,7 +843,7 @@ void RendererD3D11::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector
             // Depth grows toward the camera, so ascending draws far first.
             // Looking straight down nothing occludes, so skip the sort - it is
             // the expensive part of a rebuild and pan/zoom rebuilds run often.
-            if (retained.camera.pitch > 1.0f) {
+            if (poem::mapview::NeedsDepthSort(retained.camera.pitch)) {
                 std::sort(faces.begin(), faces.end(), [](const Face& l, const Face& r) { return l.depth < r.depth; });
             }
             for (const auto& face : faces) {

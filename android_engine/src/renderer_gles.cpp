@@ -1,5 +1,7 @@
 #include "renderer_gles.h"
 
+#include "poem/map_view.h"
+
 #include <android/log.h>
 #include <algorithm>
 #include <cmath>
@@ -287,52 +289,25 @@ void RendererGLES::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<
     for (const auto& entry : mapScenes_) {
         if (entry.first != viewportId) continue;
         const auto& scene = entry.second; if (scene.draws.empty()) continue;
-        const double latitude = std::max(-85.05112878, std::min(85.05112878, scene.camera.latitude));
-        const double centerX = (scene.camera.longitude + 180.0) / 360.0;
-        const double latSin = std::sin(latitude * M_PI / 180.0);
-        const double centerY = .5 - std::log((1.0 + latSin) / (1.0 - latSin)) / (4.0 * M_PI);
-		const double worldPixels = 512.0 * std::pow(2.0, scene.camera.zoom) * std::max(.01f, previewScale);
-        const double angle = -scene.camera.bearing * M_PI / 180.0, cs = std::cos(angle), sn = std::sin(angle);
-		const double pitch = scene.camera.pitch * M_PI / 180.0, pitchCos = std::cos(pitch), pitchSin = std::sin(pitch);
-        const double metersToPixels = worldPixels / (40075016.68557849 * std::max(.01, std::cos(scene.camera.latitude * M_PI / 180.0)));
-		const double cameraDistance = std::max(1.0, static_cast<double>(bottom-top)*.5/std::tan(M_PI/8.0));
-		auto screen = [&](float x, float y, float elevation) { double dx=x-centerX;if(dx>.5)dx-=1;else if(dx<-.5)dx+=1;const double dy=y-centerY,localX=(dx*cs-dy*sn)*worldPixels,localY=(dx*sn+dy*cs)*worldPixels,localZ=elevation*metersToPixels,projectedY=localY*pitchCos-localZ*pitchSin,depth=localY*pitchSin+localZ*pitchCos,perspective=cameraDistance/std::max(cameraDistance*.05,cameraDistance-depth);return std::array<float,2>{static_cast<float>((left+right)*.5+localX*perspective),static_cast<float>((top+bottom)*.5+projectedY*perspective)};};
-		// Lighting works in the same local pixel space the projection builds
-		// from: +x right (after bearing), +y south, +z up. Only extruded
-		// batches (draw.depthTest, set from the style's Extrude) are shaded, so
-		// flat land/water keep exactly the colours the style asked for.
-		auto localSpace = [&](float x, float y, float elevation) {
-			double dx = x - centerX; if (dx > .5) dx -= 1; else if (dx < -.5) dx += 1;
-			const double dy = y - centerY;
-			return std::array<double, 3>{(dx*cs - dy*sn)*worldPixels, (dx*sn + dy*cs)*worldPixels, elevation*metersToPixels};
+		// Camera transform, solar direction and face shading all come from the
+		// shared, platform-neutral module so this presenter cannot drift from
+		// the D3D11 one (see shared/poem/map_view.h).
+		const auto view = poem::mapview::Make(scene.camera.latitude, scene.camera.longitude, scene.camera.zoom,
+		                                      scene.camera.bearing, scene.camera.pitch, previewScale,
+		                                      left, top, right, bottom);
+		const auto sun = poem::mapview::SunDirection(view, scene.sunAzimuth, scene.sunElevation);
+		auto screen = [&](float x, float y, float elevation) {
+			const auto point = poem::mapview::Project(view, x, y, elevation);
+			return std::array<float, 2>{point.x, point.y};
 		};
-		// Sun azimuth is clockwise from north; map y grows southward, so north
-		// is -y. The bearing rotation matches the one applied to positions.
-		const double sunAz = scene.sunAzimuth * M_PI/180.0, sunEl = scene.sunElevation * M_PI/180.0;
-		const double sunEast = std::cos(sunEl)*std::sin(sunAz), sunNorth = std::cos(sunEl)*std::cos(sunAz);
-		double sunX = sunEast*cs + sunNorth*sn, sunY = sunEast*sn - sunNorth*cs, sunZ = std::sin(sunEl);
-		{
-			const double length = std::sqrt(sunX*sunX + sunY*sunY + sunZ*sunZ);
-			if (length > 1e-9) { sunX/=length; sunY/=length; sunZ/=length; }
-		}
-		constexpr double kAmbient = 0.45; // unlit faces stay readable, never black
+		// Only extruded batches (draw.depthTest, set from the style's Extrude)
+		// are shaded, so flat land/water keep exactly the colours the style asked for.
 		auto shadeTriangle = [&](const MapVertex& a, const MapVertex& b, const MapVertex& c) {
-			const auto pa = localSpace(a.x,a.y,a.z), pb = localSpace(b.x,b.y,b.z), pc = localSpace(c.x,c.y,c.z);
-			const double ux=pb[0]-pa[0], uy=pb[1]-pa[1], uz=pb[2]-pa[2];
-			const double vx=pc[0]-pa[0], vy=pc[1]-pa[1], vz=pc[2]-pa[2];
-			double nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
-			const double length = std::sqrt(nx*nx+ny*ny+nz*nz);
-			if (length < 1e-9) return 1.0f;
-			const double lambert = std::max(0.0, (nx*sunX + ny*sunY + nz*sunZ)/length);
-			return static_cast<float>(kAmbient + (1.0-kAmbient)*lambert);
+			return poem::mapview::ShadeTriangle(view, sun, a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
 		};
 		auto applyShade = [](MapVertex& v, float shade) { v.r*=shade; v.g*=shade; v.b*=shade; };
-		// Camera-space depth, matching the projection: it grows toward the
-		// camera (the perspective divide uses cameraDistance - depth).
 		auto depthOf = [&](float x, float y, float elevation) {
-			double dx = x - centerX; if (dx > .5) dx -= 1; else if (dx < -.5) dx += 1;
-			const double dy = y - centerY;
-			return (dx*sn + dy*cs)*worldPixels*pitchSin + elevation*metersToPixels*pitchCos;
+			return poem::mapview::Depth(view, x, y, elevation);
 		};
 
         for (const auto& draw : scene.draws) {
@@ -367,7 +342,7 @@ void RendererGLES::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<
                     // so skip the sort — it is the expensive part of a rebuild
                     // (this batch alone is ~167k faces) and pan/zoom rebuilds
                     // run per frame.
-                    if (scene.camera.pitch > 1.0f) {
+                    if (poem::mapview::NeedsDepthSort(scene.camera.pitch)) {
                         std::sort(faces.begin(), faces.end(), [](const Face& l, const Face& r){ return l.depth < r.depth; });
                     }
                     for (const auto& face : faces) {

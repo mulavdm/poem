@@ -14,7 +14,8 @@ add_executable(poem_windows_host WIN32
   src/accessibility.cpp
 )
 
-target_include_directories(poem_windows_host PRIVATE src)
+# ../shared holds platform-neutral C++ used by every host (see shared/poem).
+target_include_directories(poem_windows_host PRIVATE src ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 target_compile_definitions(poem_windows_host PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(poem_windows_host PRIVATE d3d11 dxgi d3dcompiler winmm user32 gdi32 shcore shell32 ole32 oleaut32 uuid imm32 uiautomationcore)
 
@@ -27,4 +28,10 @@ if(BUILD_TESTING)
   target_include_directories(poem_windows_host_contract_test PRIVATE src)
   target_compile_definitions(poem_windows_host_contract_test PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
   add_test(NAME poem_windows_host_contract COMMAND poem_windows_host_contract_test)
+
+  # Shared map maths: no GPU, window or platform SDK, so it runs anywhere the
+  # host builds and pins the projection/lighting every presenter shares.
+  add_executable(poem_map_view_test tests/map_view_test.cpp)
+  target_include_directories(poem_map_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
+  add_test(NAME poem_map_view COMMAND poem_map_view_test)
 endif()
