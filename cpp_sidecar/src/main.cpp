@@ -841,7 +841,17 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                 } else if (env.type == poem::protocol::MessageType::SemanticTree) {
                     auto tree = poem::protocol::DecodeSemanticTree(env.body);
                     auto* pendingTree = new poem::protocol::SemanticTree(std::move(tree));
-                    SendMessageW(app.hwnd, WM_POEM_SEMANTICS, 0, reinterpret_cast<LPARAM>(pendingTree));
+                    // Must be posted, never sent: SendMessageW blocks this
+                    // reader until the UI thread replies, and the UI thread can
+                    // be inside SendEvent -> WriteMessage waiting on the engine,
+                    // which cannot drain because this reader is the only thing
+                    // that drains it. That three-way deadlock hung the window
+                    // on startup for semantics-rich apps. WM_POEM_SEMANTICS
+                    // already takes ownership of the pointer, so posting is
+                    // safe; free it ourselves only if the post fails.
+                    if (!app.hwnd || !PostMessageW(app.hwnd, WM_POEM_SEMANTICS, 0, reinterpret_cast<LPARAM>(pendingTree))) {
+                        delete pendingTree;
+                    }
                 } else if (env.type == poem::protocol::MessageType::FontAtlas) {
                     auto atlas = poem::protocol::DecodeInitEngine(env.body);
                     std::lock_guard<std::mutex> lock(app.frameMutex);

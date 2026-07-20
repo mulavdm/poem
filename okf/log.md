@@ -1,5 +1,9 @@
 # OKF Bundle Update Log
 
+## 2026-07-20 (Windows host startup deadlock fixed)
+
+- The Windows host published semantic trees with a **synchronous** `SendMessageW` from its engine-reader thread, while every other engine message used `PostMessageW`. That blocked the reader until the UI thread replied — but the UI thread could be inside `SendEvent` → `WriteMessage`, waiting on an engine that could not drain because the reader was the only thing draining it. The resulting three-way deadlock left the window blank and unresponsive immediately after startup (main thread reached its message loop, then stalled on the first `WM_SIZE`). It reproduced on MAPPS but not the counter example, because a semantics-rich UI wins the race. `WM_POEM_SEMANTICS` already takes ownership of the heap-allocated tree, so the fix is to post it (freeing it only if the post fails). Verified with `SendMessageTimeout`: before `pumping=False hung=True`, after `pumping=True hung=False`, and the app now renders its full UI and vector map. This also unblocked visual confirmation of the D3D11 sun-lit extrusions (pitched Amsterdam: dark wall faces against lit roofs), so both native presenters are now confirmed by sight, not just by construction.
+
 ## 2026-07-20 (M9 sun-lit building extrusions, D3D11 parity)
 
 - Mirrored the GLES sun shading into the D3D11 presenter so both native targets light the scene identically: `RetainedMapScene` keeps the solar position, and extruded (`depthTest`) triangle batches are Lambert-shaded from per-face normals and sorted back-to-front, with the sort skipped near top-down. The lighting math is character-identical to the GLES implementation (only the local names differ: `cosine`/`sine` vs `cs`/`sn`). Compile-verified via the `poem_windows_host` CMake build; **visual confirmation on Windows is still outstanding** — the shading itself was verified on the Android emulator.
