@@ -1,5 +1,9 @@
 # OKF Bundle Update Log
 
+## 2026-07-20 (POI dot declutter: density thinning + distance fade)
+
+- Dot (POI) layers now go through a deterministic declutter policy in the scene builder (`pkg/cartography/declutter.go`): at most one dot per 24-unpitched-px screen cell (first feature in stable tile order wins), and dots fade with ground distance — full strength within one viewport-height of ground coverage, linear fade to a hard cull at 2.5 — so a pitched camera no longer accumulates an opaque band of markers at the horizon. A culled dot claims no thinning cell, so far geometry arriving first never blocks nearer dots. The fade is written into per-vertex alpha, so no protocol or presenter change was needed; culled dots also drop out of pick records naturally. Verified on the emulator against the previous dot-spam screenshot (zoom 15, pitch 62 over Amsterdam): dense green blobs became individually spaced dots and the horizon strip is marker-free. Labels keep their own collision pass; a shared cross-type collision index (labels vs dots) remains a refinement.
+
 ## 2026-07-20 (height fog, both presenters from one implementation)
 
 - Added height fog. `MapSceneDelta` gains `FogDensity` and an RGB fog colour, **appended after the sun fields** so existing protocol values keep their positions; `cartography.Lighting` gains `FogDensity`/`FogColor`, and the desktop runtime passes the palette's land tone so distant ground dissolves into the map's own background instead of an arbitrary grey. The maths live in `shared/poem/map_view.h` (`FogFactor`, `MixFog`): haze grows with ground distance, thins with altitude (~140 m scale height, so towers rise out of it), and **fades in with pitch, so a top-down map is never hazed**. Fog is applied to ground and extruded geometry but deliberately not to labels or POI markers — geometry recedes, annotations stay legible.

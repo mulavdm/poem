@@ -107,6 +107,12 @@ func BuildScene(viewportID string, generation uint64, camera Camera, style Style
 	for layerIndex, styleLayer := range style.Layers {
 		var vertices, indices []byte
 		var vertexCount, indexCount uint32
+		// Dot layers get density thinning and a distance fade so a pitched view
+		// does not drown in markers; see declutter.go.
+		var declutter *pointDeclutter
+		if styleLayer.Geometry == GeometryPoint {
+			declutter = newPointDeclutter(camera)
+		}
 		for _, tile := range ordered {
 			for _, source := range tile.Layers {
 				if source.Name != styleLayer.SourceLayer || source.Extent == 0 {
@@ -142,7 +148,15 @@ func BuildScene(viewportID string, generation uint64, camera Camera, style Style
 							pathStart := vertexCount
 							for _, point := range path {
 								x, y := tilePosition(tile.ID, source.Extent, point)
-								appendVertex(&vertices, x, y, height, styleLayer.Color, styleLayer.width(camera.Zoom), featureID)
+								fade := float32(1)
+								if declutter != nil {
+									scale, ok := declutter.admit(x, y)
+									if !ok {
+										continue
+									}
+									fade = scale
+								}
+								appendVertex(&vertices, x, y, height, fadedColor(styleLayer.Color, fade), styleLayer.width(camera.Zoom), featureID)
 								vertexCount++
 							}
 							count := vertexCount - pathStart
