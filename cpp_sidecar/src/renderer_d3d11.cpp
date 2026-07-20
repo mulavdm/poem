@@ -25,6 +25,105 @@ struct ConstantBuffer {
     float pad[2];
 };
 
+// MapViewConstants mirrors shared/poem/map_view.h View for the GPU map path.
+// The camera centre is split into hi+lo floats (relative-to-eye) because world
+// units near zoom 15 exceed single-float precision when differenced in-shader.
+struct MapViewConstants {
+    float centerHiX, centerHiY, centerLoX, centerLoY;
+    float worldPixels, cosBearing, sinBearing, metersToPixels;
+    float pitchCos, pitchSin, cameraDistance, screenWidth;
+    float screenHeight, rectCenterX, rectCenterY, ambient;
+    float sunX, sunY, sunZ, fogDensity;
+    float fogR, fogG, fogB, fogPitch;
+    // From shared/poem/map_view.h so the HLSL never hard-codes them.
+    float fogReferenceMeters, fogScaleHeightMeters, pad0, pad1;
+};
+
+struct MapDrawConstants {
+    float opacity;
+    float shaded; // 1 = light against the sun (extrusions), 0 = styled colour
+    float pad[2];
+};
+
+// The GPU map shader projects raw cartography vertices (world x/y in mercator
+// units, z in metres) exactly as shared/poem/map_view.h does on the CPU, and
+// shades per-face from screen-space derivatives of the local position — the
+// derivative of a linearly interpolated varying is constant per triangle, so
+// cross(ddx, ddy) recovers the true face plane without per-vertex normals.
+const char* kMapShader = R"(
+cbuffer MapView : register(b0) {
+    float4 centerHiLo;    // hiX hiY loX loY
+    float4 worldBearing;  // worldPixels cosB sinB metersToPixels
+    float4 pitchScreen;   // pitchCos pitchSin cameraDistance screenW
+    float4 screenRect;    // screenH rectCX rectCY ambient
+    float4 sunFog;        // sunX sunY sunZ fogDensity
+    float4 fogColorPitch; // fogR fogG fogB pitchSin
+    float4 fogParams;     // referenceMeters scaleHeight - -
+};
+cbuffer MapDraw : register(b1) {
+    float4 drawParams;    // opacity shaded - -
+};
+
+struct VSIn {
+    float3 pos : POSITION;
+    float4 color : COLOR0;
+};
+struct VSOut {
+    float4 pos : SV_POSITION;
+    float4 color : COLOR0;
+    float3 local : TEXCOORD0;
+};
+
+VSOut vsmain(VSIn input) {
+    float dx = (input.pos.x - centerHiLo.x) - centerHiLo.z;
+    if (dx > 0.5) dx -= 1.0;
+    if (dx < -0.5) dx += 1.0;
+    float dy = (input.pos.y - centerHiLo.y) - centerHiLo.w;
+    float localX = (dx * worldBearing.y - dy * worldBearing.z) * worldBearing.x;
+    float localY = (dx * worldBearing.z + dy * worldBearing.y) * worldBearing.x;
+    float localZ = input.pos.z * worldBearing.w;
+    float projY = localY * pitchScreen.x - localZ * pitchScreen.y;
+    float depth = localY * pitchScreen.y + localZ * pitchScreen.x;
+    float persp = pitchScreen.z / max(pitchScreen.z * 0.05, pitchScreen.z - depth);
+    float sx = screenRect.y + localX * persp;
+    float sy = screenRect.z + projY * persp;
+    VSOut output;
+    // Depth spans [-19*cameraDistance, +cameraDistance): the perspective divide
+    // floors at cameraDistance*0.05, i.e. depth = -19*cd at the far clamp.
+    // Normalizing over that exact range keeps 24-bit precision (~0.001 px)
+    // instead of saturating the pitched scene into z-fighting ties.
+    output.pos = float4(sx / pitchScreen.w * 2.0 - 1.0, 1.0 - sy / screenRect.x * 2.0,
+                        saturate((depth + 19.0 * pitchScreen.z) / (20.0 * pitchScreen.z)), 1.0);
+    output.color = input.color;
+    output.local = float3(localX, localY, localZ);
+    return output;
+}
+
+float4 psmain(VSOut input) : SV_TARGET {
+    float3 color = input.color.rgb;
+    if (drawParams.y > 0.5) {
+        float3 normal = cross(ddx(input.local), ddy(input.local));
+        float len = length(normal);
+        if (len > 1e-6) {
+            normal /= len;
+            // abs() lights a face and its back identically: adjacent buildings
+            // share coplanar walls that are drawn twice with opposite winding,
+            // and symmetric shading makes that unavoidable z-tie invisible.
+            float lambert = abs(dot(normal, sunFog.xyz));
+            color *= screenRect.w + (1.0 - screenRect.w) * lambert;
+        }
+    }
+    if (sunFog.w > 0.0 && fogColorPitch.w > 0.0) {
+        float meters = length(input.local.xy) / worldBearing.w;
+        float elevM = input.local.z / worldBearing.w;
+        float altitude = exp(-max(elevM, 0.0) / fogParams.y);
+        float fog = 1.0 - exp(-sunFog.w * (meters / fogParams.x) * altitude * fogColorPitch.w);
+        color = lerp(color, fogColorPitch.rgb, saturate(fog));
+    }
+    return float4(color, input.color.a * drawParams.x);
+}
+)";
+
 std::string MapHashKey(const std::array<std::uint8_t, 32>& hash) {
     return std::string(reinterpret_cast<const char*>(hash.data()), hash.size());
 }
@@ -583,6 +682,36 @@ bool RendererD3D11::CreateShaders() {
     rast.ScissorEnable = TRUE;
     if (FAILED(device_->CreateRasterizerState(&rast, &rasterizer_))) return false;
 
+    // GPU map pipeline: shaders over the raw cartography vertex format
+    // (stride 32: float3 position, u8x4 colour; width/featureID skipped).
+    auto mapVs = CompileShader(kMapShader, "vsmain", "vs_5_0");
+    auto mapPs = CompileShader(kMapShader, "psmain", "ps_5_0");
+    if (!mapVs || !mapPs) return false;
+    if (FAILED(device_->CreateVertexShader(mapVs->GetBufferPointer(), mapVs->GetBufferSize(), nullptr, &mapVertexShader_))) return false;
+    if (FAILED(device_->CreatePixelShader(mapPs->GetBufferPointer(), mapPs->GetBufferSize(), nullptr, &mapPixelShader_))) return false;
+    D3D11_INPUT_ELEMENT_DESC mapLayout[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    };
+    if (FAILED(device_->CreateInputLayout(mapLayout, 2, mapVs->GetBufferPointer(), mapVs->GetBufferSize(), &mapInputLayout_))) return false;
+
+    cbDesc.ByteWidth = sizeof(MapViewConstants);
+    if (FAILED(device_->CreateBuffer(&cbDesc, nullptr, &mapViewBuffer_))) return false;
+    cbDesc.ByteWidth = sizeof(MapDrawConstants);
+    if (FAILED(device_->CreateBuffer(&cbDesc, nullptr, &mapDrawBuffer_))) return false;
+
+    // Depth semantics: the shader writes "nearness" (bigger = closer), so the
+    // map path tests GREATER_EQUAL against a buffer cleared to 0. Equal-depth
+    // ground layers then resolve by draw order, exactly like the flat path.
+    D3D11_DEPTH_STENCIL_DESC depth{};
+    depth.DepthEnable = TRUE;
+    depth.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+    depth.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
+    if (FAILED(device_->CreateDepthStencilState(&depth, &mapDepthState_))) return false;
+    depth.DepthEnable = FALSE;
+    depth.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+    if (FAILED(device_->CreateDepthStencilState(&depth, &uiDepthState_))) return false;
+
     D3D11_SAMPLER_DESC samp{};
     samp.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     samp.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -679,6 +808,24 @@ void RendererD3D11::RecreateRenderTarget() {
     Microsoft::WRL::ComPtr<ID3D11Texture2D> backbuffer;
     swapchain_->GetBuffer(0, IID_PPV_ARGS(&backbuffer));
     device_->CreateRenderTargetView(backbuffer.Get(), nullptr, &rtv_);
+
+    // Depth buffer for the GPU map path, sized with the backbuffer.
+    depthView_.Reset();
+    D3D11_TEXTURE2D_DESC backDesc{};
+    backbuffer->GetDesc(&backDesc);
+    D3D11_TEXTURE2D_DESC depthDesc{};
+    depthDesc.Width = backDesc.Width;
+    depthDesc.Height = backDesc.Height;
+    depthDesc.MipLevels = 1;
+    depthDesc.ArraySize = 1;
+    depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    depthDesc.SampleDesc.Count = 1;
+    depthDesc.Usage = D3D11_USAGE_DEFAULT;
+    depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> depthTexture;
+    if (SUCCEEDED(device_->CreateTexture2D(&depthDesc, nullptr, &depthTexture))) {
+        device_->CreateDepthStencilView(depthTexture.Get(), nullptr, &depthView_);
+    }
 }
 
 void RendererD3D11::Resize(int width, int height) {
@@ -699,9 +846,13 @@ void RendererD3D11::ApplyMapScene(const protocol::MapSceneDelta& scene) {
         if (resource.operation == protocol::MapResourceOperation::Release) {
 			retained.resources.erase(key);
 			retained.textures.erase(key);
+			retained.gpuVertexBuffers.erase(key);
+			retained.gpuIndexBuffers.erase(key);
 		} else {
 			retained.resources[key] = resource;
 			retained.textures.erase(key);
+			retained.gpuVertexBuffers.erase(key);
+			retained.gpuIndexBuffers.erase(key);
 		}
     }
     retained.generation = scene.generation;
@@ -723,8 +874,12 @@ void RendererD3D11::ApplyMapScene(const protocol::MapSceneDelta& scene) {
 		referenced.insert(MapHashKey(draw.textureHash));
 	}
 	for (auto resource = retained.resources.begin(); resource != retained.resources.end();) {
-		if (referenced.find(resource->first) == referenced.end()) { retained.textures.erase(resource->first); resource = retained.resources.erase(resource); }
-		else ++resource;
+		if (referenced.find(resource->first) == referenced.end()) {
+			retained.textures.erase(resource->first);
+			retained.gpuVertexBuffers.erase(resource->first);
+			retained.gpuIndexBuffers.erase(resource->first);
+			resource = retained.resources.erase(resource);
+		} else ++resource;
 	}
 }
 
@@ -814,6 +969,10 @@ void RendererD3D11::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector
       for (const auto& draw : retained.draws) {
 		const auto rangeStart = static_cast<std::uint32_t>(vertices.size());
 		const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
+		// Untextured triangles (ground, extrusions) are drawn by the GPU map
+		// path straight from the retained buffers; the CPU composite carries
+		// only dots, lines and textured label quads on top.
+		if (draw.primitive == protocol::MapPrimitive::Triangles && !textured) continue;
         const auto vertexIt = retained.resources.find(MapHashKey(draw.vertexHash));
         const auto indexIt = retained.resources.find(MapHashKey(draw.indexHash));
         if (vertexIt == retained.resources.end() || indexIt == retained.resources.end() || indexIt->second.stride != 4) continue;
@@ -884,6 +1043,105 @@ void RendererD3D11::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector
 		if (rangeCount > 0) ranges.push_back(MapGeometryRange{rangeStart, rangeCount, textured ? MapHashKey(draw.textureHash) : std::string{}});
       }
     }
+}
+
+ID3D11Buffer* RendererD3D11::EnsureMapGpuBuffer(RetainedMapScene& scene, const std::string& hash, bool index) {
+	auto& cache = index ? scene.gpuIndexBuffers : scene.gpuVertexBuffers;
+	if (const auto cached = cache.find(hash); cached != cache.end()) return cached->second.Get();
+	const auto resource = scene.resources.find(hash);
+	if (resource == scene.resources.end() || resource->second.bytes.empty()) return nullptr;
+	D3D11_BUFFER_DESC desc{};
+	desc.ByteWidth = static_cast<UINT>(resource->second.bytes.size());
+	desc.Usage = D3D11_USAGE_IMMUTABLE;
+	desc.BindFlags = index ? D3D11_BIND_INDEX_BUFFER : D3D11_BIND_VERTEX_BUFFER;
+	D3D11_SUBRESOURCE_DATA data{resource->second.bytes.data(), 0, 0};
+	Microsoft::WRL::ComPtr<ID3D11Buffer> buffer;
+	if (FAILED(device_->CreateBuffer(&desc, &data, &buffer))) return nullptr;
+	ID3D11Buffer* raw = buffer.Get();
+	cache.emplace(hash, std::move(buffer));
+	return raw;
+}
+
+void RendererD3D11::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& range) {
+	if (!mapVertexShader_ || !depthView_) return;
+	bool any = false;
+	for (const auto& draw : scene.draws) {
+		const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
+		if (draw.primitive == protocol::MapPrimitive::Triangles && !textured) { any = true; break; }
+	}
+	if (!any) return;
+
+	const auto view = poem::mapview::Make(scene.camera.latitude, scene.camera.longitude, scene.camera.zoom,
+	                                      scene.camera.bearing, scene.camera.pitch, range.mapScale,
+	                                      range.mapLeft, range.mapTop, range.mapRight, range.mapBottom);
+	const auto sun = poem::mapview::SunDirection(view, scene.sunAzimuth, scene.sunElevation);
+
+	MapViewConstants constants{};
+	constants.centerHiX = static_cast<float>(view.centerX);
+	constants.centerLoX = static_cast<float>(view.centerX - static_cast<double>(constants.centerHiX));
+	constants.centerHiY = static_cast<float>(view.centerY);
+	constants.centerLoY = static_cast<float>(view.centerY - static_cast<double>(constants.centerHiY));
+	constants.worldPixels = static_cast<float>(view.worldPixels);
+	constants.cosBearing = static_cast<float>(view.cosBearing);
+	constants.sinBearing = static_cast<float>(view.sinBearing);
+	constants.metersToPixels = static_cast<float>(view.metersToPixels);
+	constants.pitchCos = static_cast<float>(view.pitchCos);
+	constants.pitchSin = static_cast<float>(view.pitchSin);
+	constants.cameraDistance = static_cast<float>(view.cameraDistance);
+	constants.screenWidth = static_cast<float>(width_);
+	constants.screenHeight = static_cast<float>(height_);
+	constants.rectCenterX = static_cast<float>((view.left + view.right) * .5);
+	constants.rectCenterY = static_cast<float>((view.top + view.bottom) * .5);
+	constants.ambient = static_cast<float>(poem::mapview::kDefaultAmbient);
+	constants.sunX = static_cast<float>(sun.x);
+	constants.sunY = static_cast<float>(sun.y);
+	constants.sunZ = static_cast<float>(sun.z);
+	constants.fogDensity = scene.fogDensity;
+	constants.fogR = scene.fogRed;
+	constants.fogG = scene.fogGreen;
+	constants.fogB = scene.fogBlue;
+	constants.fogPitch = static_cast<float>(view.pitchSin);
+	constants.fogReferenceMeters = static_cast<float>(poem::mapview::kFogReferenceMeters);
+	constants.fogScaleHeightMeters = static_cast<float>(poem::mapview::kFogScaleHeightMeters);
+
+	D3D11_MAPPED_SUBRESOURCE mapped{};
+	if (SUCCEEDED(context_->Map(mapViewBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+		std::memcpy(mapped.pData, &constants, sizeof(constants));
+		context_->Unmap(mapViewBuffer_.Get(), 0);
+	}
+
+	context_->IASetInputLayout(mapInputLayout_.Get());
+	context_->VSSetShader(mapVertexShader_.Get(), nullptr, 0);
+	context_->PSSetShader(mapPixelShader_.Get(), nullptr, 0);
+	ID3D11Buffer* viewBuffers[2] = {mapViewBuffer_.Get(), mapDrawBuffer_.Get()};
+	context_->VSSetConstantBuffers(0, 2, viewBuffers);
+	context_->PSSetConstantBuffers(0, 2, viewBuffers);
+	context_->OMSetDepthStencilState(mapDepthState_.Get(), 0);
+
+	const UINT stride = 32, offset = 0;
+	for (const auto& draw : scene.draws) {
+		const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
+		if (draw.primitive != protocol::MapPrimitive::Triangles || textured) continue;
+		ID3D11Buffer* vertexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.vertexHash), false);
+		ID3D11Buffer* indexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.indexHash), true);
+		if (!vertexBuffer || !indexBuffer) continue;
+		MapDrawConstants perDraw{draw.opacity, draw.depthTest ? 1.0f : 0.0f, {0, 0}};
+		if (SUCCEEDED(context_->Map(mapDrawBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+			std::memcpy(mapped.pData, &perDraw, sizeof(perDraw));
+			context_->Unmap(mapDrawBuffer_.Get(), 0);
+		}
+		context_->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
+		context_->IASetIndexBuffer(indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+		context_->DrawIndexed(draw.count, draw.first, 0);
+	}
+
+	// Restore the UI pipeline (the caller rebinds the UI vertex buffer).
+	context_->OMSetDepthStencilState(uiDepthState_.Get(), 0);
+	context_->IASetInputLayout(inputLayout_.Get());
+	context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
+	context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
+	context_->VSSetConstantBuffers(0, 1, constantBuffer_.GetAddressOf());
+	context_->PSSetConstantBuffers(0, 1, constantBuffer_.GetAddressOf());
 }
 
 bool RendererD3D11::EnsureMapTexture(RetainedMapScene& scene, const std::string& hash) {
@@ -1312,8 +1570,14 @@ void RendererD3D11::Render(const protocol::RenderFrame& frame) {
     }
 
     const float clear[4] = {0.04f, 0.05f, 0.07f, 1.0f};
-    context_->OMSetRenderTargets(1, rtv_.GetAddressOf(), nullptr);
+    context_->OMSetRenderTargets(1, rtv_.GetAddressOf(), depthView_.Get());
     context_->ClearRenderTargetView(rtv_.Get(), clear);
+    if (depthView_) {
+        // The map depth convention is "bigger = closer" (GREATER_EQUAL), so
+        // far is 0. UI draws with depth disabled and is never occluded.
+        context_->ClearDepthStencilView(depthView_.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 0.0f, 0);
+    }
+    context_->OMSetDepthStencilState(uiDepthState_.Get(), 0);
 
     D3D11_VIEWPORT vp{};
     vp.Width = static_cast<float>(width_);
@@ -1342,21 +1606,29 @@ void RendererD3D11::Render(const protocol::RenderFrame& frame) {
     for (std::size_t i = 0; i < ranges.size(); ++i) {
         auto& range = ranges[i];
 		if (!range.mapViewportID.empty()) {
-			if (!EnsureMapGeometryBuffer(range.mapViewportID, range.mapLeft, range.mapTop, range.mapRight, range.mapBottom, range.mapScale)) continue;
-			auto& scene = mapScenes_.at(range.mapViewportID);
-			ID3D11Buffer* mapVB = scene.vertexBuffer.Get();
-			context_->IASetVertexBuffers(0, 1, &mapVB, &stride, &offset);
+			const auto sceneIt = mapScenes_.find(range.mapViewportID);
+			if (sceneIt == mapScenes_.end()) continue;
+			auto& scene = sceneIt->second;
 			context_->RSSetScissorRects(1, &range.scissor);
-			for (const auto& geometryRange : scene.geometryRanges) {
-				ID3D11ShaderResourceView* texture = atlasSrv_.Get();
-				if (!geometryRange.textureHash.empty()) {
-					if (!EnsureMapTexture(scene, geometryRange.textureHash)) continue;
-					texture = scene.textures.at(geometryRange.textureHash).Get();
+			// Ground and extrusions: GPU-projected from the retained buffers
+			// with depth testing. Restores the UI pipeline before returning.
+			DrawGpuMapBatches(scene, range);
+			// Dots, lines and label quads: CPU-composited overlay on top.
+			if (EnsureMapGeometryBuffer(range.mapViewportID, range.mapLeft, range.mapTop, range.mapRight, range.mapBottom, range.mapScale) && scene.vertexCount > 0) {
+				ID3D11Buffer* mapVB = scene.vertexBuffer.Get();
+				context_->IASetVertexBuffers(0, 1, &mapVB, &stride, &offset);
+				for (const auto& geometryRange : scene.geometryRanges) {
+					ID3D11ShaderResourceView* texture = atlasSrv_.Get();
+					if (!geometryRange.textureHash.empty()) {
+						if (!EnsureMapTexture(scene, geometryRange.textureHash)) continue;
+						texture = scene.textures.at(geometryRange.textureHash).Get();
+					}
+					ID3D11ShaderResourceView* mapRangeSrvs[3] = {texture, mapSrv_.Get(), nullptr};
+					context_->PSSetShaderResources(0, 3, mapRangeSrvs);
+					context_->Draw(geometryRange.count, geometryRange.start);
 				}
-				ID3D11ShaderResourceView* mapRangeSrvs[3] = {texture, mapSrv_.Get(), nullptr};
-				context_->PSSetShaderResources(0, 3, mapRangeSrvs);
-				context_->Draw(geometryRange.count, geometryRange.start);
 			}
+			// The GPU path bound its own buffers; restore the UI stream either way.
 			context_->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
 			continue;
 		}

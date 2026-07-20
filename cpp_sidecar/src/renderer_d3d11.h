@@ -66,6 +66,12 @@ class RendererD3D11 {
 
     void BuildGeometry(const protocol::RenderFrame& frame, std::vector<Vertex>& vertices, std::vector<DrawRange>& ranges);
 	struct MapGeometryRange { std::uint32_t start = 0, count = 0; std::string textureHash; };
+	struct RetainedMapScene;
+	// GPU map path: ground and extruded geometry is projected in the vertex
+	// shader from the retained hash-keyed buffers and depth-tested, so nothing
+	// is re-projected or sorted on the CPU when the camera moves.
+	void DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& range);
+	ID3D11Buffer* EnsureMapGpuBuffer(RetainedMapScene& scene, const std::string& hash, bool index);
     void AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<MapGeometryRange>& ranges, const std::string& viewportId, float left, float top, float right, float bottom, float previewScale);
 	bool EnsureMapGeometryBuffer(const std::string& viewportId, float left, float top, float right, float bottom, float previewScale);
 	bool EnsureMapTexture(RetainedMapScene& scene, const std::string& hash);
@@ -119,6 +125,18 @@ class RendererD3D11 {
     Microsoft::WRL::ComPtr<ID3D11Texture2D> imageTexture_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> imageSrv_;
 
+    // GPU map pipeline: dedicated shaders and input layout over the raw
+    // cartography vertex format, camera/sun/fog + per-batch constant buffers,
+    // and a depth buffer so extrusions occlude correctly without painter sorts.
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> mapVertexShader_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> mapPixelShader_;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout> mapInputLayout_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> mapViewBuffer_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> mapDrawBuffer_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> depthView_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> mapDepthState_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> uiDepthState_;
+
     std::unordered_map<std::uint32_t, GlyphInfo> glyphs_;
     std::array<std::uint32_t, 64 * 64> mapCells_{};
     std::string mapSignature_;
@@ -140,6 +158,10 @@ class RendererD3D11 {
 		Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer;
 		std::vector<MapGeometryRange> geometryRanges;
 		std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> textures;
+		// Hash-keyed GPU copies of the retained vertex/index resources, uploaded
+		// once per generation and drawn directly by the GPU map path.
+		std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D11Buffer>> gpuVertexBuffers;
+		std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3D11Buffer>> gpuIndexBuffers;
 		std::uint32_t vertexCount = 0;
 		float left = 0, top = 0, right = 0, bottom = 0;
 		float previewScale = 1;
