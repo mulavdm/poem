@@ -77,6 +77,9 @@ class RendererGLES {
 	// the vertex shader from retained buffers with depth testing. GLES3 required.
 	void DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& range);
 	GLuint EnsureMapGpuBuffer(RetainedMapScene& scene, const std::string& hash, bool index);
+	// Markers are depth-tested billboards drawn after the map geometry, so a POI
+	// behind a building is hidden by it instead of floating over the skyline.
+	void DrawMapMarkers(RetainedMapScene& scene, const DrawRange& range);
     unsigned int UploadImageCached(const std::vector<std::uint8_t>& rgba, int width, int height);
 
     int width_ = 0;
@@ -91,6 +94,10 @@ class RendererGLES {
     GLint uScreen_ = -1;
     GLint uAtlas_ = -1;
     GLuint mapProgram_ = 0;
+    GLuint markerProgram_ = 0;
+    GLuint markerVbo_ = 0;
+    GLint uMarkerCenter_ = -1, uMarkerWorld_ = -1, uMarkerPitch_ = -1, uMarkerRect_ = -1,
+          uMarkerScreen_ = -1, uMarkerOpacity_ = -1;
     GLint uMapCenter_ = -1, uMapWorld_ = -1, uMapPitch_ = -1, uMapRect_ = -1,
           uMapScreen_ = -1, uMapSunAmbient_ = -1, uMapFog_ = -1, uMapFogParams_ = -1,
           uMapDraw_ = -1;

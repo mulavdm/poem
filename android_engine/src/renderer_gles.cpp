@@ -166,6 +166,43 @@ void main() {
 )";
 }
 
+std::string MarkerVertexShaderSource() {
+    return std::string(poem::mapshader::kGlslPrelude) + R"(
+attribute vec3 aPos;
+attribute vec3 aCorner; // cornerX cornerY radius
+attribute vec4 aColor;
+uniform vec4 uCenter;
+uniform vec4 uWorld;
+uniform vec4 uPitch;
+uniform vec4 uRect;
+uniform vec4 uScreen;
+varying vec4 vColor;
+varying vec2 vCorner;
+)" + std::string(poem::mapshader::kBody) + R"(
+void main() {
+    vec3 local = MapLocal(aPos, uCenter, uWorld);
+    vec4 clip = MapClip(local, uPitch, uRect, uScreen);
+    gl_Position = MapMarkerClip(clip, aCorner.xy, aCorner.z, uScreen);
+    vColor = aColor;
+    vCorner = aCorner.xy;
+}
+)";
+}
+
+std::string MarkerFragmentShaderSource() {
+    return std::string("precision mediump float;\n") + std::string(poem::mapshader::kGlslPrelude) + R"(
+varying vec4 vColor;
+varying vec2 vCorner;
+uniform float uOpacity;
+)" + std::string(poem::mapshader::kBody) + R"(
+void main() {
+    float alpha = MapMarkerAlpha(vCorner);
+    if (alpha <= 0.0) discard;
+    gl_FragColor = vec4(vColor.rgb, vColor.a * alpha * uOpacity);
+}
+)";
+}
+
 GLuint Compile(GLenum type, const char* source) {
     GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &source, nullptr);
@@ -269,6 +306,41 @@ bool RendererGLES::Init(int width, int height, float scale) {
     uMapFog_ = glGetUniformLocation(mapProgram_, "uFog");
     uMapFogParams_ = glGetUniformLocation(mapProgram_, "uFogParams");
     uMapDraw_ = glGetUniformLocation(mapProgram_, "uDraw");
+
+    const std::string markerVertexSource = MarkerVertexShaderSource();
+    const std::string markerFragmentSource = MarkerFragmentShaderSource();
+    GLuint markerVs = Compile(GL_VERTEX_SHADER, markerVertexSource.c_str());
+    GLuint markerFs = Compile(GL_FRAGMENT_SHADER, markerFragmentSource.c_str());
+    if (!markerVs || !markerFs) {
+        RLOGE("marker shader compile failed; markers will not render");
+        return false;
+    }
+    markerProgram_ = glCreateProgram();
+    glAttachShader(markerProgram_, markerVs);
+    glAttachShader(markerProgram_, markerFs);
+    glBindAttribLocation(markerProgram_, 0, "aPos");
+    glBindAttribLocation(markerProgram_, 1, "aCorner");
+    glBindAttribLocation(markerProgram_, 2, "aColor");
+    glLinkProgram(markerProgram_);
+    GLint markerLinked = GL_FALSE;
+    glGetProgramiv(markerProgram_, GL_LINK_STATUS, &markerLinked);
+    glDeleteShader(markerVs);
+    glDeleteShader(markerFs);
+    if (!markerLinked) {
+        char markerLog[512];
+        glGetProgramInfoLog(markerProgram_, sizeof(markerLog), nullptr, markerLog);
+        RLOGE("marker program link failed: %s", markerLog);
+        glDeleteProgram(markerProgram_);
+        markerProgram_ = 0;
+        return false;
+    }
+    uMarkerCenter_ = glGetUniformLocation(markerProgram_, "uCenter");
+    uMarkerWorld_ = glGetUniformLocation(markerProgram_, "uWorld");
+    uMarkerPitch_ = glGetUniformLocation(markerProgram_, "uPitch");
+    uMarkerRect_ = glGetUniformLocation(markerProgram_, "uRect");
+    uMarkerScreen_ = glGetUniformLocation(markerProgram_, "uScreen");
+    uMarkerOpacity_ = glGetUniformLocation(markerProgram_, "uOpacity");
+    glGenBuffers(1, &markerVbo_);
     glClearDepthf(0.0f); // depth convention: bigger = closer, cleared to far
     return true;
 }
@@ -431,9 +503,9 @@ void RendererGLES::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<
         for (const auto& draw : scene.draws) {
 			const auto rangeStart = static_cast<std::uint32_t>(vertices.size());
 			const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
-			// Untextured triangles (ground, extrusions) belong to the GPU map path;
-			// the CPU composite carries only dots, lines and textured label quads.
-			if (poem::mapgpu::IsGpuBatch(draw)) continue;
+			// Ground/extrusions and markers are both GPU-drawn now; the CPU
+			// composite carries only lines and textured label quads.
+			if (poem::mapgpu::IsGpuBatch(draw) || poem::mapgpu::IsMarkerBatch(draw)) continue;
             const auto verticesIt = scene.resources.find(MapHashKey(draw.vertexHash)), indicesIt = scene.resources.find(MapHashKey(draw.indexHash));
             if (verticesIt == scene.resources.end() || indicesIt == scene.resources.end() || indicesIt->second.stride != 4 || static_cast<std::uint64_t>(draw.first + draw.count)*4 > indicesIt->second.bytes.size()) continue;
             auto indexAt = [&](std::uint32_t i) { std::uint32_t value{}; std::memcpy(&value, indicesIt->second.bytes.data() + static_cast<std::size_t>(draw.first+i)*4, 4); return value; };
@@ -744,6 +816,58 @@ void RendererGLES::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& r
 	glUseProgram(program_);
 }
 
+void RendererGLES::DrawMapMarkers(RetainedMapScene& scene, const DrawRange& range) {
+	if (markerProgram_ == 0) return;
+	if (!poem::mapgpu::HasMarkerBatches(scene.draws)) return;
+
+	// Expand every marker batch into billboards using the shared builder.
+	std::vector<poem::mapgpu::MarkerVertex> markers;
+	for (const auto& draw : scene.draws) {
+		if (!poem::mapgpu::IsMarkerBatch(draw)) continue;
+		const auto vertexIt = scene.resources.find(MapHashKey(draw.vertexHash));
+		const auto indexIt = scene.resources.find(MapHashKey(draw.indexHash));
+		if (vertexIt == scene.resources.end() || indexIt == scene.resources.end()) continue;
+		poem::mapgpu::AppendMarkerVertices(markers, draw, vertexIt->second.bytes, indexIt->second.bytes);
+	}
+	if (markers.empty()) return;
+
+	const auto view = poem::mapview::Make(scene.camera.latitude, scene.camera.longitude, scene.camera.zoom,
+	                                      scene.camera.bearing, scene.camera.pitch, range.mapScale,
+	                                      range.mapLeft, range.mapTop, range.mapRight, range.mapBottom);
+	const poem::mapgpu::Lighting lighting{scene.sunAzimuth, scene.sunElevation, scene.fogDensity,
+	                                      scene.fogRed, scene.fogGreen, scene.fogBlue};
+	const auto uniforms = poem::mapgpu::MakeUniforms(view, lighting, static_cast<float>(width_),
+	                                                 static_cast<float>(height_),
+	                                                 static_cast<float>(insetX_), static_cast<float>(insetY_));
+
+	glUseProgram(markerProgram_);
+	glUniform4fv(uMarkerCenter_, 1, uniforms.center);
+	glUniform4fv(uMarkerWorld_, 1, uniforms.world);
+	glUniform4fv(uMarkerPitch_, 1, uniforms.pitch);
+	glUniform4fv(uMarkerRect_, 1, uniforms.rect);
+	glUniform4fv(uMarkerScreen_, 1, uniforms.screen);
+	glUniform1f(uMarkerOpacity_, 1.0f);
+
+	glBindBuffer(GL_ARRAY_BUFFER, markerVbo_);
+	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(markers.size() * sizeof(poem::mapgpu::MarkerVertex)),
+	             markers.data(), GL_STREAM_DRAW);
+	for (int i = 3; i <= 4; ++i) glDisableVertexAttribArray(i);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, poem::mapgpu::kMarkerStride, reinterpret_cast<void*>(0));
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, poem::mapgpu::kMarkerStride, reinterpret_cast<void*>(12));
+	glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, poem::mapgpu::kMarkerStride, reinterpret_cast<void*>(24));
+
+	// Read depth so buildings hide markers, but do not write it: markers must
+	// not occlude one another.
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_GEQUAL);
+	glDepthMask(GL_FALSE);
+	glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(markers.size()));
+	glDisable(GL_DEPTH_TEST);
+
+	for (int i = 3; i <= 4; ++i) glEnableVertexAttribArray(i);
+	glUseProgram(program_);
+}
+
 void RendererGLES::Render(const protocol::RenderFrame& frame) {
 	for (auto& entry : mapScenes_) {
 		auto& scene = entry.second;
@@ -802,6 +926,8 @@ void RendererGLES::Render(const protocol::RenderFrame& frame) {
 			// Ground and extrusions: GPU-projected from the retained buffers with
 			// depth testing (restores the UI program before returning).
 			DrawGpuMapBatches(scene, range);
+			// Markers: depth-tested billboards, so POIs behind buildings hide.
+			DrawMapMarkers(scene, range);
 			// Dots, lines and label quads: CPU-composited overlay on top.
 			if (EnsureMapGeometryBuffer(range.mapViewportID, range.mapLeft, range.mapTop, range.mapRight, range.mapBottom, range.mapScale) && scene.vertexCount > 0) {
 				bindVertices(scene.vertexBuffer);

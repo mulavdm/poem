@@ -72,6 +72,9 @@ class RendererD3D11 {
 	// is re-projected or sorted on the CPU when the camera moves.
 	void DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& range);
 	ID3D11Buffer* EnsureMapGpuBuffer(RetainedMapScene& scene, const std::string& hash, bool index);
+	// Markers are depth-tested billboards drawn after the map geometry, so a POI
+	// behind a building is hidden by it instead of floating over the skyline.
+	void DrawMapMarkers(RetainedMapScene& scene, const DrawRange& range);
     void AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<MapGeometryRange>& ranges, const std::string& viewportId, float left, float top, float right, float bottom, float previewScale);
 	bool EnsureMapGeometryBuffer(const std::string& viewportId, float left, float top, float right, float bottom, float previewScale);
 	bool EnsureMapTexture(RetainedMapScene& scene, const std::string& hash);
@@ -136,6 +139,13 @@ class RendererD3D11 {
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> depthView_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> mapDepthState_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> uiDepthState_;
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> markerVertexShader_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> markerPixelShader_;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout> markerInputLayout_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> markerVertexBuffer_;
+    std::uint32_t markerCapacity_ = 0;
+    // Depth-test markers without writing: they must not occlude each other.
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> markerDepthState_;
 
     std::unordered_map<std::uint32_t, GlyphInfo> glyphs_;
     std::array<std::uint32_t, 64 * 64> mapCells_{};

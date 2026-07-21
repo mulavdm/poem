@@ -21,6 +21,7 @@ namespace poem::mapshader {
 // are used directly.
 inline constexpr const char* kHlslPrelude = R"SHADER(
 #define FLOAT float
+#define FLOAT2 float2
 #define FLOAT3 float3
 #define FLOAT4 float4
 #define MAKE_FLOAT3 float3
@@ -34,6 +35,7 @@ inline constexpr const char* kHlslPrelude = R"SHADER(
 // differs; everything else is a spelling change.
 inline constexpr const char* kGlslPrelude = R"SHADER(
 #define FLOAT float
+#define FLOAT2 vec2
 #define FLOAT3 vec3
 #define FLOAT4 vec4
 #define MAKE_FLOAT3 vec3
@@ -108,6 +110,24 @@ FLOAT3 MapShade(FLOAT3 color, FLOAT3 dpdx, FLOAT3 dpdy, FLOAT4 sunAmbient) {
 // towers rise out of it, and fades in with pitch so a top-down map is clear.
 //   fog       = colour rgb + density
 //   fogParams = referenceMetres, scaleHeight, pitchSin, metersToPixels
+// MapMarkerClip billboards a marker: the world position is projected normally
+// (so the marker is depth-tested against buildings and hides behind them), then
+// the quad corner is offset in screen space, which keeps markers a constant
+// on-screen size regardless of distance. The small depth lift keeps a marker
+// from z-fighting with the ground plane it sits on.
+FLOAT4 MapMarkerClip(FLOAT4 clip, FLOAT2 corner, FLOAT radius, FLOAT4 screen) {
+    FLOAT4 result = clip;
+    result.x = result.x + corner.x * radius / screen.x * 2.0;
+    result.y = result.y - corner.y * radius / screen.y * 2.0;
+    result.z = min(result.z + 0.0008, 1.0);
+    return result;
+}
+
+// MapMarkerAlpha turns the unit quad into a soft-edged dot.
+FLOAT MapMarkerAlpha(FLOAT2 corner) {
+    return 1.0 - smoothstep(0.75, 1.0, length(corner));
+}
+
 FLOAT3 MapFog(FLOAT3 color, FLOAT3 local, FLOAT4 fog, FLOAT4 fogParams) {
     if (fog.w <= 0.0 || fogParams.z <= 0.0) return color;
     FLOAT meters = length(local.xy) / fogParams.w;

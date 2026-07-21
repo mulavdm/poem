@@ -1,5 +1,12 @@
 # OKF Bundle Update Log
 
+## 2026-07-21 (depth-tested markers)
+
+- POI markers now draw in the GPU depth pass as **billboards**: the world position is projected on the GPU so the marker is depth-tested against buildings, then the quad corner is offset in screen space so markers keep a constant on-screen size. A POI behind a building is now hidden by it instead of floating over the skyline — the remaining half of the "dots all around" problem. Markers **read depth but do not write it**, so they never occlude one another, and a small depth lift keeps them off the ground plane they sit on.
+- Expansion is shared, not per-backend: `mapgpu::AppendMarkerVertices` turns a point batch into two triangles per marker, reading radius from the cartography vertex `width` field (floored at `kMinMarkerRadius`), and `mapgpu::ReadSourceVertex` is the one decoder for that layout. `MapMarkerClip`/`MapMarkerAlpha` join the canonical shader source, so both presenters get identical placement, sizing and the soft round edge. Each backend contributes only its entry points and buffer upload.
+- Contract tests cover the expansion (corner coverage, radius floor, elevation and colour carried through) and its bounds safety: an out-of-range index or a count past the index buffer is skipped rather than read out of bounds, since these buffers originate in decoded MVT.
+- Markers left the CPU composite entirely; it now carries only lines and textured label quads. Labels stay unoccluded on purpose — legibility beats strict correctness for text, which is also how MapLibre and Google Maps behave.
+
 ## 2026-07-21 (GPU depth map path, de-duplicated across backends)
 
 - Map ground and building extrusions are now **projected on the GPU and depth-tested** instead of being flattened to 2D on the CPU and painter-sorted. Buildings occlude correctly by construction: the earlier translucent, interpenetrating blocks are gone, replaced by solid silhouettes with correct water/building layering. Confirmed by sight on Android (GLES) and Windows (D3D11).

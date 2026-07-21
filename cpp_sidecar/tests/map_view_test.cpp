@@ -6,7 +6,10 @@
 #include "poem/map_gpu.h"
 #include "poem/map_view.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <vector>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -195,6 +198,93 @@ void GpuBatchSelectionOwnsUntexturedTriangles() {
     Require(!poem::mapgpu::HasGpuBatches({dots, lines, label}), "an overlay-only scene has none");
 }
 
+
+// Markers are expanded into depth-tested billboards by shared code, so both
+// presenters place and size them identically.
+void MarkerExpansionBuildsBillboards() {
+    // Two cartography vertices (stride 32): float3 pos, RGBA8, float width.
+    std::vector<std::uint8_t> vertices(2 * poem::mapgpu::kVertexStride, 0);
+    auto writeVertex = [&](std::size_t index, float x, float y, float z, std::uint8_t red, float width) {
+        const std::size_t base = index * poem::mapgpu::kVertexStride;
+        std::memcpy(vertices.data() + base, &x, 4);
+        std::memcpy(vertices.data() + base + 4, &y, 4);
+        std::memcpy(vertices.data() + base + 8, &z, 4);
+        vertices[base + poem::mapgpu::kColorOffset] = red;
+        vertices[base + poem::mapgpu::kColorOffset + 3] = 255;
+        std::memcpy(vertices.data() + base + poem::mapgpu::kWidthOffset, &width, 4);
+    };
+    writeVertex(0, 0.25f, 0.5f, 0.0f, 200, 8.0f);
+    writeVertex(1, 0.30f, 0.6f, 12.0f, 100, 1.0f); // width below the floor
+
+    std::vector<std::uint8_t> indices(2 * 4, 0);
+    const std::uint32_t zero = 0, one = 1;
+    std::memcpy(indices.data(), &zero, 4);
+    std::memcpy(indices.data() + 4, &one, 4);
+
+    poem::protocol::MapDrawBatch draw{};
+    draw.primitive = poem::protocol::MapPrimitive::Points;
+    draw.count = 2;
+
+    std::vector<poem::mapgpu::MarkerVertex> markers;
+    poem::mapgpu::AppendMarkerVertices(markers, draw, vertices, indices);
+    Require(markers.size() == 12, "each marker becomes two triangles");
+
+    // World position and colour are carried through; the quad is centred on it.
+    Require(Near(markers[0].x, 0.25, 1e-6) && Near(markers[0].y, 0.5, 1e-6),
+            "billboard corners keep the marker world position");
+    Require(markers[0].rgba[0] == 200, "marker colour is carried through");
+    Require(Near(markers[0].radius, 8.0, 1e-6), "radius comes from the vertex width");
+    Require(Near(markers[6].radius, poem::mapgpu::kMinMarkerRadius, 1e-6),
+            "a too-small width is lifted to the minimum radius");
+    Require(Near(markers[6].z, 12.0, 1e-6), "elevation is preserved so raised markers occlude correctly");
+
+    // The six corners must cover the quad, not collapse to a point.
+    float minCorner = 1.0f, maxCorner = -1.0f;
+    for (int i = 0; i < 6; ++i) {
+        minCorner = std::min(minCorner, markers[i].cornerX);
+        maxCorner = std::max(maxCorner, markers[i].cornerX);
+    }
+    Require(Near(minCorner, -1.0, 1e-6) && Near(maxCorner, 1.0, 1e-6), "corners span the unit quad");
+}
+
+void MarkerExpansionRejectsOutOfRangeIndices() {
+    std::vector<std::uint8_t> vertices(poem::mapgpu::kVertexStride, 0);
+    std::vector<std::uint8_t> indices(4, 0);
+    const std::uint32_t wild = 9999; // points past the end of the vertex buffer
+    std::memcpy(indices.data(), &wild, 4);
+
+    poem::protocol::MapDrawBatch draw{};
+    draw.primitive = poem::protocol::MapPrimitive::Points;
+    draw.count = 1;
+
+    std::vector<poem::mapgpu::MarkerVertex> markers;
+    poem::mapgpu::AppendMarkerVertices(markers, draw, vertices, indices);
+    Require(markers.empty(), "an out-of-range index is skipped rather than read out of bounds");
+
+    // A count beyond the index buffer must stop, not run off the end.
+    draw.count = 64;
+    markers.clear();
+    poem::mapgpu::AppendMarkerVertices(markers, draw, vertices, indices);
+    Require(markers.empty(), "a count past the index buffer stops safely");
+}
+
+void MarkerBatchSelection() {
+    poem::protocol::MapDrawBatch points{};
+    points.primitive = poem::protocol::MapPrimitive::Points;
+    Require(poem::mapgpu::IsMarkerBatch(points), "untextured points are markers");
+    Require(!poem::mapgpu::IsGpuBatch(points), "markers are not ground/extrusion batches");
+
+    poem::protocol::MapDrawBatch textured = points;
+    textured.textureHash[1] = 5;
+    Require(!poem::mapgpu::IsMarkerBatch(textured), "textured points stay on the overlay");
+
+    poem::protocol::MapDrawBatch ground{};
+    ground.primitive = poem::protocol::MapPrimitive::Triangles;
+    Require(!poem::mapgpu::IsMarkerBatch(ground), "triangles are not markers");
+    Require(poem::mapgpu::HasMarkerBatches({ground, points}), "a scene with points has markers");
+    Require(!poem::mapgpu::HasMarkerBatches({ground}), "a scene without points has none");
+}
+
 void RunAll() {
     ProjectsCameraToViewportCentre();
     HorizontalWrapTakesShortestPath();
@@ -207,6 +297,9 @@ void RunAll() {
     DepthSortOnlyWhenPitched();
     GpuUniformsMatchTheView();
     GpuBatchSelectionOwnsUntexturedTriangles();
+    MarkerExpansionBuildsBillboards();
+    MarkerExpansionRejectsOutOfRangeIndices();
+    MarkerBatchSelection();
 }
 
 } // namespace

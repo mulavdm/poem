@@ -8,6 +8,7 @@
 #include "poem/protocol.h"
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 namespace poem::mapgpu {
@@ -97,9 +98,86 @@ inline bool HasGpuBatches(const std::vector<protocol::MapDrawBatch>& draws) {
     return std::any_of(draws.begin(), draws.end(), IsGpuBatch);
 }
 
-// kVertexStride is the cartography vertex stride: float3 position + RGBA8
-// colour, then width and feature id which the GPU path does not read.
+// Cartography vertex layout (stride 32): float3 position, RGBA8 colour, float
+// width, uint64 feature id, pad. Ground/extrusion batches read only position
+// and colour; markers also need width, which carries their radius.
 inline constexpr unsigned int kVertexStride = 32;
 inline constexpr unsigned int kColorOffset = 12;
+inline constexpr unsigned int kWidthOffset = 16;
+
+struct SourceVertex {
+    float x = 0, y = 0, z = 0;
+    std::uint8_t rgba[4] = {0, 0, 0, 0};
+    float width = 0;
+};
+
+// ReadSourceVertex decodes one cartography vertex. Returns false when the index
+// falls outside the buffer, so malformed input cannot read out of bounds.
+inline bool ReadSourceVertex(const std::vector<std::uint8_t>& bytes, std::uint32_t index, SourceVertex& out) {
+    const std::size_t offset = static_cast<std::size_t>(index) * kVertexStride;
+    if (offset + kVertexStride > bytes.size()) return false;
+    std::memcpy(&out.x, bytes.data() + offset, 4);
+    std::memcpy(&out.y, bytes.data() + offset + 4, 4);
+    std::memcpy(&out.z, bytes.data() + offset + 8, 4);
+    std::memcpy(out.rgba, bytes.data() + offset + kColorOffset, 4);
+    std::memcpy(&out.width, bytes.data() + offset + kWidthOffset, 4);
+    return true;
+}
+
+// MarkerVertex is one corner of a depth-tested billboard. The world position is
+// projected on the GPU (so the marker occludes against buildings) and the corner
+// is then offset in screen space, keeping markers a constant on-screen size.
+struct MarkerVertex {
+    float x = 0, y = 0, z = 0;       // world position (mercator x/y, elevation m)
+    float cornerX = 0, cornerY = 0;  // unit quad corner, [-1,1]
+    float radius = 0;                // screen pixels
+    std::uint8_t rgba[4] = {0, 0, 0, 0};
+    float pad = 0;                   // keep a 32-byte stride
+};
+
+inline constexpr unsigned int kMarkerStride = 32;
+inline constexpr float kMinMarkerRadius = 3.0f;
+
+// IsMarkerBatch reports whether a batch is untextured points, i.e. POI markers.
+inline bool IsMarkerBatch(const protocol::MapDrawBatch& draw) {
+    if (draw.primitive != protocol::MapPrimitive::Points) return false;
+    return std::none_of(draw.textureHash.begin(), draw.textureHash.end(),
+                        [](std::uint8_t value) { return value != 0; });
+}
+
+inline bool HasMarkerBatches(const std::vector<protocol::MapDrawBatch>& draws) {
+    return std::any_of(draws.begin(), draws.end(), IsMarkerBatch);
+}
+
+// AppendMarkerVertices expands a point batch into two triangles per marker.
+// Expansion happens here, once, rather than in each presenter.
+inline void AppendMarkerVertices(std::vector<MarkerVertex>& out,
+                                 const protocol::MapDrawBatch& draw,
+                                 const std::vector<std::uint8_t>& vertexBytes,
+                                 const std::vector<std::uint8_t>& indexBytes) {
+    // Two triangles over the unit quad.
+    static constexpr float kCornerX[6] = {-1, 1, -1, -1, 1, 1};
+    static constexpr float kCornerY[6] = {-1, -1, 1, 1, -1, 1};
+    for (std::uint32_t i = 0; i < draw.count; ++i) {
+        const std::size_t indexOffset = (static_cast<std::size_t>(draw.first) + i) * 4;
+        if (indexOffset + 4 > indexBytes.size()) break;
+        std::uint32_t vertexIndex = 0;
+        std::memcpy(&vertexIndex, indexBytes.data() + indexOffset, 4);
+        SourceVertex source;
+        if (!ReadSourceVertex(vertexBytes, vertexIndex, source)) continue;
+        const float radius = std::max(kMinMarkerRadius, source.width);
+        for (int corner = 0; corner < 6; ++corner) {
+            MarkerVertex vertex;
+            vertex.x = source.x;
+            vertex.y = source.y;
+            vertex.z = source.z;
+            vertex.cornerX = kCornerX[corner];
+            vertex.cornerY = kCornerY[corner];
+            vertex.radius = radius;
+            std::memcpy(vertex.rgba, source.rgba, 4);
+            out.push_back(vertex);
+        }
+    }
+}
 
 } // namespace poem::mapgpu

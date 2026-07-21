@@ -82,6 +82,33 @@ float4 psmain(VSOut input) : SV_TARGET {
     color = MapFog(color, input.local, uFog, uFogParams);
     return float4(color, input.color.a * uDraw.x);
 }
+
+struct MarkerIn {
+    float3 pos : POSITION;
+    float3 corner : TEXCOORD0; // cornerX cornerY radius
+    float4 color : COLOR0;
+};
+struct MarkerOut {
+    float4 pos : SV_POSITION;
+    float4 color : COLOR0;
+    float2 corner : TEXCOORD0;
+};
+
+MarkerOut vsmarker(MarkerIn input) {
+    float3 local = MapLocal(input.pos, uCenter, uWorld);
+    float4 clip = MapClip(local, uPitch, uRect, uScreen);
+    MarkerOut output;
+    output.pos = MapMarkerClip(clip, input.corner.xy, input.corner.z, uScreen);
+    output.color = input.color;
+    output.corner = input.corner.xy;
+    return output;
+}
+
+float4 psmarker(MarkerOut input) : SV_TARGET {
+    float alpha = MapMarkerAlpha(input.corner);
+    if (alpha <= 0.0) discard;
+    return float4(input.color.rgb, input.color.a * alpha * uDraw.x);
+}
 )";
 }
 
@@ -673,6 +700,23 @@ bool RendererD3D11::CreateShaders() {
     depth.DepthEnable = FALSE;
     depth.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
     if (FAILED(device_->CreateDepthStencilState(&depth, &uiDepthState_))) return false;
+    // Markers read depth so buildings hide them, but do not write it.
+    depth.DepthEnable = TRUE;
+    depth.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+    depth.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
+    if (FAILED(device_->CreateDepthStencilState(&depth, &markerDepthState_))) return false;
+
+    auto markerVs = CompileShader(mapSource.c_str(), "vsmarker", "vs_5_0");
+    auto markerPs = CompileShader(mapSource.c_str(), "psmarker", "ps_5_0");
+    if (!markerVs || !markerPs) return false;
+    if (FAILED(device_->CreateVertexShader(markerVs->GetBufferPointer(), markerVs->GetBufferSize(), nullptr, &markerVertexShader_))) return false;
+    if (FAILED(device_->CreatePixelShader(markerPs->GetBufferPointer(), markerPs->GetBufferSize(), nullptr, &markerPixelShader_))) return false;
+    D3D11_INPUT_ELEMENT_DESC markerLayout[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    };
+    if (FAILED(device_->CreateInputLayout(markerLayout, 3, markerVs->GetBufferPointer(), markerVs->GetBufferSize(), &markerInputLayout_))) return false;
 
     D3D11_SAMPLER_DESC samp{};
     samp.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -931,9 +975,9 @@ void RendererD3D11::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector
       for (const auto& draw : retained.draws) {
 		const auto rangeStart = static_cast<std::uint32_t>(vertices.size());
 		const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
-		// Untextured triangles (ground, extrusions) belong to the GPU map path;
-		// the CPU composite carries only dots, lines and textured label quads.
-		if (poem::mapgpu::IsGpuBatch(draw)) continue;
+		// Ground/extrusions and markers are both GPU-drawn now; the CPU
+		// composite carries only lines and textured label quads.
+		if (poem::mapgpu::IsGpuBatch(draw) || poem::mapgpu::IsMarkerBatch(draw)) continue;
         const auto vertexIt = retained.resources.find(MapHashKey(draw.vertexHash));
         const auto indexIt = retained.resources.find(MapHashKey(draw.indexHash));
         if (vertexIt == retained.resources.end() || indexIt == retained.resources.end() || indexIt->second.stride != 4) continue;
@@ -1067,6 +1111,67 @@ void RendererD3D11::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& 
 	}
 
 	// Restore the UI pipeline (the caller rebinds the UI vertex buffer).
+	context_->OMSetDepthStencilState(uiDepthState_.Get(), 0);
+	context_->IASetInputLayout(inputLayout_.Get());
+	context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
+	context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
+	context_->VSSetConstantBuffers(0, 1, constantBuffer_.GetAddressOf());
+	context_->PSSetConstantBuffers(0, 1, constantBuffer_.GetAddressOf());
+}
+
+void RendererD3D11::DrawMapMarkers(RetainedMapScene& scene, const DrawRange& range) {
+	if (!markerVertexShader_ || !depthView_) return;
+	if (!poem::mapgpu::HasMarkerBatches(scene.draws)) return;
+
+	// Expand every marker batch into billboards using the shared builder.
+	std::vector<poem::mapgpu::MarkerVertex> markers;
+	for (const auto& draw : scene.draws) {
+		if (!poem::mapgpu::IsMarkerBatch(draw)) continue;
+		const auto vertexIt = scene.resources.find(MapHashKey(draw.vertexHash));
+		const auto indexIt = scene.resources.find(MapHashKey(draw.indexHash));
+		if (vertexIt == scene.resources.end() || indexIt == scene.resources.end()) continue;
+		poem::mapgpu::AppendMarkerVertices(markers, draw, vertexIt->second.bytes, indexIt->second.bytes);
+	}
+	if (markers.empty()) return;
+
+	if (markerCapacity_ < markers.size()) {
+		markerVertexBuffer_.Reset();
+		D3D11_BUFFER_DESC desc{};
+		desc.ByteWidth = static_cast<UINT>(markers.size() * sizeof(poem::mapgpu::MarkerVertex));
+		desc.Usage = D3D11_USAGE_DYNAMIC;
+		desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		if (FAILED(device_->CreateBuffer(&desc, nullptr, &markerVertexBuffer_))) return;
+		markerCapacity_ = static_cast<std::uint32_t>(markers.size());
+	}
+	D3D11_MAPPED_SUBRESOURCE mapped{};
+	if (SUCCEEDED(context_->Map(markerVertexBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+		std::memcpy(mapped.pData, markers.data(), markers.size() * sizeof(poem::mapgpu::MarkerVertex));
+		context_->Unmap(markerVertexBuffer_.Get(), 0);
+	}
+
+	// The view/lighting block is already bound by DrawGpuMapBatches; only the
+	// per-draw opacity slot needs setting for markers.
+	const MapDrawConstants perDraw{1.0f, 0.0f, {0, 0}};
+	if (SUCCEEDED(context_->Map(mapDrawBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+		std::memcpy(mapped.pData, &perDraw, sizeof(perDraw));
+		context_->Unmap(mapDrawBuffer_.Get(), 0);
+	}
+
+	context_->IASetInputLayout(markerInputLayout_.Get());
+	context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context_->VSSetShader(markerVertexShader_.Get(), nullptr, 0);
+	context_->PSSetShader(markerPixelShader_.Get(), nullptr, 0);
+	ID3D11Buffer* constantBuffers[2] = {mapViewBuffer_.Get(), mapDrawBuffer_.Get()};
+	context_->VSSetConstantBuffers(0, 2, constantBuffers);
+	context_->PSSetConstantBuffers(0, 2, constantBuffers);
+	context_->OMSetDepthStencilState(markerDepthState_.Get(), 0);
+
+	const UINT stride = poem::mapgpu::kMarkerStride, offset = 0;
+	ID3D11Buffer* buffer = markerVertexBuffer_.Get();
+	context_->IASetVertexBuffers(0, 1, &buffer, &stride, &offset);
+	context_->Draw(static_cast<UINT>(markers.size()), 0);
+
 	context_->OMSetDepthStencilState(uiDepthState_.Get(), 0);
 	context_->IASetInputLayout(inputLayout_.Get());
 	context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
@@ -1544,6 +1649,8 @@ void RendererD3D11::Render(const protocol::RenderFrame& frame) {
 			// Ground and extrusions: GPU-projected from the retained buffers
 			// with depth testing. Restores the UI pipeline before returning.
 			DrawGpuMapBatches(scene, range);
+			// Markers: depth-tested billboards, so POIs behind buildings hide.
+			DrawMapMarkers(scene, range);
 			// Dots, lines and label quads: CPU-composited overlay on top.
 			if (EnsureMapGeometryBuffer(range.mapViewportID, range.mapLeft, range.mapTop, range.mapRight, range.mapBottom, range.mapScale) && scene.vertexCount > 0) {
 				ID3D11Buffer* mapVB = scene.vertexBuffer.Get();
