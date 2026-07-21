@@ -1,5 +1,7 @@
 #include "renderer_gles.h"
 
+#include "poem/map_gpu.h"
+#include "poem/map_shader.h"
 #include "poem/map_view.h"
 
 #include <android/log.h>
@@ -119,6 +121,51 @@ void main() {
 }
 )";
 
+// GPU map shaders assembled from the shared canonical source: GLSL prelude,
+// the shared maths, then the entry points, which are the only per-backend part
+// (GLSL declares attributes/varyings and uniforms differently from HLSL).
+std::string MapVertexShaderSource() {
+    return std::string(poem::mapshader::kGlslPrelude) + R"(
+attribute vec3 aPos;
+attribute vec4 aColor;
+uniform vec4 uCenter;
+uniform vec4 uWorld;
+uniform vec4 uPitch;
+uniform vec4 uRect;
+uniform vec4 uScreen;
+varying vec4 vColor;
+varying vec3 vLocal;
+)" + std::string(poem::mapshader::kBody) + R"(
+void main() {
+    vLocal = MapLocal(aPos, uCenter, uWorld);
+    gl_Position = MapClip(vLocal, uPitch, uRect, uScreen);
+    vColor = aColor;
+}
+)";
+}
+
+std::string MapFragmentShaderSource() {
+    // Derivatives are core in GLES3; the directive keeps ES 1.00 sources valid.
+    return std::string("#extension GL_OES_standard_derivatives : enable\nprecision highp float;\n") +
+           std::string(poem::mapshader::kGlslPrelude) + R"(
+varying vec4 vColor;
+varying vec3 vLocal;
+uniform vec4 uSunAmbient;
+uniform vec4 uFog;
+uniform vec4 uFogParams;
+uniform vec4 uDraw; // opacity shaded - -
+)" + std::string(poem::mapshader::kBody) + R"(
+void main() {
+    vec3 color = vColor.rgb;
+    if (uDraw.y > 0.5) {
+        color = MapShade(color, dFdx(vLocal), dFdy(vLocal), uSunAmbient);
+    }
+    color = MapFog(color, vLocal, uFog, uFogParams);
+    gl_FragColor = vec4(color, vColor.a * uDraw.x);
+}
+)";
+}
+
 GLuint Compile(GLenum type, const char* source) {
     GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &source, nullptr);
@@ -173,11 +220,56 @@ bool RendererGLES::Init(int width, int height, float scale) {
 		entry.second.vertexBuffer = 0;
 		entry.second.vertexCount = 0;
 		entry.second.textures.clear();
+		// Buffer ids from the previous context are dead; drop, re-upload lazily.
+		entry.second.gpuVertexBuffers.clear();
+		entry.second.gpuIndexBuffers.clear();
 		entry.second.geometryDirty = true;
 	}
     glGenTextures(1, &atlasTexture_);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // GPU map path. GLES3 is required and negotiated by the host: derivatives
+    // and 32-bit indices are core there. The CPU painter path is not a viable
+    // fallback for map geometry on mobile (tens of thousands of reprojected
+    // triangles per frame), so a failure here is fatal to map rendering and is
+    // reported rather than silently degraded.
+    const std::string mapVertexSource = MapVertexShaderSource();
+    const std::string mapFragmentSource = MapFragmentShaderSource();
+    GLuint mapVs = Compile(GL_VERTEX_SHADER, mapVertexSource.c_str());
+    GLuint mapFs = Compile(GL_FRAGMENT_SHADER, mapFragmentSource.c_str());
+    if (!mapVs || !mapFs) {
+        RLOGE("map shader compile failed; map geometry will not render");
+        return false;
+    }
+    mapProgram_ = glCreateProgram();
+    glAttachShader(mapProgram_, mapVs);
+    glAttachShader(mapProgram_, mapFs);
+    glBindAttribLocation(mapProgram_, 0, "aPos");
+    glBindAttribLocation(mapProgram_, 1, "aColor");
+    glLinkProgram(mapProgram_);
+    GLint mapLinked = GL_FALSE;
+    glGetProgramiv(mapProgram_, GL_LINK_STATUS, &mapLinked);
+    glDeleteShader(mapVs);
+    glDeleteShader(mapFs);
+    if (!mapLinked) {
+        char mapLog[512];
+        glGetProgramInfoLog(mapProgram_, sizeof(mapLog), nullptr, mapLog);
+        RLOGE("map program link failed: %s", mapLog);
+        glDeleteProgram(mapProgram_);
+        mapProgram_ = 0;
+        return false;
+    }
+    uMapCenter_ = glGetUniformLocation(mapProgram_, "uCenter");
+    uMapWorld_ = glGetUniformLocation(mapProgram_, "uWorld");
+    uMapPitch_ = glGetUniformLocation(mapProgram_, "uPitch");
+    uMapRect_ = glGetUniformLocation(mapProgram_, "uRect");
+    uMapScreen_ = glGetUniformLocation(mapProgram_, "uScreen");
+    uMapSunAmbient_ = glGetUniformLocation(mapProgram_, "uSunAmbient");
+    uMapFog_ = glGetUniformLocation(mapProgram_, "uFog");
+    uMapFogParams_ = glGetUniformLocation(mapProgram_, "uFogParams");
+    uMapDraw_ = glGetUniformLocation(mapProgram_, "uDraw");
+    glClearDepthf(0.0f); // depth convention: bigger = closer, cleared to far
     return true;
 }
 
@@ -223,10 +315,18 @@ void RendererGLES::ApplyMapScene(const protocol::MapSceneDelta& scene) {
 			retained.resources.erase(key);
 			const auto texture = retained.textures.find(key);
 			if (texture != retained.textures.end()) { glDeleteTextures(1, &texture->second); retained.textures.erase(texture); }
+			const auto gpuV = retained.gpuVertexBuffers.find(key);
+			if (gpuV != retained.gpuVertexBuffers.end()) { glDeleteBuffers(1, &gpuV->second); retained.gpuVertexBuffers.erase(gpuV); }
+			const auto gpuI = retained.gpuIndexBuffers.find(key);
+			if (gpuI != retained.gpuIndexBuffers.end()) { glDeleteBuffers(1, &gpuI->second); retained.gpuIndexBuffers.erase(gpuI); }
 		} else {
 			retained.resources[key] = resource;
 			const auto texture = retained.textures.find(key);
 			if (texture != retained.textures.end()) { glDeleteTextures(1, &texture->second); retained.textures.erase(texture); }
+			const auto gpuV = retained.gpuVertexBuffers.find(key);
+			if (gpuV != retained.gpuVertexBuffers.end()) { glDeleteBuffers(1, &gpuV->second); retained.gpuVertexBuffers.erase(gpuV); }
+			const auto gpuI = retained.gpuIndexBuffers.find(key);
+			if (gpuI != retained.gpuIndexBuffers.end()) { glDeleteBuffers(1, &gpuI->second); retained.gpuIndexBuffers.erase(gpuI); }
 		}
     }
     retained.generation = scene.generation;
@@ -249,6 +349,10 @@ void RendererGLES::ApplyMapScene(const protocol::MapSceneDelta& scene) {
 		if (referenced.find(resource->first) == referenced.end()) {
 			const auto texture = retained.textures.find(resource->first);
 			if (texture != retained.textures.end()) { glDeleteTextures(1, &texture->second); retained.textures.erase(texture); }
+			const auto gpuV = retained.gpuVertexBuffers.find(resource->first);
+			if (gpuV != retained.gpuVertexBuffers.end()) { glDeleteBuffers(1, &gpuV->second); retained.gpuVertexBuffers.erase(gpuV); }
+			const auto gpuI = retained.gpuIndexBuffers.find(resource->first);
+			if (gpuI != retained.gpuIndexBuffers.end()) { glDeleteBuffers(1, &gpuI->second); retained.gpuIndexBuffers.erase(gpuI); }
 			resource = retained.resources.erase(resource);
 		}
 		else ++resource;
@@ -327,6 +431,9 @@ void RendererGLES::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<
         for (const auto& draw : scene.draws) {
 			const auto rangeStart = static_cast<std::uint32_t>(vertices.size());
 			const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
+			// Untextured triangles (ground, extrusions) belong to the GPU map path;
+			// the CPU composite carries only dots, lines and textured label quads.
+			if (poem::mapgpu::IsGpuBatch(draw)) continue;
             const auto verticesIt = scene.resources.find(MapHashKey(draw.vertexHash)), indicesIt = scene.resources.find(MapHashKey(draw.indexHash));
             if (verticesIt == scene.resources.end() || indicesIt == scene.resources.end() || indicesIt->second.stride != 4 || static_cast<std::uint64_t>(draw.first + draw.count)*4 > indicesIt->second.bytes.size()) continue;
             auto indexAt = [&](std::uint32_t i) { std::uint32_t value{}; std::memcpy(&value, indicesIt->second.bytes.data() + static_cast<std::size_t>(draw.first+i)*4, 4); return value; };
@@ -571,6 +678,72 @@ void RendererGLES::BuildGeometry(const protocol::RenderFrame& frame,
     }
 }
 
+GLuint RendererGLES::EnsureMapGpuBuffer(RetainedMapScene& scene, const std::string& hash, bool index) {
+	auto& cache = index ? scene.gpuIndexBuffers : scene.gpuVertexBuffers;
+	const auto cached = cache.find(hash);
+	if (cached != cache.end()) return cached->second;
+	const auto resource = scene.resources.find(hash);
+	if (resource == scene.resources.end() || resource->second.bytes.empty()) return 0;
+	GLuint buffer = 0;
+	glGenBuffers(1, &buffer);
+	if (buffer == 0) return 0;
+	const GLenum target = index ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER;
+	glBindBuffer(target, buffer);
+	glBufferData(target, static_cast<GLsizeiptr>(resource->second.bytes.size()), resource->second.bytes.data(), GL_STATIC_DRAW);
+	cache.emplace(hash, buffer);
+	return buffer;
+}
+
+void RendererGLES::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& range) {
+	if (mapProgram_ == 0) return;
+	if (!poem::mapgpu::HasGpuBatches(scene.draws)) return;
+
+	const auto view = poem::mapview::Make(scene.camera.latitude, scene.camera.longitude, scene.camera.zoom,
+	                                      scene.camera.bearing, scene.camera.pitch, range.mapScale,
+	                                      range.mapLeft, range.mapTop, range.mapRight, range.mapBottom);
+	const poem::mapgpu::Lighting lighting{scene.sunAzimuth, scene.sunElevation, scene.fogDensity,
+	                                      scene.fogRed, scene.fogGreen, scene.fogBlue};
+	const auto uniforms = poem::mapgpu::MakeUniforms(view, lighting, static_cast<float>(width_),
+	                                                 static_cast<float>(height_),
+	                                                 static_cast<float>(insetX_), static_cast<float>(insetY_));
+
+	glUseProgram(mapProgram_);
+	glUniform4fv(uMapCenter_, 1, uniforms.center);
+	glUniform4fv(uMapWorld_, 1, uniforms.world);
+	glUniform4fv(uMapPitch_, 1, uniforms.pitch);
+	glUniform4fv(uMapRect_, 1, uniforms.rect);
+	glUniform4fv(uMapScreen_, 1, uniforms.screen);
+	glUniform4fv(uMapSunAmbient_, 1, uniforms.sunAmbient);
+	glUniform4fv(uMapFog_, 1, uniforms.fog);
+	glUniform4fv(uMapFogParams_, 1, uniforms.fogParams);
+
+	for (int i = 2; i <= 4; ++i) glDisableVertexAttribArray(i);
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_GEQUAL);
+	glDepthMask(GL_TRUE);
+
+	for (const auto& draw : scene.draws) {
+		if (!poem::mapgpu::IsGpuBatch(draw)) continue;
+		const GLuint vertexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.vertexHash), false);
+		const GLuint indexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.indexHash), true);
+		if (vertexBuffer == 0 || indexBuffer == 0) continue;
+		glUniform4f(uMapDraw_, draw.opacity, draw.depthTest ? 1.0f : 0.0f, 0.0f, 0.0f);
+		glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, poem::mapgpu::kVertexStride, reinterpret_cast<void*>(0));
+		glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, poem::mapgpu::kVertexStride,
+		                      reinterpret_cast<void*>(static_cast<std::uintptr_t>(poem::mapgpu::kColorOffset)));
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(draw.count), GL_UNSIGNED_INT,
+		               reinterpret_cast<void*>(static_cast<std::uintptr_t>(draw.first) * 4));
+	}
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	for (int i = 2; i <= 4; ++i) glEnableVertexAttribArray(i);
+	glUseProgram(program_);
+}
+
 void RendererGLES::Render(const protocol::RenderFrame& frame) {
 	for (auto& entry : mapScenes_) {
 		auto& scene = entry.second;
@@ -589,7 +762,9 @@ void RendererGLES::Render(const protocol::RenderFrame& frame) {
     glViewport(0, 0, width_, height_);
     glDisable(GL_SCISSOR_TEST);
     glClearColor(0.04f, 0.05f, 0.07f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glDisable(GL_DEPTH_TEST);
 	if (ranges.empty()) return;
 
     glUseProgram(program_);
@@ -617,19 +792,27 @@ void RendererGLES::Render(const protocol::RenderFrame& frame) {
 
     for (const auto& range : ranges) {
 		if (!range.mapViewportID.empty()) {
-			if (!EnsureMapGeometryBuffer(range.mapViewportID, range.mapLeft, range.mapTop, range.mapRight, range.mapBottom, range.mapScale)) continue;
-			auto& scene = mapScenes_.at(range.mapViewportID);
-			bindVertices(scene.vertexBuffer);
+			const auto sceneIt = mapScenes_.find(range.mapViewportID);
+			if (sceneIt == mapScenes_.end()) continue;
+			auto& scene = sceneIt->second;
 			if (range.clipEnabled) {
 				glEnable(GL_SCISSOR_TEST);
 				glScissor(range.clipX + insetX_, height_ - (range.clipY + insetY_ + range.clipH), range.clipW, range.clipH);
 			} else glDisable(GL_SCISSOR_TEST);
-			for (const auto& geometryRange : scene.geometryRanges) {
-				const auto texture = EnsureMapTexture(scene, geometryRange.textureHash);
-				if (texture == 0) continue;
-				glBindTexture(GL_TEXTURE_2D, texture);
-				glDrawArrays(GL_TRIANGLES, static_cast<GLint>(geometryRange.start), static_cast<GLsizei>(geometryRange.count));
+			// Ground and extrusions: GPU-projected from the retained buffers with
+			// depth testing (restores the UI program before returning).
+			DrawGpuMapBatches(scene, range);
+			// Dots, lines and label quads: CPU-composited overlay on top.
+			if (EnsureMapGeometryBuffer(range.mapViewportID, range.mapLeft, range.mapTop, range.mapRight, range.mapBottom, range.mapScale) && scene.vertexCount > 0) {
+				bindVertices(scene.vertexBuffer);
+				for (const auto& geometryRange : scene.geometryRanges) {
+					const auto texture = EnsureMapTexture(scene, geometryRange.textureHash);
+					if (texture == 0) continue;
+					glBindTexture(GL_TEXTURE_2D, texture);
+					glDrawArrays(GL_TRIANGLES, static_cast<GLint>(geometryRange.start), static_cast<GLsizei>(geometryRange.count));
+				}
 			}
+			// The GPU path bound its own buffers; restore the UI stream either way.
 			bindVertices(vbo_);
 			continue;
 		}

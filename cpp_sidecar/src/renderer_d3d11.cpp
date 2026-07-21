@@ -1,5 +1,9 @@
 #include "renderer_d3d11.h"
 
+#include <string>
+
+#include "poem/map_gpu.h"
+#include "poem/map_shader.h"
 #include "poem/map_view.h"
 
 #include <d3dcompiler.h>
@@ -25,45 +29,33 @@ struct ConstantBuffer {
     float pad[2];
 };
 
-// MapViewConstants mirrors shared/poem/map_view.h View for the GPU map path.
-// The camera centre is split into hi+lo floats (relative-to-eye) because world
-// units near zoom 15 exceed single-float precision when differenced in-shader.
-struct MapViewConstants {
-    float centerHiX, centerHiY, centerLoX, centerLoY;
-    float worldPixels, cosBearing, sinBearing, metersToPixels;
-    float pitchCos, pitchSin, cameraDistance, screenWidth;
-    float screenHeight, rectCenterX, rectCenterY, ambient;
-    float sunX, sunY, sunZ, fogDensity;
-    float fogR, fogG, fogB, fogPitch;
-    // From shared/poem/map_view.h so the HLSL never hard-codes them.
-    float fogReferenceMeters, fogScaleHeightMeters, pad0, pad1;
-};
-
+// MapDrawConstants is the only per-batch state; the view/lighting block comes
+// straight from poem::mapgpu::Uniforms, packed once in shared code.
 struct MapDrawConstants {
     float opacity;
     float shaded; // 1 = light against the sun (extrusions), 0 = styled colour
     float pad[2];
 };
 
-// The GPU map shader projects raw cartography vertices (world x/y in mercator
-// units, z in metres) exactly as shared/poem/map_view.h does on the CPU, and
-// shades per-face from screen-space derivatives of the local position — the
-// derivative of a linearly interpolated varying is constant per triangle, so
-// cross(ddx, ddy) recovers the true face plane without per-vertex normals.
-const char* kMapShader = R"(
+// The map shader is assembled from the shared canonical source: HLSL prelude,
+// the shared maths, then the entry points, which are the only per-backend part
+// (HLSL needs semantics-bearing structs and a cbuffer declaration).
+inline std::string MapShaderSource() {
+    return std::string(poem::mapshader::kHlslPrelude) + R"(
 cbuffer MapView : register(b0) {
-    float4 centerHiLo;    // hiX hiY loX loY
-    float4 worldBearing;  // worldPixels cosB sinB metersToPixels
-    float4 pitchScreen;   // pitchCos pitchSin cameraDistance screenW
-    float4 screenRect;    // screenH rectCX rectCY ambient
-    float4 sunFog;        // sunX sunY sunZ fogDensity
-    float4 fogColorPitch; // fogR fogG fogB pitchSin
-    float4 fogParams;     // referenceMeters scaleHeight - -
+    float4 uCenter;
+    float4 uWorld;
+    float4 uPitch;
+    float4 uRect;
+    float4 uScreen;
+    float4 uSunAmbient;
+    float4 uFog;
+    float4 uFogParams;
 };
 cbuffer MapDraw : register(b1) {
-    float4 drawParams;    // opacity shaded - -
+    float4 uDraw; // opacity shaded - -
 };
-
+)" + std::string(poem::mapshader::kBody) + R"(
 struct VSIn {
     float3 pos : POSITION;
     float4 color : COLOR0;
@@ -75,54 +67,23 @@ struct VSOut {
 };
 
 VSOut vsmain(VSIn input) {
-    float dx = (input.pos.x - centerHiLo.x) - centerHiLo.z;
-    if (dx > 0.5) dx -= 1.0;
-    if (dx < -0.5) dx += 1.0;
-    float dy = (input.pos.y - centerHiLo.y) - centerHiLo.w;
-    float localX = (dx * worldBearing.y - dy * worldBearing.z) * worldBearing.x;
-    float localY = (dx * worldBearing.z + dy * worldBearing.y) * worldBearing.x;
-    float localZ = input.pos.z * worldBearing.w;
-    float projY = localY * pitchScreen.x - localZ * pitchScreen.y;
-    float depth = localY * pitchScreen.y + localZ * pitchScreen.x;
-    float persp = pitchScreen.z / max(pitchScreen.z * 0.05, pitchScreen.z - depth);
-    float sx = screenRect.y + localX * persp;
-    float sy = screenRect.z + projY * persp;
     VSOut output;
-    // Depth spans [-19*cameraDistance, +cameraDistance): the perspective divide
-    // floors at cameraDistance*0.05, i.e. depth = -19*cd at the far clamp.
-    // Normalizing over that exact range keeps 24-bit precision (~0.001 px)
-    // instead of saturating the pitched scene into z-fighting ties.
-    output.pos = float4(sx / pitchScreen.w * 2.0 - 1.0, 1.0 - sy / screenRect.x * 2.0,
-                        saturate((depth + 19.0 * pitchScreen.z) / (20.0 * pitchScreen.z)), 1.0);
+    output.local = MapLocal(input.pos, uCenter, uWorld);
+    output.pos = MapClip(output.local, uPitch, uRect, uScreen);
     output.color = input.color;
-    output.local = float3(localX, localY, localZ);
     return output;
 }
 
 float4 psmain(VSOut input) : SV_TARGET {
     float3 color = input.color.rgb;
-    if (drawParams.y > 0.5) {
-        float3 normal = cross(ddx(input.local), ddy(input.local));
-        float len = length(normal);
-        if (len > 1e-6) {
-            normal /= len;
-            // abs() lights a face and its back identically: adjacent buildings
-            // share coplanar walls that are drawn twice with opposite winding,
-            // and symmetric shading makes that unavoidable z-tie invisible.
-            float lambert = abs(dot(normal, sunFog.xyz));
-            color *= screenRect.w + (1.0 - screenRect.w) * lambert;
-        }
+    if (uDraw.y > 0.5) {
+        color = MapShade(color, ddx(input.local), ddy(input.local), uSunAmbient);
     }
-    if (sunFog.w > 0.0 && fogColorPitch.w > 0.0) {
-        float meters = length(input.local.xy) / worldBearing.w;
-        float elevM = input.local.z / worldBearing.w;
-        float altitude = exp(-max(elevM, 0.0) / fogParams.y);
-        float fog = 1.0 - exp(-sunFog.w * (meters / fogParams.x) * altitude * fogColorPitch.w);
-        color = lerp(color, fogColorPitch.rgb, saturate(fog));
-    }
-    return float4(color, input.color.a * drawParams.x);
+    color = MapFog(color, input.local, uFog, uFogParams);
+    return float4(color, input.color.a * uDraw.x);
 }
 )";
+}
 
 std::string MapHashKey(const std::array<std::uint8_t, 32>& hash) {
     return std::string(reinterpret_cast<const char*>(hash.data()), hash.size());
@@ -684,18 +645,19 @@ bool RendererD3D11::CreateShaders() {
 
     // GPU map pipeline: shaders over the raw cartography vertex format
     // (stride 32: float3 position, u8x4 colour; width/featureID skipped).
-    auto mapVs = CompileShader(kMapShader, "vsmain", "vs_5_0");
-    auto mapPs = CompileShader(kMapShader, "psmain", "ps_5_0");
+    const std::string mapSource = MapShaderSource();
+    auto mapVs = CompileShader(mapSource.c_str(), "vsmain", "vs_5_0");
+    auto mapPs = CompileShader(mapSource.c_str(), "psmain", "ps_5_0");
     if (!mapVs || !mapPs) return false;
     if (FAILED(device_->CreateVertexShader(mapVs->GetBufferPointer(), mapVs->GetBufferSize(), nullptr, &mapVertexShader_))) return false;
     if (FAILED(device_->CreatePixelShader(mapPs->GetBufferPointer(), mapPs->GetBufferSize(), nullptr, &mapPixelShader_))) return false;
     D3D11_INPUT_ELEMENT_DESC mapLayout[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, poem::mapgpu::kColorOffset, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
     if (FAILED(device_->CreateInputLayout(mapLayout, 2, mapVs->GetBufferPointer(), mapVs->GetBufferSize(), &mapInputLayout_))) return false;
 
-    cbDesc.ByteWidth = sizeof(MapViewConstants);
+    cbDesc.ByteWidth = sizeof(poem::mapgpu::Uniforms);
     if (FAILED(device_->CreateBuffer(&cbDesc, nullptr, &mapViewBuffer_))) return false;
     cbDesc.ByteWidth = sizeof(MapDrawConstants);
     if (FAILED(device_->CreateBuffer(&cbDesc, nullptr, &mapDrawBuffer_))) return false;
@@ -969,10 +931,9 @@ void RendererD3D11::AppendMapGeometry(std::vector<Vertex>& vertices, std::vector
       for (const auto& draw : retained.draws) {
 		const auto rangeStart = static_cast<std::uint32_t>(vertices.size());
 		const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
-		// Untextured triangles (ground, extrusions) are drawn by the GPU map
-		// path straight from the retained buffers; the CPU composite carries
-		// only dots, lines and textured label quads on top.
-		if (draw.primitive == protocol::MapPrimitive::Triangles && !textured) continue;
+		// Untextured triangles (ground, extrusions) belong to the GPU map path;
+		// the CPU composite carries only dots, lines and textured label quads.
+		if (poem::mapgpu::IsGpuBatch(draw)) continue;
         const auto vertexIt = retained.resources.find(MapHashKey(draw.vertexHash));
         const auto indexIt = retained.resources.find(MapHashKey(draw.indexHash));
         if (vertexIt == retained.resources.end() || indexIt == retained.resources.end() || indexIt->second.stride != 4) continue;
@@ -1064,68 +1025,38 @@ ID3D11Buffer* RendererD3D11::EnsureMapGpuBuffer(RetainedMapScene& scene, const s
 
 void RendererD3D11::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& range) {
 	if (!mapVertexShader_ || !depthView_) return;
-	bool any = false;
-	for (const auto& draw : scene.draws) {
-		const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
-		if (draw.primitive == protocol::MapPrimitive::Triangles && !textured) { any = true; break; }
-	}
-	if (!any) return;
+	if (!poem::mapgpu::HasGpuBatches(scene.draws)) return;
 
 	const auto view = poem::mapview::Make(scene.camera.latitude, scene.camera.longitude, scene.camera.zoom,
 	                                      scene.camera.bearing, scene.camera.pitch, range.mapScale,
 	                                      range.mapLeft, range.mapTop, range.mapRight, range.mapBottom);
-	const auto sun = poem::mapview::SunDirection(view, scene.sunAzimuth, scene.sunElevation);
-
-	MapViewConstants constants{};
-	constants.centerHiX = static_cast<float>(view.centerX);
-	constants.centerLoX = static_cast<float>(view.centerX - static_cast<double>(constants.centerHiX));
-	constants.centerHiY = static_cast<float>(view.centerY);
-	constants.centerLoY = static_cast<float>(view.centerY - static_cast<double>(constants.centerHiY));
-	constants.worldPixels = static_cast<float>(view.worldPixels);
-	constants.cosBearing = static_cast<float>(view.cosBearing);
-	constants.sinBearing = static_cast<float>(view.sinBearing);
-	constants.metersToPixels = static_cast<float>(view.metersToPixels);
-	constants.pitchCos = static_cast<float>(view.pitchCos);
-	constants.pitchSin = static_cast<float>(view.pitchSin);
-	constants.cameraDistance = static_cast<float>(view.cameraDistance);
-	constants.screenWidth = static_cast<float>(width_);
-	constants.screenHeight = static_cast<float>(height_);
-	constants.rectCenterX = static_cast<float>((view.left + view.right) * .5);
-	constants.rectCenterY = static_cast<float>((view.top + view.bottom) * .5);
-	constants.ambient = static_cast<float>(poem::mapview::kDefaultAmbient);
-	constants.sunX = static_cast<float>(sun.x);
-	constants.sunY = static_cast<float>(sun.y);
-	constants.sunZ = static_cast<float>(sun.z);
-	constants.fogDensity = scene.fogDensity;
-	constants.fogR = scene.fogRed;
-	constants.fogG = scene.fogGreen;
-	constants.fogB = scene.fogBlue;
-	constants.fogPitch = static_cast<float>(view.pitchSin);
-	constants.fogReferenceMeters = static_cast<float>(poem::mapview::kFogReferenceMeters);
-	constants.fogScaleHeightMeters = static_cast<float>(poem::mapview::kFogScaleHeightMeters);
+	const poem::mapgpu::Lighting lighting{scene.sunAzimuth, scene.sunElevation, scene.fogDensity,
+	                                      scene.fogRed, scene.fogGreen, scene.fogBlue};
+	const auto uniforms = poem::mapgpu::MakeUniforms(view, lighting, static_cast<float>(width_),
+	                                                 static_cast<float>(height_), 0.0f, 0.0f);
 
 	D3D11_MAPPED_SUBRESOURCE mapped{};
 	if (SUCCEEDED(context_->Map(mapViewBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-		std::memcpy(mapped.pData, &constants, sizeof(constants));
+		std::memcpy(mapped.pData, &uniforms, sizeof(uniforms));
 		context_->Unmap(mapViewBuffer_.Get(), 0);
 	}
 
 	context_->IASetInputLayout(mapInputLayout_.Get());
+	context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	context_->VSSetShader(mapVertexShader_.Get(), nullptr, 0);
 	context_->PSSetShader(mapPixelShader_.Get(), nullptr, 0);
-	ID3D11Buffer* viewBuffers[2] = {mapViewBuffer_.Get(), mapDrawBuffer_.Get()};
-	context_->VSSetConstantBuffers(0, 2, viewBuffers);
-	context_->PSSetConstantBuffers(0, 2, viewBuffers);
+	ID3D11Buffer* constantBuffers[2] = {mapViewBuffer_.Get(), mapDrawBuffer_.Get()};
+	context_->VSSetConstantBuffers(0, 2, constantBuffers);
+	context_->PSSetConstantBuffers(0, 2, constantBuffers);
 	context_->OMSetDepthStencilState(mapDepthState_.Get(), 0);
 
-	const UINT stride = 32, offset = 0;
+	const UINT stride = poem::mapgpu::kVertexStride, offset = 0;
 	for (const auto& draw : scene.draws) {
-		const bool textured = std::any_of(draw.textureHash.begin(), draw.textureHash.end(), [](std::uint8_t value) { return value != 0; });
-		if (draw.primitive != protocol::MapPrimitive::Triangles || textured) continue;
+		if (!poem::mapgpu::IsGpuBatch(draw)) continue;
 		ID3D11Buffer* vertexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.vertexHash), false);
 		ID3D11Buffer* indexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.indexHash), true);
 		if (!vertexBuffer || !indexBuffer) continue;
-		MapDrawConstants perDraw{draw.opacity, draw.depthTest ? 1.0f : 0.0f, {0, 0}};
+		const MapDrawConstants perDraw{draw.opacity, draw.depthTest ? 1.0f : 0.0f, {0, 0}};
 		if (SUCCEEDED(context_->Map(mapDrawBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
 			std::memcpy(mapped.pData, &perDraw, sizeof(perDraw));
 			context_->Unmap(mapDrawBuffer_.Get(), 0);

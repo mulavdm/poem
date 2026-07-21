@@ -73,6 +73,10 @@ class RendererGLES {
     void AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<MapGeometryRange>& ranges, const std::string& viewportId, float left, float top, float right, float bottom, float previewScale);
 	bool EnsureMapGeometryBuffer(const std::string& viewportId, float left, float top, float right, float bottom, float previewScale);
 	GLuint EnsureMapTexture(RetainedMapScene& scene, const std::string& hash);
+	// GPU map path (mirrors the D3D11 presenter): ground/extrusions projected in
+	// the vertex shader from retained buffers with depth testing. GLES3 required.
+	void DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& range);
+	GLuint EnsureMapGpuBuffer(RetainedMapScene& scene, const std::string& hash, bool index);
     unsigned int UploadImageCached(const std::vector<std::uint8_t>& rgba, int width, int height);
 
     int width_ = 0;
@@ -86,6 +90,10 @@ class RendererGLES {
     GLuint atlasTexture_ = 0;
     GLint uScreen_ = -1;
     GLint uAtlas_ = -1;
+    GLuint mapProgram_ = 0;
+    GLint uMapCenter_ = -1, uMapWorld_ = -1, uMapPitch_ = -1, uMapRect_ = -1,
+          uMapScreen_ = -1, uMapSunAmbient_ = -1, uMapFog_ = -1, uMapFogParams_ = -1,
+          uMapDraw_ = -1;
     std::unordered_map<std::uint32_t, GlyphInfo> glyphs_;
     std::unordered_map<std::uint64_t, ImageEntry> images_;
     struct RetainedMapScene {
@@ -104,6 +112,10 @@ class RendererGLES {
 		std::uint32_t vertexCount = 0;
 		std::vector<MapGeometryRange> geometryRanges;
 		std::unordered_map<std::string, GLuint> textures;
+		// Hash-keyed GPU copies of the retained vertex/index resources for the
+		// GPU map path, uploaded once per generation.
+		std::unordered_map<std::string, GLuint> gpuVertexBuffers;
+		std::unordered_map<std::string, GLuint> gpuIndexBuffers;
 		float left = 0, top = 0, right = 0, bottom = 0;
 		float previewScale = 1;
 		bool geometryDirty = true;

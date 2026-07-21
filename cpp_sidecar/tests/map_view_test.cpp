@@ -3,6 +3,7 @@
 // lights the scene through this one implementation, so pinning it here pins all
 // of them (framework TDD §30.1 shared unit tests, §40.3 backend divergence).
 
+#include "poem/map_gpu.h"
 #include "poem/map_view.h"
 
 #include <cmath>
@@ -138,6 +139,62 @@ void DepthSortOnlyWhenPitched() {
     Require(NeedsDepthSort(45), "a pitched camera needs the painter sort");
 }
 
+// The GPU map path derives its uniforms and batch selection from shared code so
+// every backend feeds its shaders identically; these pin that contract.
+void GpuUniformsMatchTheView() {
+    const auto view = Make(52.3676, 4.9041, 15, 30, 55, 1, 0, 0, 800, 600);
+    poem::mapgpu::Lighting lighting{};
+    lighting.sunAzimuth = 120;
+    lighting.sunElevation = 25;
+    lighting.fogDensity = 1.15f;
+    const auto uniforms = poem::mapgpu::MakeUniforms(view, lighting, 800, 600, 7, 9);
+
+    // The camera centre is split hi/lo; recombining must recover it to double
+    // precision, which is the whole reason the split exists.
+    const double recombinedX = static_cast<double>(uniforms.center[0]) + static_cast<double>(uniforms.center[2]);
+    const double recombinedY = static_cast<double>(uniforms.center[1]) + static_cast<double>(uniforms.center[3]);
+    Require(Near(recombinedX, view.centerX, 1e-12), "hi+lo recovers camera centre x");
+    Require(Near(recombinedY, view.centerY, 1e-12), "hi+lo recovers camera centre y");
+
+    Require(Near(uniforms.world[0], view.worldPixels, 1.0), "worldPixels forwarded");
+    Require(Near(uniforms.pitch[2], view.cameraDistance, 1e-3), "cameraDistance forwarded");
+    Require(Near(uniforms.rect[0], (view.left + view.right) * .5, 1e-6), "viewport centre x");
+    Require(Near(uniforms.rect[2], 7, 1e-6) && Near(uniforms.rect[3], 9, 1e-6), "insets forwarded");
+    Require(Near(uniforms.sunAmbient[3], kDefaultAmbient, 1e-6), "ambient forwarded");
+
+    // Sun must match the shared direction the CPU path uses.
+    const auto sun = SunDirection(view, lighting.sunAzimuth, lighting.sunElevation);
+    Require(Near(uniforms.sunAmbient[0], sun.x, 1e-6) && Near(uniforms.sunAmbient[1], sun.y, 1e-6) &&
+                Near(uniforms.sunAmbient[2], sun.z, 1e-6),
+            "sun direction matches the shared calculation");
+
+    // Fog constants come from the shared header, never hard-coded in a shader.
+    Require(Near(uniforms.fogParams[0], kFogReferenceMeters, 1e-6), "fog reference metres forwarded");
+    Require(Near(uniforms.fogParams[1], kFogScaleHeightMeters, 1e-6), "fog scale height forwarded");
+    Require(Near(uniforms.fogParams[2], view.pitchSin, 1e-6), "fog pitch gate forwarded");
+}
+
+void GpuBatchSelectionOwnsUntexturedTriangles() {
+    poem::protocol::MapDrawBatch ground{};
+    ground.primitive = poem::protocol::MapPrimitive::Triangles;
+    Require(poem::mapgpu::IsGpuBatch(ground), "untextured triangles are GPU batches");
+
+    poem::protocol::MapDrawBatch label = ground;
+    label.textureHash[3] = 7;
+    Require(!poem::mapgpu::IsGpuBatch(label), "textured quads stay on the overlay");
+
+    poem::protocol::MapDrawBatch dots{};
+    dots.primitive = poem::protocol::MapPrimitive::Points;
+    Require(!poem::mapgpu::IsGpuBatch(dots), "points stay on the overlay");
+
+    poem::protocol::MapDrawBatch lines{};
+    lines.primitive = poem::protocol::MapPrimitive::Lines;
+    Require(!poem::mapgpu::IsGpuBatch(lines), "lines stay on the overlay");
+
+    Require(poem::mapgpu::HasGpuBatches({dots, ground}), "a scene with ground has GPU batches");
+    Require(!poem::mapgpu::HasGpuBatches({dots, lines, label}), "an overlay-only scene has none");
+}
+
 void RunAll() {
     ProjectsCameraToViewportCentre();
     HorizontalWrapTakesShortestPath();
@@ -148,6 +205,8 @@ void RunAll() {
     FogGrowsWithDistanceAndThinsWithHeight();
     FogMixIsABlend();
     DepthSortOnlyWhenPitched();
+    GpuUniformsMatchTheView();
+    GpuBatchSelectionOwnsUntexturedTriangles();
 }
 
 } // namespace

@@ -253,13 +253,26 @@ void InitDisplay(Host* host) {
     const EGLint attribs[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
                               EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
                               EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
-                              EGL_ALPHA_SIZE, 8, EGL_NONE};
+                              EGL_ALPHA_SIZE, 8,
+                              // Depth for the GPU map path (extrusion occlusion);
+                              // drivers grant at least this many bits.
+                              EGL_DEPTH_SIZE, 16, EGL_NONE};
     EGLConfig config;
     EGLint numConfigs = 0;
     eglChooseConfig(host->display, attribs, &config, 1, &numConfigs);
     host->surface = eglCreateWindowSurface(host->display, config, host->app->window, nullptr);
-    const EGLint ctxAttribs[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
-    host->context = eglCreateContext(host->display, config, EGL_NO_CONTEXT, ctxAttribs);
+    // Negotiate GLES3 (derivatives + 32-bit indices are core, needed by the
+    // GPU map path) and fall back to GLES2, where the presenter checks the
+    // equivalent extensions and otherwise keeps the CPU painter path.
+    const EGLint ctx3[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
+    host->context = eglCreateContext(host->display, config, EGL_NO_CONTEXT, ctx3);
+    if (host->context == EGL_NO_CONTEXT) {
+        const EGLint ctx2[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+        host->context = eglCreateContext(host->display, config, EGL_NO_CONTEXT, ctx2);
+        HLOGI("EGL context: GLES2 fallback");
+    } else {
+        HLOGI("EGL context: GLES3");
+    }
     eglMakeCurrent(host->display, host->surface, host->surface, host->context);
     eglQuerySurface(host->display, host->surface, EGL_WIDTH, &host->width);
     eglQuerySurface(host->display, host->surface, EGL_HEIGHT, &host->height);
