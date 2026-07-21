@@ -1,5 +1,11 @@
 # OKF Bundle Update Log
 
+## 2026-07-21 (M9 cache policy and clearing)
+
+- `MapCachePolicy` now governs the resource cache instead of being decoded and ignored. **Memory Only** writes nothing to disk and, when switched to, clears what earlier policies persisted — a setting that left a copy behind would not be the setting the user asked for. **Persistent Online Only** persists as an accelerator: an unreachable provider stays an error. **Persistent Offline** additionally answers from verified disk copies when the provider cannot, which is what keeps the map drawing with no connection. The shared cache resolves one policy across viewports by taking the **most restrictive**, so one viewport opting out of persistence cannot be undone by another.
+- Added `Clear()`, and a test for the plan's explicit guarantee that clearing the cache does not delete downloaded regions: the cache lives under the OS cache directory while region packages live in the application data directory, so a clear cannot reach them. Default native budget (2 GiB) is now pinned by a test too.
+- The existing cache tests caught a regression the new code introduced: `MapCacheMemoryOnly` is the zero value of the policy enum, so a cache constructed without an explicit policy silently stopped persisting. Construction now defaults to Persistent Offline.
+
 ## 2026-07-21 (shadow cascades — workstream C complete)
 
 - Buildings now **cast sun shadows** onto the street and onto each other. Each cascade is a depth-only pass rendered from the sun's point of view into a 1024² depth map; the main pass projects each fragment into the same light space and compares. Cascade count is **driven by the quality tier** — Battery Saver 0, Balanced 1, High 2 — carried on a new `MapSceneDelta.ShadowCascades` field appended after the fog fields, so existing protocol values keep their positions.

@@ -23,6 +23,11 @@ type nativeRawTileCache struct {
 	mu        sync.Mutex
 	directory string
 	maxBytes  int64
+	// policy decides whether verified resources reach the disk at all, and
+	// whether the disk may answer once the provider cannot. It is the app's
+	// MapCachePolicy, not a renderer detail: Memory Only must leave nothing
+	// behind on the device.
+	policy app.MapCachePolicy
 }
 
 type nativeRawCacheFile struct {
@@ -40,7 +45,73 @@ func newDefaultNativeRawTileCache() *nativeRawTileCache {
 }
 
 func newNativeRawTileCache(directory string, maxBytes int64) *nativeRawTileCache {
-	return &nativeRawTileCache{directory: directory, maxBytes: maxBytes}
+	// Persist by default. MapCacheMemoryOnly is the zero value of the policy
+	// enum, so leaving the field unset would silently disable the disk cache
+	// for every caller that never calls SetPolicy.
+	return &nativeRawTileCache{directory: directory, maxBytes: maxBytes, policy: app.MapCachePersistentOffline}
+}
+
+// SetPolicy applies the viewport's cache policy. Switching to Memory Only also
+// clears what earlier policies persisted: leaving a disk copy behind after the
+// user asks for memory-only caching would defeat the setting.
+func (cache *nativeRawTileCache) SetPolicy(policy app.MapCachePolicy) {
+	if cache == nil {
+		return
+	}
+	cache.mu.Lock()
+	changed := cache.policy != policy
+	cache.policy = policy
+	cache.mu.Unlock()
+	if changed && policy == app.MapCacheMemoryOnly {
+		cache.Clear()
+	}
+}
+
+// persists reports whether verified resources may be written to disk.
+func (cache *nativeRawTileCache) persists() bool {
+	if cache == nil {
+		return false
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return cache.policy != app.MapCacheMemoryOnly
+}
+
+// servesOffline reports whether the disk may answer when the provider cannot.
+// Persistent Online Only is an accelerator, so a failed fetch is a failure;
+// only Persistent Offline is allowed to keep drawing without a provider.
+func (cache *nativeRawTileCache) servesOffline() bool {
+	if cache == nil {
+		return false
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return cache.policy == app.MapCachePersistentOffline
+}
+
+// Clear removes every cached resource. It only ever touches this cache's own
+// directory, so downloaded region packages — which live in the application's
+// data directory, not the OS cache directory — survive: clearing a cache must
+// never cost the user a deliberate offline download.
+func (cache *nativeRawTileCache) Clear() {
+	if cache == nil {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.directory == "" {
+		return
+	}
+	entries, err := os.ReadDir(cache.directory)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		_ = os.Remove(filepath.Join(cache.directory, entry.Name()))
+	}
 }
 
 func (cache *nativeRawTileCache) SetBudget(maxBytes int64) {
@@ -91,6 +162,10 @@ func (cache *nativeRawTileCache) Put(key nativeTileCacheKey, payload []byte) {
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	// Memory Only keeps resources in the in-memory tile cache alone.
+	if cache.policy == app.MapCacheMemoryOnly {
+		return
+	}
 	if int64(len(payload)+nativeRawCacheHeaderBytes) > cache.maxBytes || os.MkdirAll(cache.directory, 0o700) != nil {
 		return
 	}

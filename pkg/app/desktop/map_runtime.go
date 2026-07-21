@@ -61,6 +61,7 @@ func (runtime *nativeMapRuntime) reconcile(root app.Node, providers []app.MapRes
 	nodes := collectMapNodes(root, nil)
 	runtime.cache.SetBudget(nativeMapMemoryBudget(nodes))
 	runtime.rawCache.SetBudget(nativeMapCacheBudget(nodes))
+	runtime.rawCache.SetPolicy(nativeMapCachePolicy(nodes))
 	available := make(map[string]app.MapResourceProvider, len(providers))
 	for _, provider := range providers {
 		if provider.Valid() {
@@ -172,6 +173,20 @@ func buildNativeMapScene(ctx context.Context, cache *nativeTileCache, rawCache *
 				}
 				resource, fetchErr := provider.Fetch(ctx, app.MapResourceRequest{SourceID: node.Source.ID, Snapshot: node.Source.Snapshot, Kind: app.MapResourceVectorTile, Z: int(tileID.Z), X: int(tileID.X), Y: int(tileID.Y)})
 				if fetchErr != nil {
+					// Persistent Offline keeps drawing from verified disk copies
+					// when the provider is unreachable; the other policies treat
+					// the cache as an accelerator, so a failed fetch stays failed.
+					if rawCache.servesOffline() {
+						if encoded, ok := rawCache.Get(cacheKey); ok {
+							if layers, decodeErr := cartography.DecodeMVT(encoded); decodeErr == nil {
+								cache.Add(cacheKey, layers, int64(len(encoded)))
+								elevation := loadNativeElevation(ctx, rawCache, provider, node, tileID, &fetchedBytes)
+								results <- result{tile: cartography.Tile{ID: tileID, Layers: layers}, elevation: elevation}
+								continue
+							}
+							rawCache.Remove(cacheKey)
+						}
+					}
 					results <- result{err: fetchErr}
 					continue
 				}
@@ -438,6 +453,20 @@ type nativeTileCache struct {
 	maxEntries int
 	maxBytes   int64
 	bytes      int64
+}
+
+// nativeMapCachePolicy resolves one policy for the shared resource cache. The
+// most restrictive viewport wins: if any viewport asks for memory-only caching,
+// nothing is written to disk, because a single viewport opting out of
+// persistence must not be undone by another that did not.
+func nativeMapCachePolicy(nodes []app.MapViewportNode) app.MapCachePolicy {
+	policy := app.MapCachePersistentOffline
+	for _, node := range nodes {
+		if node.CachePolicy < policy {
+			policy = node.CachePolicy
+		}
+	}
+	return policy
 }
 
 func nativeMapCacheBudget(nodes []app.MapViewportNode) int64 {
