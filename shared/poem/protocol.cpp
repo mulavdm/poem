@@ -250,6 +250,7 @@ MapSceneDelta DecodeMapSceneDelta(const std::vector<std::uint8_t>& body) {
     out.fogRed = r.Read<float>();
     out.fogGreen = r.Read<float>();
     out.fogBlue = r.Read<float>();
+    out.shadowCascades = r.Read<std::uint8_t>();
     r.RequireEnd();
     return out;
 }

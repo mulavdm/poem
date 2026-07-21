@@ -230,6 +230,7 @@ func buildNativeMapScene(ctx context.Context, cache *nativeTileCache, rawCache *
 	scene, err := cartography.BuildSceneLit(node.Semantic.ID, generation, camera, style, tiles, cartography.Lighting{
 		DynamicSun: semanticStyle.DynamicSun, Clock: time.Now(),
 		FogDensity: cartography.DefaultFogDensity, FogColor: &fogColor,
+		ShadowCascades: nativeShadowCascades(node.Quality),
 	})
 	if err == nil {
 		scene, err = cartography.AddSceneFeatures(scene, nativeSceneFeatures(node, palette))
@@ -313,6 +314,20 @@ func nativeMapLabelLimit(quality app.MapQuality) int {
 		return 16_384
 	default:
 		return 12_288
+	}
+}
+
+// nativeShadowCascades maps the quality tier onto cascade count: Battery Saver
+// casts none (the shadow pass is the most expensive part of the frame),
+// Balanced one, High two.
+func nativeShadowCascades(quality app.MapQuality) uint8 {
+	switch quality {
+	case app.MapQualityBatterySaver:
+		return 0
+	case app.MapQualityHigh:
+		return 2
+	default:
+		return 1
 	}
 }
 

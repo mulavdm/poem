@@ -36,6 +36,9 @@ type Lighting struct {
 	// FogColor is the haze colour. Leave it zero to fade into the style's land
 	// tone, which keeps the horizon dissolving into the map background.
 	FogColor *Color
+	// ShadowCascades is 0 (off), 1 or 2. The quality tier decides: Battery
+	// Saver casts no shadows, Balanced one cascade, High two.
+	ShadowCascades uint8
 }
 
 // DefaultFogDensity is a restrained default: clearly readable as depth on a

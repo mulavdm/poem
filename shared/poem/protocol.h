@@ -178,6 +178,8 @@ struct MapSceneDelta {
     float fogRed{};
     float fogGreen{};
     float fogBlue{};
+    // Shadow cascades: 0 off, 1 Balanced, 2 High.
+    std::uint8_t shadowCascades{};
 };
 
 struct SetImeVisible {

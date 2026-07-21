@@ -13,6 +13,13 @@
 
 #define RLOGE(...) __android_log_print(ANDROID_LOG_ERROR, "poem-gles", __VA_ARGS__)
 
+// Sized depth format for the shadow maps. It is GLES3 core (the host negotiates
+// a GLES3 context) but lives in the GLES3 headers, and this translation unit
+// builds against gl2.h; defining it here avoids mixing GL header generations.
+#ifndef GL_DEPTH_COMPONENT24
+#define GL_DEPTH_COMPONENT24 0x81A6
+#endif
+
 namespace poem {
 
 namespace {
@@ -154,11 +161,27 @@ uniform vec4 uSunAmbient;
 uniform vec4 uFog;
 uniform vec4 uFogParams;
 uniform vec4 uDraw; // opacity shaded - -
+uniform vec4 uLightRight;
+uniform vec4 uLightUp;
+uniform vec4 uLightForward;
+uniform vec4 uShadowParams; // bias texelSize strength -
+uniform sampler2D uShadow0;
+uniform sampler2D uShadow1;
 )" + std::string(poem::mapshader::kBody) + R"(
 void main() {
     vec3 color = vColor.rgb;
     if (uDraw.y > 0.5) {
         color = MapShade(color, dFdx(vLocal), dFdy(vLocal), uSunAmbient);
+    }
+    // Shadowing applies to ground and extrusions alike: buildings must cast
+    // onto the street, not only onto each other.
+    float radius = MapCascadeRadius(vLocal, uLightRight, uLightUp, uLightForward);
+    if (radius > 0.0) {
+        vec3 light = MapLightCoord(vLocal, uLightRight, uLightUp, uLightForward, radius);
+        float stored = radius <= uLightRight.w + 0.001
+            ? texture2D(uShadow0, light.xy).r
+            : texture2D(uShadow1, light.xy).r;
+        color = color * MapShadowFactor(stored, light.z, uShadowParams.x, uShadowParams.z);
     }
     color = MapFog(color, vLocal, uFog, uFogParams);
     gl_FragColor = vec4(color, vColor.a * uDraw.x);
@@ -201,6 +224,31 @@ void main() {
     gl_FragColor = vec4(vColor.rgb, vColor.a * alpha * uOpacity);
 }
 )";
+}
+
+// Depth-only pass from the sun's point of view; one shader serves every
+// cascade via uRadius. GLES requires a fragment shader even for depth-only, so
+// it writes a constant that is never sampled.
+std::string ShadowVertexShaderSource() {
+    return std::string(poem::mapshader::kGlslPrelude) + R"(
+attribute vec3 aPos;
+uniform vec4 uCenter;
+uniform vec4 uWorld;
+uniform vec4 uLightRight;
+uniform vec4 uLightUp;
+uniform vec4 uLightForward;
+uniform float uRadius;
+)" + std::string(poem::mapshader::kBody) + R"(
+void main() {
+    vec3 local = MapLocal(aPos, uCenter, uWorld);
+    vec3 light = MapLightCoord(local, uLightRight, uLightUp, uLightForward, uRadius);
+    gl_Position = vec4(light.x * 2.0 - 1.0, light.y * 2.0 - 1.0, light.z * 2.0 - 1.0, 1.0);
+}
+)";
+}
+
+std::string ShadowFragmentShaderSource() {
+    return "precision mediump float;\nvoid main() { gl_FragColor = vec4(1.0); }\n";
 }
 
 GLuint Compile(GLenum type, const char* source) {
@@ -306,6 +354,43 @@ bool RendererGLES::Init(int width, int height, float scale) {
     uMapFog_ = glGetUniformLocation(mapProgram_, "uFog");
     uMapFogParams_ = glGetUniformLocation(mapProgram_, "uFogParams");
     uMapDraw_ = glGetUniformLocation(mapProgram_, "uDraw");
+    uMapLightRight_ = glGetUniformLocation(mapProgram_, "uLightRight");
+    uMapLightUp_ = glGetUniformLocation(mapProgram_, "uLightUp");
+    uMapLightForward_ = glGetUniformLocation(mapProgram_, "uLightForward");
+    uMapShadowParams_ = glGetUniformLocation(mapProgram_, "uShadowParams");
+    uMapShadow0_ = glGetUniformLocation(mapProgram_, "uShadow0");
+    uMapShadow1_ = glGetUniformLocation(mapProgram_, "uShadow1");
+
+    const std::string shadowVertexSource = ShadowVertexShaderSource();
+    const std::string shadowFragmentSource = ShadowFragmentShaderSource();
+    GLuint shadowVs = Compile(GL_VERTEX_SHADER, shadowVertexSource.c_str());
+    GLuint shadowFs = Compile(GL_FRAGMENT_SHADER, shadowFragmentSource.c_str());
+    if (shadowVs && shadowFs) {
+        shadowProgram_ = glCreateProgram();
+        glAttachShader(shadowProgram_, shadowVs);
+        glAttachShader(shadowProgram_, shadowFs);
+        glBindAttribLocation(shadowProgram_, 0, "aPos");
+        glLinkProgram(shadowProgram_);
+        GLint shadowLinked = GL_FALSE;
+        glGetProgramiv(shadowProgram_, GL_LINK_STATUS, &shadowLinked);
+        if (shadowLinked) {
+            uShadowCenter_ = glGetUniformLocation(shadowProgram_, "uCenter");
+            uShadowWorld_ = glGetUniformLocation(shadowProgram_, "uWorld");
+            uShadowLightRight_ = glGetUniformLocation(shadowProgram_, "uLightRight");
+            uShadowLightUp_ = glGetUniformLocation(shadowProgram_, "uLightUp");
+            uShadowLightForward_ = glGetUniformLocation(shadowProgram_, "uLightForward");
+            uShadowRadius_ = glGetUniformLocation(shadowProgram_, "uRadius");
+        } else {
+            // Shadows are an enhancement: losing them must not lose the map.
+            char shadowLog[512];
+            glGetProgramInfoLog(shadowProgram_, sizeof(shadowLog), nullptr, shadowLog);
+            RLOGE("shadow program link failed (continuing without shadows): %s", shadowLog);
+            glDeleteProgram(shadowProgram_);
+            shadowProgram_ = 0;
+        }
+    }
+    if (shadowVs) glDeleteShader(shadowVs);
+    if (shadowFs) glDeleteShader(shadowFs);
 
     const std::string markerVertexSource = MarkerVertexShaderSource();
     const std::string markerFragmentSource = MarkerFragmentShaderSource();
@@ -409,6 +494,7 @@ void RendererGLES::ApplyMapScene(const protocol::MapSceneDelta& scene) {
     retained.fogRed = scene.fogRed;
     retained.fogGreen = scene.fogGreen;
     retained.fogBlue = scene.fogBlue;
+    retained.shadowCascades = scene.shadowCascades;
     retained.draws = scene.draws;
 	retained.geometryDirty = true;
 	std::unordered_set<std::string> referenced;
@@ -774,10 +860,14 @@ void RendererGLES::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& r
 	                                      scene.camera.bearing, scene.camera.pitch, range.mapScale,
 	                                      range.mapLeft, range.mapTop, range.mapRight, range.mapBottom);
 	const poem::mapgpu::Lighting lighting{scene.sunAzimuth, scene.sunElevation, scene.fogDensity,
-	                                      scene.fogRed, scene.fogGreen, scene.fogBlue};
+	                                      scene.fogRed, scene.fogGreen, scene.fogBlue,
+	                                      static_cast<int>(scene.shadowCascades)};
 	const auto uniforms = poem::mapgpu::MakeUniforms(view, lighting, static_cast<float>(width_),
 	                                                 static_cast<float>(height_),
 	                                                 static_cast<float>(insetX_), static_cast<float>(insetY_));
+
+	// Shadow maps must be written before the pass that samples them.
+	RenderShadowCascades(scene, range, uniforms);
 
 	glUseProgram(mapProgram_);
 	glUniform4fv(uMapCenter_, 1, uniforms.center);
@@ -788,6 +878,17 @@ void RendererGLES::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& r
 	glUniform4fv(uMapSunAmbient_, 1, uniforms.sunAmbient);
 	glUniform4fv(uMapFog_, 1, uniforms.fog);
 	glUniform4fv(uMapFogParams_, 1, uniforms.fogParams);
+	glUniform4fv(uMapLightRight_, 1, uniforms.lightRight);
+	glUniform4fv(uMapLightUp_, 1, uniforms.lightUp);
+	glUniform4fv(uMapLightForward_, 1, uniforms.lightForward);
+	glUniform4fv(uMapShadowParams_, 1, uniforms.shadowParams);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, shadowTexture_[0]);
+	glUniform1i(uMapShadow0_, 0);
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, shadowTexture_[1]);
+	glUniform1i(uMapShadow1_, 1);
+	glActiveTexture(GL_TEXTURE0);
 
 	for (int i = 2; i <= 4; ++i) glDisableVertexAttribArray(i);
 	glEnable(GL_DEPTH_TEST);
@@ -816,6 +917,93 @@ void RendererGLES::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& r
 	glUseProgram(program_);
 }
 
+bool RendererGLES::EnsureShadowTargets() {
+	if (shadowFramebuffer_[0] != 0) return true;
+	for (int cascade = 0; cascade < 2; ++cascade) {
+		glGenTextures(1, &shadowTexture_[cascade]);
+		glBindTexture(GL_TEXTURE_2D, shadowTexture_[cascade]);
+		// GLES3 core depth texture; sampled directly (compare mode off) so the
+		// comparison lives in the shared shader rather than in a sampler type.
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, poem::mapgpu::kShadowMapSize,
+		             poem::mapgpu::kShadowMapSize, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glGenFramebuffers(1, &shadowFramebuffer_[cascade]);
+		glBindFramebuffer(GL_FRAMEBUFFER, shadowFramebuffer_[cascade]);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTexture_[cascade], 0);
+		const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		if (status != GL_FRAMEBUFFER_COMPLETE) {
+			RLOGE("shadow framebuffer incomplete (0x%x); continuing without shadows", status);
+			return false;
+		}
+	}
+	return true;
+}
+
+int RendererGLES::RenderShadowCascades(RetainedMapScene& scene, const DrawRange& range, const poem::mapgpu::Uniforms& uniforms) {
+	const int cascades = static_cast<int>(uniforms.lightForward[3]);
+	if (cascades <= 0 || shadowProgram_ == 0 || !EnsureShadowTargets()) return 0;
+
+	// Only extrusions cast: ground casting onto itself is pure acne, and the
+	// visible effect is buildings shadowing the street and each other.
+	bool casts = false;
+	for (const auto& draw : scene.draws) {
+		if (poem::mapgpu::IsGpuBatch(draw) && draw.depthTest) { casts = true; break; }
+	}
+	if (!casts) return 0;
+
+	glUseProgram(shadowProgram_);
+	glUniform4fv(uShadowCenter_, 1, uniforms.center);
+	glUniform4fv(uShadowWorld_, 1, uniforms.world);
+	glUniform4fv(uShadowLightRight_, 1, uniforms.lightRight);
+	glUniform4fv(uShadowLightUp_, 1, uniforms.lightUp);
+	glUniform4fv(uShadowLightForward_, 1, uniforms.lightForward);
+
+	glDisable(GL_SCISSOR_TEST);
+	glViewport(0, 0, poem::mapgpu::kShadowMapSize, poem::mapgpu::kShadowMapSize);
+	// Nearer to the light is smaller here, the opposite of the main pass, so
+	// this pass runs LESS against a buffer cleared to 1.
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LESS);
+	glDepthMask(GL_TRUE);
+	for (int i = 1; i <= 4; ++i) glDisableVertexAttribArray(i);
+
+	for (int cascade = 0; cascade < cascades; ++cascade) {
+		const float radius = cascade == 0 ? uniforms.lightRight[3] : uniforms.lightUp[3];
+		if (!(radius > 0)) continue;
+		glBindFramebuffer(GL_FRAMEBUFFER, shadowFramebuffer_[cascade]);
+		glClearDepthf(1.0f);
+		glClear(GL_DEPTH_BUFFER_BIT);
+		glUniform1f(uShadowRadius_, radius);
+		for (const auto& draw : scene.draws) {
+			if (!poem::mapgpu::IsGpuBatch(draw) || !draw.depthTest) continue;
+			const GLuint vertexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.vertexHash), false);
+			const GLuint indexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.indexHash), true);
+			if (vertexBuffer == 0 || indexBuffer == 0) continue;
+			glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
+			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, poem::mapgpu::kVertexStride, reinterpret_cast<void*>(0));
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+			glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(draw.count), GL_UNSIGNED_INT,
+			               reinterpret_cast<void*>(static_cast<std::uintptr_t>(draw.first) * 4));
+		}
+	}
+
+	// Back to the frame's own target; the caller re-applies its scissor.
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+	glViewport(0, 0, width_, height_);
+	glClearDepthf(0.0f);
+	for (int i = 1; i <= 4; ++i) glEnableVertexAttribArray(i);
+	if (range.clipEnabled) {
+		glEnable(GL_SCISSOR_TEST);
+		glScissor(range.clipX + insetX_, height_ - (range.clipY + insetY_ + range.clipH), range.clipW, range.clipH);
+	}
+	return cascades;
+}
+
 void RendererGLES::DrawMapMarkers(RetainedMapScene& scene, const DrawRange& range) {
 	if (markerProgram_ == 0) return;
 	if (!poem::mapgpu::HasMarkerBatches(scene.draws)) return;
@@ -835,7 +1023,8 @@ void RendererGLES::DrawMapMarkers(RetainedMapScene& scene, const DrawRange& rang
 	                                      scene.camera.bearing, scene.camera.pitch, range.mapScale,
 	                                      range.mapLeft, range.mapTop, range.mapRight, range.mapBottom);
 	const poem::mapgpu::Lighting lighting{scene.sunAzimuth, scene.sunElevation, scene.fogDensity,
-	                                      scene.fogRed, scene.fogGreen, scene.fogBlue};
+	                                      scene.fogRed, scene.fogGreen, scene.fogBlue,
+	                                      static_cast<int>(scene.shadowCascades)};
 	const auto uniforms = poem::mapgpu::MakeUniforms(view, lighting, static_cast<float>(width_),
 	                                                 static_cast<float>(height_),
 	                                                 static_cast<float>(insetX_), static_cast<float>(insetY_));

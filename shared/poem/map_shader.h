@@ -110,6 +110,44 @@ FLOAT3 MapShade(FLOAT3 color, FLOAT3 dpdx, FLOAT3 dpdy, FLOAT4 sunAmbient) {
 // towers rise out of it, and fades in with pitch so a top-down map is clear.
 //   fog       = colour rgb + density
 //   fogParams = referenceMetres, scaleHeight, pitchSin, metersToPixels
+// MapLightCoord projects a camera-local position into one cascade's light
+// space. Cascades are concentric on the camera, so the centre is the origin and
+// only the half-extent differs. Returns xy in [0,1] texture space and z as
+// normalised depth along the light ray, also [0,1].
+//   right/up/forward = the light basis (w components carry cascade radii/count)
+FLOAT3 MapLightCoord(FLOAT3 local, FLOAT4 right, FLOAT4 up, FLOAT4 forward, FLOAT radius) {
+    FLOAT lx = dot(local, right.xyz) / radius;
+    FLOAT ly = dot(local, up.xyz) / radius;
+    FLOAT lz = dot(local, forward.xyz) / (radius * 2.0);
+    return MAKE_FLOAT3(lx * 0.5 + 0.5, ly * 0.5 + 0.5, lz * 0.5 + 0.5);
+}
+
+// MapCascadeRadius picks the tightest cascade that contains a position, so the
+// nearest geometry gets the highest-resolution shadows. Returns 0 when the
+// position falls outside every cascade (then it is simply lit).
+FLOAT MapCascadeRadius(FLOAT3 local, FLOAT4 right, FLOAT4 up, FLOAT4 forward) {
+    FLOAT count = forward.w;
+    if (count < 0.5) return 0.0;
+    // Cascade 0 first; fall through to 1 only when 0 does not contain it.
+    FLOAT3 near0 = MapLightCoord(local, right, up, forward, right.w);
+    if (near0.x > 0.02 && near0.x < 0.98 && near0.y > 0.02 && near0.y < 0.98) return right.w;
+    if (count < 1.5) return 0.0;
+    FLOAT3 near1 = MapLightCoord(local, right, up, forward, up.w);
+    if (near1.x > 0.02 && near1.x < 0.98 && near1.y > 0.02 && near1.y < 0.98) return up.w;
+    return 0.0;
+}
+
+// MapShadowFactor converts a depth-map comparison into a light multiplier: 1 is
+// fully lit, and a shadowed surface darkens toward (1 - strength) rather than to
+// black, so shadowed facades stay readable. The caller samples the map (the
+// sampler type differs per backend) and passes the stored depth in.
+FLOAT MapShadowFactor(FLOAT storedDepth, FLOAT fragmentDepth, FLOAT bias, FLOAT strength) {
+    // Depth beyond the map's far plane is unshadowed rather than clamped dark.
+    if (fragmentDepth > 1.0 || fragmentDepth < 0.0) return 1.0;
+    FLOAT lit = fragmentDepth - bias <= storedDepth ? 1.0 : 0.0;
+    return 1.0 - strength * (1.0 - lit);
+}
+
 // MapMarkerClip billboards a marker: the world position is projected normally
 // (so the marker is depth-tested against buildings and hides behind them), then
 // the quad corner is offset in screen space, which keeps markers a constant

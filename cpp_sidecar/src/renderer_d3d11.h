@@ -1,5 +1,6 @@
 #pragma once
 
+#include "poem/map_gpu.h"
 #include "poem/protocol.h"
 
 #include <d3d11.h>
@@ -75,6 +76,11 @@ class RendererD3D11 {
 	// Markers are depth-tested billboards drawn after the map geometry, so a POI
 	// behind a building is hidden by it instead of floating over the skyline.
 	void DrawMapMarkers(RetainedMapScene& scene, const DrawRange& range);
+	// Renders building extrusions into each cascade's depth map from the sun's
+	// point of view; the main pass then samples them to shade what the sun
+	// cannot see. Returns the number of cascades actually rendered.
+	int RenderShadowCascades(RetainedMapScene& scene, const DrawRange& range, const poem::mapgpu::Uniforms& uniforms);
+	bool EnsureShadowTargets();
     void AppendMapGeometry(std::vector<Vertex>& vertices, std::vector<MapGeometryRange>& ranges, const std::string& viewportId, float left, float top, float right, float bottom, float previewScale);
 	bool EnsureMapGeometryBuffer(const std::string& viewportId, float left, float top, float right, float bottom, float previewScale);
 	bool EnsureMapTexture(RetainedMapScene& scene, const std::string& hash);
@@ -146,6 +152,13 @@ class RendererD3D11 {
     std::uint32_t markerCapacity_ = 0;
     // Depth-test markers without writing: they must not occlude each other.
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> markerDepthState_;
+    // Shadow cascades: depth-only render targets written from the sun's view.
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> shadowVertexShader_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> shadowTexture_[2];
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> shadowDepthView_[2];
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shadowResourceView_[2];
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> shadowDepthState_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> shadowSampler_;
 
     std::unordered_map<std::uint32_t, GlyphInfo> glyphs_;
     std::array<std::uint32_t, 64 * 64> mapCells_{};
@@ -163,6 +176,8 @@ class RendererD3D11 {
         // Height fog: density 0 disables it.
         float fogDensity = 0.0f;
         float fogRed = 1.0f, fogGreen = 1.0f, fogBlue = 1.0f;
+        // Shadow cascades requested by the engine (quality tier); 0 disables.
+        std::uint8_t shadowCascades = 0;
         std::vector<protocol::MapDrawBatch> draws;
         std::unordered_map<std::string, protocol::MapSceneResource> resources;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer;

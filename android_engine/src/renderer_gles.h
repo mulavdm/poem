@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "poem/map_gpu.h"
 #include "poem/protocol.h"
 
 namespace poem {
@@ -80,6 +81,10 @@ class RendererGLES {
 	// Markers are depth-tested billboards drawn after the map geometry, so a POI
 	// behind a building is hidden by it instead of floating over the skyline.
 	void DrawMapMarkers(RetainedMapScene& scene, const DrawRange& range);
+	// Renders building extrusions into each cascade's depth map from the sun's
+	// point of view; the main pass samples them to shade what the sun cannot see.
+	int RenderShadowCascades(RetainedMapScene& scene, const DrawRange& range, const poem::mapgpu::Uniforms& uniforms);
+	bool EnsureShadowTargets();
     unsigned int UploadImageCached(const std::vector<std::uint8_t>& rgba, int width, int height);
 
     int width_ = 0;
@@ -95,6 +100,14 @@ class RendererGLES {
     GLint uAtlas_ = -1;
     GLuint mapProgram_ = 0;
     GLuint markerProgram_ = 0;
+    // Shadow cascades: depth-only FBOs written from the sun's view.
+    GLuint shadowProgram_ = 0;
+    GLuint shadowFramebuffer_[2] = {0, 0};
+    GLuint shadowTexture_[2] = {0, 0};
+    GLint uShadowCenter_ = -1, uShadowWorld_ = -1, uShadowLightRight_ = -1,
+          uShadowLightUp_ = -1, uShadowLightForward_ = -1, uShadowRadius_ = -1;
+    GLint uMapLightRight_ = -1, uMapLightUp_ = -1, uMapLightForward_ = -1,
+          uMapShadowParams_ = -1, uMapShadow0_ = -1, uMapShadow1_ = -1;
     GLuint markerVbo_ = 0;
     GLint uMarkerCenter_ = -1, uMarkerWorld_ = -1, uMarkerPitch_ = -1, uMarkerRect_ = -1,
           uMarkerScreen_ = -1, uMarkerOpacity_ = -1;
@@ -113,6 +126,8 @@ class RendererGLES {
         // Height fog: density 0 disables it.
         float fogDensity = 0.0f;
         float fogRed = 1.0f, fogGreen = 1.0f, fogBlue = 1.0f;
+        // Shadow cascades requested by the engine (quality tier); 0 disables.
+        std::uint8_t shadowCascades = 0;
         std::vector<protocol::MapDrawBatch> draws;
         std::unordered_map<std::string, protocol::MapSceneResource> resources;
 		GLuint vertexBuffer = 0;

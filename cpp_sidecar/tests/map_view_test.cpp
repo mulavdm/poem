@@ -32,6 +32,16 @@ View FlatView() {
                 /*left*/ 0, /*top*/ 0, /*right*/ 800, /*bottom*/ 600);
 }
 
+
+// MapShadowFactorReference mirrors poem::mapshader's MapShadowFactor so the
+// shadow decision is pinned by a test even though the shader runs on the GPU.
+// Keep in step with the shared shader source.
+float MapShadowFactorReference(float storedDepth, float fragmentDepth, float bias, float strength) {
+    if (fragmentDepth > 1.0f || fragmentDepth < 0.0f) return 1.0f;
+    const float lit = fragmentDepth - bias <= storedDepth ? 1.0f : 0.0f;
+    return 1.0f - strength * (1.0f - lit);
+}
+
 void ProjectsCameraToViewportCentre() {
     const auto view = FlatView();
     const auto point = Project(view, view.centerX, view.centerY, 0);
@@ -285,6 +295,68 @@ void MarkerBatchSelection() {
     Require(!poem::mapgpu::HasMarkerBatches({ground}), "a scene without points has none");
 }
 
+
+// The shadow frame is shared, so both presenters render and sample cascades in
+// the same light space.
+void ShadowSetupBuildsAnOrthonormalLightFrame() {
+    const auto view = Make(52.3676, 4.9041, 16, 25, 55, 1, 0, 0, 800, 600);
+    const auto sun = SunDirection(view, 120, 30);
+
+    Require(poem::mapgpu::MakeShadowSetup(view, sun, 0).count == 0, "zero cascades disables shadows");
+    Require(poem::mapgpu::MakeShadowSetup(view, sun, 5).count == poem::mapgpu::kMaxShadowCascades,
+            "cascade count is clamped to the maximum");
+
+    const auto setup = poem::mapgpu::MakeShadowSetup(view, sun, 2);
+    Require(setup.count == 2, "two cascades requested and granted");
+
+    auto length = [](const float v[3]) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); };
+    auto dot = [](const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+    Require(Near(length(setup.right), 1.0, 1e-5), "right is unit length");
+    Require(Near(length(setup.up), 1.0, 1e-5), "up is unit length");
+    Require(Near(length(setup.forward), 1.0, 1e-5), "forward is unit length");
+    Require(std::fabs(dot(setup.right, setup.up)) < 1e-5, "right and up are perpendicular");
+    Require(std::fabs(dot(setup.right, setup.forward)) < 1e-5, "right and forward are perpendicular");
+    Require(std::fabs(dot(setup.up, setup.forward)) < 1e-5, "up and forward are perpendicular");
+
+    // Light travels away from the sun, so forward opposes the sun direction.
+    const float sunVector[3] = {static_cast<float>(sun.x), static_cast<float>(sun.y), static_cast<float>(sun.z)};
+    Require(dot(setup.forward, sunVector) < -0.99, "forward points away from the sun");
+
+    // Each cascade reaches further than the last, trading resolution for range.
+    Require(setup.radius[0] > 0, "cascade 0 has a positive extent");
+    Require(Near(setup.radius[1], setup.radius[0] * poem::mapgpu::kCascadeGrowth, 1e-3),
+            "each cascade grows by the documented factor");
+}
+
+void ShadowSetupHandlesAnOverheadSun() {
+    // A sun straight up makes the usual up x forward cross product degenerate;
+    // the frame must stay finite and orthonormal rather than producing NaNs.
+    const auto view = FlatView();
+    const auto overhead = SunDirection(view, 0, 90);
+    const auto setup = poem::mapgpu::MakeShadowSetup(view, overhead, 1);
+    Require(setup.count == 1, "an overhead sun still yields a cascade");
+    for (int axis = 0; axis < 3; ++axis) {
+        Require(std::isfinite(setup.right[axis]) && std::isfinite(setup.up[axis]) &&
+                    std::isfinite(setup.forward[axis]),
+                "an overhead sun produces a finite light frame");
+    }
+    auto length = [](const float v[3]) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); };
+    Require(Near(length(setup.right), 1.0, 1e-5), "fallback right stays unit length");
+}
+
+void ShadowFactorDarkensOnlyOccludedSurfaces() {
+    // Nothing was rendered into the map there: stored stays at the far value.
+    Require(Near(MapShadowFactorReference(1.0f, 0.4f, 0.0025f, 0.45f), 1.0, 1e-6),
+            "a surface the light reaches is fully lit");
+    // The caster itself: equal depth, kept lit by the bias rather than
+    // shadowing itself into acne.
+    Require(Near(MapShadowFactorReference(0.4f, 0.4f, 0.0025f, 0.45f), 1.0, 1e-6),
+            "a caster does not shadow itself");
+    // Behind an occluder: darkened, but only by strength, never to black.
+    Require(Near(MapShadowFactorReference(0.3f, 0.5f, 0.0025f, 0.45f), 0.55, 1e-6),
+            "an occluded surface darkens by the strength, not to black");
+}
+
 void RunAll() {
     ProjectsCameraToViewportCentre();
     HorizontalWrapTakesShortestPath();
@@ -300,6 +372,9 @@ void RunAll() {
     MarkerExpansionBuildsBillboards();
     MarkerExpansionRejectsOutOfRangeIndices();
     MarkerBatchSelection();
+    ShadowSetupBuildsAnOrthonormalLightFrame();
+    ShadowSetupHandlesAnOverheadSun();
+    ShadowFactorDarkensOnlyOccludedSurfaces();
 }
 
 } // namespace

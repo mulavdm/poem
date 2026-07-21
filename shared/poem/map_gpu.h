@@ -24,6 +24,12 @@ struct Uniforms {
     float sunAmbient[4]; // sunX sunY sunZ ambient
     float fog[4];        // r g b density
     float fogParams[4];  // referenceMetres scaleHeight pitchSin metersToPixels
+    // Shadow frame: the light basis (shared by all cascades) plus each
+    // cascade's half-extent, and the sampling parameters.
+    float lightRight[4];   // xyz + cascade0 radius
+    float lightUp[4];      // xyz + cascade1 radius
+    float lightForward[4]; // xyz + cascade count
+    float shadowParams[4]; // depthBias, texelSize, strength, -
 };
 
 // Lighting is the scene's solar/fog state, straight off the retained scene.
@@ -32,7 +38,78 @@ struct Lighting {
     float sunElevation = 45.0f;
     float fogDensity = 0.0f;
     float fogRed = 1.0f, fogGreen = 1.0f, fogBlue = 1.0f;
+    // Shadow cascades: 0 disables shadows (Battery Saver), 1 is Balanced, 2 is
+    // High. The engine derives this from the quality tier.
+    int shadowCascades = 0;
 };
+
+inline constexpr int kMaxShadowCascades = 2;
+inline constexpr unsigned int kShadowMapSize = 1024;
+// Cascade 0 hugs the camera; each further cascade covers this much more ground
+// at the same texel budget, trading resolution for reach.
+inline constexpr float kCascadeGrowth = 4.0f;
+
+// ShadowSetup is the light-space frame the shadow pass renders in and the main
+// pass samples. Cascades are concentric on the camera (local origin), which
+// keeps them stable as the camera pans: geometry slides through a fixed frame
+// rather than the frame chasing the camera and shimmering.
+struct ShadowSetup {
+    float right[3] = {1, 0, 0};
+    float up[3] = {0, 1, 0};
+    float forward[3] = {0, 0, -1}; // direction the light travels
+    float radius[kMaxShadowCascades] = {0, 0};
+    int count = 0;
+};
+
+// MakeShadowSetup builds an orthonormal frame around the sun. Everything is in
+// the same camera-local pixel space the projection and shading already use, so
+// no world-space round trip is needed.
+inline ShadowSetup MakeShadowSetup(const mapview::View& view, const mapview::Sun& sun, int requestedCascades) {
+    ShadowSetup setup;
+    setup.count = std::max(0, std::min(requestedCascades, kMaxShadowCascades));
+    if (setup.count == 0) return setup;
+
+    // Light travels from the sun toward the surface.
+    double forward[3] = {-sun.x, -sun.y, -sun.z};
+    const double forwardLength = std::sqrt(forward[0] * forward[0] + forward[1] * forward[1] + forward[2] * forward[2]);
+    if (forwardLength < 1e-9) {
+        setup.count = 0;
+        return setup;
+    }
+    for (double& component : forward) component /= forwardLength;
+
+    // Right = up x forward, falling back when the sun is directly overhead and
+    // the cross product degenerates.
+    double reference[3] = {0, 0, 1};
+    double right[3] = {reference[1] * forward[2] - reference[2] * forward[1],
+                       reference[2] * forward[0] - reference[0] * forward[2],
+                       reference[0] * forward[1] - reference[1] * forward[0]};
+    double rightLength = std::sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+    if (rightLength < 1e-6) {
+        right[0] = 1; right[1] = 0; right[2] = 0;
+        rightLength = 1;
+    }
+    for (double& component : right) component /= rightLength;
+
+    const double up[3] = {forward[1] * right[2] - forward[2] * right[1],
+                          forward[2] * right[0] - forward[0] * right[2],
+                          forward[0] * right[1] - forward[1] * right[0]};
+
+    for (int axis = 0; axis < 3; ++axis) {
+        setup.right[axis] = static_cast<float>(right[axis]);
+        setup.up[axis] = static_cast<float>(up[axis]);
+        setup.forward[axis] = static_cast<float>(forward[axis]);
+    }
+
+    // Cascade 0 covers a little more than the viewport; each next one grows.
+    const double viewportSpan = std::max(view.right - view.left, view.bottom - view.top);
+    double radius = std::max(1.0, viewportSpan * 0.75);
+    for (int cascade = 0; cascade < setup.count; ++cascade) {
+        setup.radius[cascade] = static_cast<float>(radius);
+        radius *= kCascadeGrowth;
+    }
+    return setup;
+}
 
 // MakeUniforms packs a view plus scene lighting into the shader's slots. The
 // camera centre is split hi/lo because mercator coordinates at city zoom lose
@@ -81,6 +158,21 @@ inline Uniforms MakeUniforms(const mapview::View& view, const Lighting& lighting
     uniforms.fogParams[1] = static_cast<float>(mapview::kFogScaleHeightMeters);
     uniforms.fogParams[2] = static_cast<float>(view.pitchSin);
     uniforms.fogParams[3] = static_cast<float>(view.metersToPixels);
+
+    const auto shadows = MakeShadowSetup(view, sun, lighting.shadowCascades);
+    for (int axis = 0; axis < 3; ++axis) {
+        uniforms.lightRight[axis] = shadows.right[axis];
+        uniforms.lightUp[axis] = shadows.up[axis];
+        uniforms.lightForward[axis] = shadows.forward[axis];
+    }
+    uniforms.lightRight[3] = shadows.radius[0];
+    uniforms.lightUp[3] = shadows.radius[1];
+    uniforms.lightForward[3] = static_cast<float>(shadows.count);
+    // Bias is in light-space depth units (normalised to the cascade), sized to
+    // clear the slope-induced self-shadowing on building walls.
+    uniforms.shadowParams[0] = 0.0025f;
+    uniforms.shadowParams[1] = 1.0f / static_cast<float>(kShadowMapSize);
+    uniforms.shadowParams[2] = 0.45f; // how dark a fully shadowed surface goes
     return uniforms;
 }
 

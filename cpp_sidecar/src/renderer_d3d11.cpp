@@ -33,8 +33,9 @@ struct ConstantBuffer {
 // straight from poem::mapgpu::Uniforms, packed once in shared code.
 struct MapDrawConstants {
     float opacity;
-    float shaded; // 1 = light against the sun (extrusions), 0 = styled colour
-    float pad[2];
+    float shaded;        // 1 = light against the sun (extrusions), 0 = styled
+    float cascadeRadius; // shadow pass: half-extent of the cascade being drawn
+    float pad;
 };
 
 // The map shader is assembled from the shared canonical source: HLSL prelude,
@@ -51,10 +52,17 @@ cbuffer MapView : register(b0) {
     float4 uSunAmbient;
     float4 uFog;
     float4 uFogParams;
+    float4 uLightRight;   // xyz + cascade0 radius
+    float4 uLightUp;      // xyz + cascade1 radius
+    float4 uLightForward; // xyz + cascade count
+    float4 uShadowParams; // bias texelSize strength -
 };
 cbuffer MapDraw : register(b1) {
-    float4 uDraw; // opacity shaded - -
+    float4 uDraw; // opacity shaded cascadeRadius -
 };
+Texture2D uShadow0 : register(t0);
+Texture2D uShadow1 : register(t1);
+SamplerState uShadowSampler : register(s0);
 )" + std::string(poem::mapshader::kBody) + R"(
 struct VSIn {
     float3 pos : POSITION;
@@ -74,10 +82,28 @@ VSOut vsmain(VSIn input) {
     return output;
 }
 
+// Depth-only pass from the sun's point of view. uDraw.z carries the cascade
+// half-extent so one shader serves every cascade.
+float4 vsshadow(VSIn input) : SV_POSITION {
+    float3 local = MapLocal(input.pos, uCenter, uWorld);
+    float3 light = MapLightCoord(local, uLightRight, uLightUp, uLightForward, uDraw.z);
+    return float4(light.x * 2.0 - 1.0, 1.0 - light.y * 2.0, light.z, 1.0);
+}
+
 float4 psmain(VSOut input) : SV_TARGET {
     float3 color = input.color.rgb;
     if (uDraw.y > 0.5) {
         color = MapShade(color, ddx(input.local), ddy(input.local), uSunAmbient);
+    }
+    // Shadowing applies to ground and extrusions alike: buildings must cast
+    // onto the street, not only onto each other.
+    float radius = MapCascadeRadius(input.local, uLightRight, uLightUp, uLightForward);
+    if (radius > 0.0) {
+        float3 light = MapLightCoord(input.local, uLightRight, uLightUp, uLightForward, radius);
+        float stored = radius <= uLightRight.w + 0.001
+            ? uShadow0.SampleLevel(uShadowSampler, light.xy, 0).r
+            : uShadow1.SampleLevel(uShadowSampler, light.xy, 0).r;
+        color = color * MapShadowFactor(stored, light.z, uShadowParams.x, uShadowParams.z);
     }
     color = MapFog(color, input.local, uFog, uFogParams);
     return float4(color, input.color.a * uDraw.x);
@@ -706,6 +732,26 @@ bool RendererD3D11::CreateShaders() {
     depth.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
     if (FAILED(device_->CreateDepthStencilState(&depth, &markerDepthState_))) return false;
 
+    auto shadowVs = CompileShader(mapSource.c_str(), "vsshadow", "vs_5_0");
+    if (!shadowVs) return false;
+    if (FAILED(device_->CreateVertexShader(shadowVs->GetBufferPointer(), shadowVs->GetBufferSize(), nullptr, &shadowVertexShader_))) return false;
+    // Standard depth for the shadow pass: nearer to the light is smaller, so
+    // LESS against a buffer cleared to 1. (The main pass uses the opposite
+    // convention, which is why this is its own state.)
+    D3D11_DEPTH_STENCIL_DESC shadowDepth{};
+    shadowDepth.DepthEnable = TRUE;
+    shadowDepth.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+    shadowDepth.DepthFunc = D3D11_COMPARISON_LESS;
+    if (FAILED(device_->CreateDepthStencilState(&shadowDepth, &shadowDepthState_))) return false;
+    D3D11_SAMPLER_DESC shadowSampler{};
+    shadowSampler.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    shadowSampler.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    shadowSampler.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    shadowSampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    shadowSampler.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    shadowSampler.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(device_->CreateSamplerState(&shadowSampler, &shadowSampler_))) return false;
+
     auto markerVs = CompileShader(mapSource.c_str(), "vsmarker", "vs_5_0");
     auto markerPs = CompileShader(mapSource.c_str(), "psmarker", "ps_5_0");
     if (!markerVs || !markerPs) return false;
@@ -869,6 +915,7 @@ void RendererD3D11::ApplyMapScene(const protocol::MapSceneDelta& scene) {
     retained.fogRed = scene.fogRed;
     retained.fogGreen = scene.fogGreen;
     retained.fogBlue = scene.fogBlue;
+    retained.shadowCascades = scene.shadowCascades;
     retained.draws = scene.draws;
 	retained.vertexBuffer.Reset();
 	retained.vertexCount = 0;
@@ -1075,7 +1122,8 @@ void RendererD3D11::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& 
 	                                      scene.camera.bearing, scene.camera.pitch, range.mapScale,
 	                                      range.mapLeft, range.mapTop, range.mapRight, range.mapBottom);
 	const poem::mapgpu::Lighting lighting{scene.sunAzimuth, scene.sunElevation, scene.fogDensity,
-	                                      scene.fogRed, scene.fogGreen, scene.fogBlue};
+	                                      scene.fogRed, scene.fogGreen, scene.fogBlue,
+	                                      static_cast<int>(scene.shadowCascades)};
 	const auto uniforms = poem::mapgpu::MakeUniforms(view, lighting, static_cast<float>(width_),
 	                                                 static_cast<float>(height_), 0.0f, 0.0f);
 
@@ -1085,6 +1133,10 @@ void RendererD3D11::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& 
 		context_->Unmap(mapViewBuffer_.Get(), 0);
 	}
 
+	// Shadow maps must be written before the pass that samples them, and
+	// unbound as targets before being bound as resources.
+	RenderShadowCascades(scene, range, uniforms);
+
 	context_->IASetInputLayout(mapInputLayout_.Get());
 	context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	context_->VSSetShader(mapVertexShader_.Get(), nullptr, 0);
@@ -1092,6 +1144,9 @@ void RendererD3D11::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& 
 	ID3D11Buffer* constantBuffers[2] = {mapViewBuffer_.Get(), mapDrawBuffer_.Get()};
 	context_->VSSetConstantBuffers(0, 2, constantBuffers);
 	context_->PSSetConstantBuffers(0, 2, constantBuffers);
+	ID3D11ShaderResourceView* shadowViews[2] = {shadowResourceView_[0].Get(), shadowResourceView_[1].Get()};
+	context_->PSSetShaderResources(0, 2, shadowViews);
+	context_->PSSetSamplers(0, 1, shadowSampler_.GetAddressOf());
 	context_->OMSetDepthStencilState(mapDepthState_.Get(), 0);
 
 	const UINT stride = poem::mapgpu::kVertexStride, offset = 0;
@@ -1100,7 +1155,7 @@ void RendererD3D11::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& 
 		ID3D11Buffer* vertexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.vertexHash), false);
 		ID3D11Buffer* indexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.indexHash), true);
 		if (!vertexBuffer || !indexBuffer) continue;
-		const MapDrawConstants perDraw{draw.opacity, draw.depthTest ? 1.0f : 0.0f, {0, 0}};
+		const MapDrawConstants perDraw{draw.opacity, draw.depthTest ? 1.0f : 0.0f, 0.0f, 0.0f};
 		if (SUCCEEDED(context_->Map(mapDrawBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
 			std::memcpy(mapped.pData, &perDraw, sizeof(perDraw));
 			context_->Unmap(mapDrawBuffer_.Get(), 0);
@@ -1111,12 +1166,107 @@ void RendererD3D11::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& 
 	}
 
 	// Restore the UI pipeline (the caller rebinds the UI vertex buffer).
+	ID3D11ShaderResourceView* clearShadows[2] = {nullptr, nullptr};
+	context_->PSSetShaderResources(0, 2, clearShadows);
 	context_->OMSetDepthStencilState(uiDepthState_.Get(), 0);
 	context_->IASetInputLayout(inputLayout_.Get());
 	context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
 	context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
 	context_->VSSetConstantBuffers(0, 1, constantBuffer_.GetAddressOf());
 	context_->PSSetConstantBuffers(0, 1, constantBuffer_.GetAddressOf());
+}
+
+bool RendererD3D11::EnsureShadowTargets() {
+	if (shadowDepthView_[0]) return true;
+	for (int cascade = 0; cascade < 2; ++cascade) {
+		D3D11_TEXTURE2D_DESC desc{};
+		desc.Width = poem::mapgpu::kShadowMapSize;
+		desc.Height = poem::mapgpu::kShadowMapSize;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		// Typeless so the same texture can be a depth target and a sampled map.
+		desc.Format = DXGI_FORMAT_R32_TYPELESS;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+		if (FAILED(device_->CreateTexture2D(&desc, nullptr, &shadowTexture_[cascade]))) return false;
+		D3D11_DEPTH_STENCIL_VIEW_DESC dsv{};
+		dsv.Format = DXGI_FORMAT_D32_FLOAT;
+		dsv.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+		if (FAILED(device_->CreateDepthStencilView(shadowTexture_[cascade].Get(), &dsv, &shadowDepthView_[cascade]))) return false;
+		D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
+		srv.Format = DXGI_FORMAT_R32_FLOAT;
+		srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srv.Texture2D.MipLevels = 1;
+		if (FAILED(device_->CreateShaderResourceView(shadowTexture_[cascade].Get(), &srv, &shadowResourceView_[cascade]))) return false;
+	}
+	return true;
+}
+
+int RendererD3D11::RenderShadowCascades(RetainedMapScene& scene, const DrawRange& range, const poem::mapgpu::Uniforms& uniforms) {
+	const int cascades = static_cast<int>(uniforms.lightForward[3]);
+	if (cascades <= 0 || !shadowVertexShader_ || !EnsureShadowTargets()) return 0;
+
+	// Only extrusions cast: ground casting onto itself is pure acne, and the
+	// visible effect is buildings shadowing the street and each other.
+	bool casts = false;
+	for (const auto& draw : scene.draws) {
+		if (poem::mapgpu::IsGpuBatch(draw) && draw.depthTest) { casts = true; break; }
+	}
+	if (!casts) return 0;
+
+	D3D11_VIEWPORT shadowViewport{};
+	shadowViewport.Width = static_cast<float>(poem::mapgpu::kShadowMapSize);
+	shadowViewport.Height = static_cast<float>(poem::mapgpu::kShadowMapSize);
+	shadowViewport.MinDepth = 0.0f;
+	shadowViewport.MaxDepth = 1.0f;
+
+	context_->IASetInputLayout(mapInputLayout_.Get());
+	context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context_->VSSetShader(shadowVertexShader_.Get(), nullptr, 0);
+	context_->PSSetShader(nullptr, nullptr, 0); // depth only
+	ID3D11Buffer* constantBuffers[2] = {mapViewBuffer_.Get(), mapDrawBuffer_.Get()};
+	context_->VSSetConstantBuffers(0, 2, constantBuffers);
+	context_->OMSetDepthStencilState(shadowDepthState_.Get(), 0);
+	context_->RSSetViewports(1, &shadowViewport);
+	// Scissor is still enabled on the rasterizer state; open it to the map.
+	const D3D11_RECT shadowScissor{0, 0, static_cast<LONG>(poem::mapgpu::kShadowMapSize), static_cast<LONG>(poem::mapgpu::kShadowMapSize)};
+	context_->RSSetScissorRects(1, &shadowScissor);
+
+	const UINT stride = poem::mapgpu::kVertexStride, offset = 0;
+	for (int cascade = 0; cascade < cascades; ++cascade) {
+		const float radius = cascade == 0 ? uniforms.lightRight[3] : uniforms.lightUp[3];
+		if (!(radius > 0)) continue;
+		ID3D11RenderTargetView* noColor[1] = {nullptr};
+		context_->OMSetRenderTargets(1, noColor, shadowDepthView_[cascade].Get());
+		context_->ClearDepthStencilView(shadowDepthView_[cascade].Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+		for (const auto& draw : scene.draws) {
+			if (!poem::mapgpu::IsGpuBatch(draw) || !draw.depthTest) continue;
+			ID3D11Buffer* vertexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.vertexHash), false);
+			ID3D11Buffer* indexBuffer = EnsureMapGpuBuffer(scene, MapHashKey(draw.indexHash), true);
+			if (!vertexBuffer || !indexBuffer) continue;
+			const MapDrawConstants perDraw{1.0f, 0.0f, radius, 0.0f};
+			D3D11_MAPPED_SUBRESOURCE mapped{};
+			if (SUCCEEDED(context_->Map(mapDrawBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+				std::memcpy(mapped.pData, &perDraw, sizeof(perDraw));
+				context_->Unmap(mapDrawBuffer_.Get(), 0);
+			}
+			context_->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
+			context_->IASetIndexBuffer(indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+			context_->DrawIndexed(draw.count, draw.first, 0);
+		}
+	}
+
+	// Restore the frame's own target and viewport for the main pass.
+	context_->OMSetRenderTargets(1, rtv_.GetAddressOf(), depthView_.Get());
+	D3D11_VIEWPORT frameViewport{};
+	frameViewport.Width = static_cast<float>(width_);
+	frameViewport.Height = static_cast<float>(height_);
+	frameViewport.MinDepth = 0.0f;
+	frameViewport.MaxDepth = 1.0f;
+	context_->RSSetViewports(1, &frameViewport);
+	context_->RSSetScissorRects(1, &range.scissor);
+	return cascades;
 }
 
 void RendererD3D11::DrawMapMarkers(RetainedMapScene& scene, const DrawRange& range) {
@@ -1152,7 +1302,7 @@ void RendererD3D11::DrawMapMarkers(RetainedMapScene& scene, const DrawRange& ran
 
 	// The view/lighting block is already bound by DrawGpuMapBatches; only the
 	// per-draw opacity slot needs setting for markers.
-	const MapDrawConstants perDraw{1.0f, 0.0f, {0, 0}};
+	const MapDrawConstants perDraw{1.0f, 0.0f, 0.0f, 0.0f};
 	if (SUCCEEDED(context_->Map(mapDrawBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
 		std::memcpy(mapped.pData, &perDraw, sizeof(perDraw));
 		context_->Unmap(mapDrawBuffer_.Get(), 0);

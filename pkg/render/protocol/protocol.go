@@ -284,6 +284,9 @@ type MapSceneDelta struct {
 	FogRed     float32
 	FogGreen   float32
 	FogBlue    float32
+	// ShadowCascades is 0 (off), 1 or 2, derived from the quality tier: Battery
+	// Saver casts none, Balanced one, High two.
+	ShadowCascades uint8
 }
 
 type NativeDebugRequest struct {
