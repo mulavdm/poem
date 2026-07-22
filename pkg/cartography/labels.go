@@ -12,6 +12,14 @@ const (
 	maxLabelPlacements = 16_384
 	labelGridCellSize  = 64.0
 	maxLabelDimension  = 8192.0
+	// sameTextSuppressionRadius collapses a label that repeats within this many
+	// logical pixels of an already-placed label of identical text. A named
+	// feature that spans a tile seam emits one candidate per tile at slightly
+	// different points, so their collision boxes never overlap and every copy
+	// is placed — "Oosterdok" appeared four times over one dock. A repeat this
+	// close is a tile-seam duplicate; the same name genuinely far away (a street
+	// that recurs across a city) is beyond the radius and still labelled.
+	sameTextSuppressionRadius = 320.0
 )
 
 // LabelCandidate is immutable style output waiting for screen-space collision.
@@ -87,6 +95,11 @@ func PlaceLabels(ctx context.Context, camera Camera, shaper *TextShaper, candida
 		return ordered[i].ID < ordered[j].ID
 	})
 	grid := make(map[[2]int][]LabelBounds)
+	// placedAnchors records where each distinct label text has already been
+	// placed, so a tile-seam duplicate of the same name can be suppressed by
+	// proximity. Highest-priority instance wins because candidates are processed
+	// in priority-then-ID order.
+	placedAnchors := make(map[string][][2]float64)
 	placements := make([]LabelPlacement, 0, min(len(ordered), maxLabelPlacements))
 	for _, candidate := range ordered {
 		if err := ctx.Err(); err != nil {
@@ -116,6 +129,17 @@ func PlaceLabels(ctx context.Context, camera Camera, shaper *TextShaper, candida
 		if bounds.Right < 0 || bounds.Bottom < 0 || bounds.Left > float32(camera.Width) || bounds.Top > float32(camera.Height) {
 			continue
 		}
+		// Suppress a tile-seam duplicate: the same text already placed nearby.
+		if suppressed := func() bool {
+			for _, placed := range placedAnchors[candidate.Text] {
+				if math.Hypot(anchorX-placed[0], anchorY-placed[1]) < sameTextSuppressionRadius {
+					return true
+				}
+			}
+			return false
+		}(); suppressed {
+			continue
+		}
 		cells := labelCells(bounds)
 		collides := false
 		if !candidate.AllowOverlap {
@@ -135,6 +159,7 @@ func PlaceLabels(ctx context.Context, camera Camera, shaper *TextShaper, candida
 			continue
 		}
 		placements = append(placements, LabelPlacement{Candidate: candidate, Shaped: shaped, AnchorX: float32(anchorX), AnchorY: float32(anchorY), Bounds: bounds})
+		placedAnchors[candidate.Text] = append(placedAnchors[candidate.Text], [2]float64{anchorX, anchorY})
 		if len(placements) > maxLabelPlacements {
 			return nil, errors.New("cartography: label placements exceed bounds")
 		}
