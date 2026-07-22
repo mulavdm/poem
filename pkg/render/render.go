@@ -210,6 +210,9 @@ type FlexBox = layout.FlexBox
 type LayoutDirection = layout.LayoutDirection
 type FlexAlign = layout.FlexAlign
 type FlexJustify = layout.FlexJustify
+type Overlay = layout.Overlay
+type OverlayLayer = layout.OverlayLayer
+type OverlayAnchor = layout.OverlayAnchor
 
 // Re-export Constants
 const (
@@ -243,6 +246,16 @@ const (
 	AlignCenter  = layout.AlignCenter
 	AlignEnd     = layout.AlignEnd
 	AlignStretch = layout.AlignStretch
+
+	AnchorTopLeft     = layout.AnchorTopLeft
+	AnchorTop         = layout.AnchorTop
+	AnchorTopRight    = layout.AnchorTopRight
+	AnchorLeft        = layout.AnchorLeft
+	AnchorCenter      = layout.AnchorCenter
+	AnchorRight       = layout.AnchorRight
+	AnchorBottomLeft  = layout.AnchorBottomLeft
+	AnchorBottom      = layout.AnchorBottom
+	AnchorBottomRight = layout.AnchorBottomRight
 
 	JustifyStart        = layout.JustifyStart
 	JustifyCenter       = layout.JustifyCenter

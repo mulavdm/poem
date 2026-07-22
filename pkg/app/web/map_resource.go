@@ -155,6 +155,15 @@ func currentMapSource(node app.Node, providerID, sourceID, snapshot string) (app
 			}
 		case app.ModalNode:
 			visitNodes(n.Content)
+		case app.OverlayNode:
+			if n.Base != nil {
+				visit(n.Base)
+			}
+			for _, layer := range n.Layers {
+				if layer.Content != nil {
+					visit(layer.Content)
+				}
+			}
 		}
 	}
 	visit(node)

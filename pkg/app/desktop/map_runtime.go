@@ -699,6 +699,13 @@ func collectMapNodes(node app.Node, output []app.MapViewportNode) []app.MapViewp
 		for _, child := range value.Content {
 			output = collectMapNodes(child, output)
 		}
+	case app.OverlayNode:
+		// The map is the canvas an overlay floats controls over, so it lives in
+		// Base — traverse there (and the layers, for completeness).
+		output = collectMapNodes(value.Base, output)
+		for _, layer := range value.Layers {
+			output = collectMapNodes(layer.Content, output)
+		}
 	case app.AccordionNode:
 		for _, section := range value.Sections {
 			for _, child := range section.Content {

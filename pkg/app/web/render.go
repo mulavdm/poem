@@ -480,9 +480,59 @@ func renderNode(node app.Node, path string) template.HTML {
 			Trigger:     action.Button{Text: n.Trigger},
 		}.HTML()
 
+	case app.OverlayNode:
+		// A relatively-positioned box holds the base at natural flow; each layer
+		// is absolutely positioned against the anchored edges so it floats over
+		// the base without displacing it, matching the native compositor.
+		var b strings.Builder
+		b.WriteString(`<div class="poem-overlay" style="position:relative">`)
+		if n.Base != nil {
+			b.WriteString(string(renderNode(n.Base, childPath(path, 0))))
+		}
+		for i, layer := range n.Layers {
+			if layer.Content == nil {
+				continue
+			}
+			b.WriteString(fmt.Sprintf(`<div class="poem-overlay__layer" style="position:absolute;%s">`, overlayLayerCSS(layer.Anchor, layer.Inset)))
+			b.WriteString(string(renderNode(layer.Content, childPath(path, i+1))))
+			b.WriteString(`</div>`)
+		}
+		b.WriteString(`</div>`)
+		return template.HTML(b.String())
+
 	default:
 		panic(fmt.Sprintf("web: unsupported node type %T", node))
 	}
+}
+
+// overlayLayerCSS positions a floating overlay layer against the edges its
+// anchor hugs, inset by the given logical pixels, and centers on any free axis
+// with a translate so the layer's own size need not be known here.
+func overlayLayerCSS(anchor app.OverlayAnchor, inset int) string {
+	var css strings.Builder
+	tx, ty := "0", "0"
+	switch anchor {
+	case app.OverlayTopLeft, app.OverlayLeft, app.OverlayBottomLeft:
+		fmt.Fprintf(&css, "left:%dpx;", inset)
+	case app.OverlayTop, app.OverlayCenter, app.OverlayBottom:
+		css.WriteString("left:50%;")
+		tx = "-50%"
+	default: // right column
+		fmt.Fprintf(&css, "right:%dpx;", inset)
+	}
+	switch anchor {
+	case app.OverlayTopLeft, app.OverlayTop, app.OverlayTopRight:
+		fmt.Fprintf(&css, "top:%dpx;", inset)
+	case app.OverlayLeft, app.OverlayCenter, app.OverlayRight:
+		css.WriteString("top:50%;")
+		ty = "-50%"
+	default: // bottom row
+		fmt.Fprintf(&css, "bottom:%dpx;", inset)
+	}
+	if tx != "0" || ty != "0" {
+		fmt.Fprintf(&css, "transform:translate(%s,%s);", tx, ty)
+	}
+	return css.String()
 }
 
 func actionLabel(icon app.IconID, label string) string {

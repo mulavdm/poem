@@ -440,8 +440,50 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 	case app.ModalNode:
 		return buildModal(n, path, dispatch)
 
+	case app.OverlayNode:
+		overlay := &render.Overlay{CompID: path}
+		if n.Base != nil {
+			overlay.Base = build(n.Base, childPath(path, 0), dispatch)
+		}
+		for i, layer := range n.Layers {
+			if layer.Content == nil {
+				continue
+			}
+			overlay.Layers = append(overlay.Layers, render.OverlayLayer{
+				Anchor:  overlayAnchor(layer.Anchor),
+				Inset:   layer.Inset,
+				Content: build(layer.Content, childPath(path, i+1), dispatch),
+			})
+		}
+		return overlay
+
 	default:
 		panic(fmt.Sprintf("poem: unsupported node type %T", node))
+	}
+}
+
+// overlayAnchor maps the app IR anchor onto the render layer's. Both enums list
+// the nine positions in the same order, so this is total.
+func overlayAnchor(a app.OverlayAnchor) render.OverlayAnchor {
+	switch a {
+	case app.OverlayTop:
+		return render.AnchorTop
+	case app.OverlayTopRight:
+		return render.AnchorTopRight
+	case app.OverlayLeft:
+		return render.AnchorLeft
+	case app.OverlayCenter:
+		return render.AnchorCenter
+	case app.OverlayRight:
+		return render.AnchorRight
+	case app.OverlayBottomLeft:
+		return render.AnchorBottomLeft
+	case app.OverlayBottom:
+		return render.AnchorBottom
+	case app.OverlayBottomRight:
+		return render.AnchorBottomRight
+	default:
+		return render.AnchorTopLeft
 	}
 }
 

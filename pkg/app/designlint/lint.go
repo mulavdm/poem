@@ -193,6 +193,15 @@ func Lint(root app.Node, commands []app.Command) []Diagnostic {
 			}
 		case app.ModalNode:
 			visitNodes(n.Content)
+		case app.OverlayNode:
+			if n.Base != nil {
+				visit(n.Base)
+			}
+			for _, layer := range n.Layers {
+				if layer.Content != nil {
+					visit(layer.Content)
+				}
+			}
 		}
 	}
 	visit(root)

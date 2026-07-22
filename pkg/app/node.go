@@ -576,6 +576,52 @@ func Container(direction Direction, gap int, children ...Node) ContainerNode {
 	return ContainerNode{Direction: direction, Gap: gap, Children: children}
 }
 
+// OverlayAnchor names where a floating layer sits within an OverlayNode.
+type OverlayAnchor int
+
+const (
+	OverlayTopLeft OverlayAnchor = iota
+	OverlayTop
+	OverlayTopRight
+	OverlayLeft
+	OverlayCenter
+	OverlayRight
+	OverlayBottomLeft
+	OverlayBottom
+	OverlayBottomRight
+)
+
+func (a OverlayAnchor) valid() bool { return a >= OverlayTopLeft && a <= OverlayBottomRight }
+
+// OverlayLayer is one floating layer above an OverlayNode's Base. Content is
+// sized to itself and held Inset logical pixels clear of the edges Anchor hugs.
+type OverlayLayer struct {
+	Anchor  OverlayAnchor
+	Inset   int
+	Content Node
+}
+
+// OverlayNode stacks floating Layers on top of Base within one box. Base fills
+// the box and alone determines its size; layers float above without affecting
+// layout, so a canvas (a map, an image) keeps its full area while its controls
+// sit in a corner. Layers paint in order (last on top) and, being drawn over
+// the canvas, take the click before it. Reach for it when content belongs
+// visually *on* another region rather than beside it — map zoom controls, a
+// floating action button. For a centered modal dialog with a backdrop, use
+// ModalNode instead; an overlay is non-modal and leaves the canvas interactive.
+type OverlayNode struct {
+	Base   Node
+	Layers []OverlayLayer
+}
+
+func (OverlayNode) isNode() {}
+
+// OverlayFloat wraps base with floating layers. Layers are given in paint
+// order (last on top).
+func OverlayFloat(base Node, layers ...OverlayLayer) OverlayNode {
+	return OverlayNode{Base: base, Layers: layers}
+}
+
 // ModalNode renders a trigger and, behind it, a dialog containing Content.
 // Unlike every other interactive Node, its open/closed state is not part of
 // App[S] — see okf/architecture/overview.md for why: both backends already

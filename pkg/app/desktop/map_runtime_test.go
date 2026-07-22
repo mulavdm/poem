@@ -69,6 +69,18 @@ func TestCollectMapNodesTraversesIdentity(t *testing.T) {
 	}
 }
 
+func TestCollectMapNodesTraversesOverlayBase(t *testing.T) {
+	// The map now lives inside an OverlayNode's Base with controls floating over
+	// it; the native runtime must still find it to render the canvas.
+	node := app.OverlayFloat(
+		app.MapViewportNode{Semantic: app.Semantic{ID: "map"}},
+		app.OverlayLayer{Anchor: app.OverlayTopRight, Content: app.Button("Zoom in", app.Msg{Name: "zoom-in"})},
+	)
+	if maps := collectMapNodes(node, nil); len(maps) != 1 || maps[0].Semantic.ID != "map" {
+		t.Fatalf("overlay-nested map not collected: %#v", maps)
+	}
+}
+
 func TestNativeMapSignatureAndSceneFeaturesIncludeApplicationOverlays(t *testing.T) {
 	node := app.MapViewportNode{
 		Semantic: app.Semantic{ID: "map"},

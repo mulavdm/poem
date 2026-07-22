@@ -425,6 +425,12 @@ func lowerSemantic(node Node, commands map[string]Command) Node {
 	case ModalNode:
 		n.Content = lowerChildren(n.Content)
 		return n
+	case OverlayNode:
+		n.Base = lowerSemantic(n.Base, commands)
+		for i := range n.Layers {
+			n.Layers[i].Content = lowerSemantic(n.Layers[i].Content, commands)
+		}
+		return n
 	default:
 		return node
 	}

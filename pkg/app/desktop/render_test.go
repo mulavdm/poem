@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"image"
 	"testing"
 
 	"github.com/mulavdm/poem/pkg/render"
@@ -388,5 +389,32 @@ func TestOnlyActiveTargetConsumesMouseUp(t *testing.T) {
 		if rstate.ActiveID != target && !ownsTarget {
 			t.Fatalf("child %d (%T id=%q) cleared ActiveID aimed at %q", i, child, child.ID(), target)
 		}
+	}
+}
+
+func TestBuildOverlayStacksLayersOverBase(t *testing.T) {
+	node := app.OverlayFloat(
+		app.Text("canvas"),
+		app.OverlayLayer{Anchor: app.OverlayTopRight, Inset: 12, Content: app.Button("Zoom in", app.Msg{Name: "zoom-in"})},
+	)
+	component, fired := collectDispatched(node)
+	overlay, ok := component.(*render.Overlay)
+	if !ok {
+		t.Fatalf("expected *render.Overlay, got %T", component)
+	}
+	if overlay.Base == nil {
+		t.Fatal("overlay base not built")
+	}
+	if len(overlay.Layers) != 1 || overlay.Layers[0].Anchor != render.AnchorTopRight || overlay.Layers[0].Inset != 12 {
+		t.Fatalf("layer not carried through: %+v", overlay.Layers)
+	}
+	// The floating control is a live component: clicking it dispatches.
+	rstate := &render.ApplicationState{WindowWidth: 800, WindowHeight: 600}
+	overlay.SetBounds(image.Rect(0, 0, 800, 600))
+	pt := overlay.Layers[0].Content.Bounds().Min.Add(image.Pt(2, 2))
+	overlay.OnMouseDown(pt, rstate)
+	overlay.OnMouseUp(pt, rstate)
+	if len(*fired) == 0 || (*fired)[len(*fired)-1].Name != "zoom-in" {
+		t.Fatalf("overlay layer click did not dispatch, fired=%v", *fired)
 	}
 }
