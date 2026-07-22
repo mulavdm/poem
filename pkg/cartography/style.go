@@ -84,8 +84,12 @@ func (layer StyleLayer) matches(feature Feature, zoom float64) bool {
 	if layer.FilterPOI && layer.POICategories&classifyPOI(feature.Tags) == 0 {
 		return false
 	}
-	for _, filter := range layer.Filters {
-		value, exists := feature.Tags[filter.Key]
+	return filtersMatch(feature.Tags, layer.Filters)
+}
+
+func filtersMatch(tags map[string]string, filters []Filter) bool {
+	for _, filter := range filters {
+		value, exists := tags[filter.Key]
 		switch filter.Operation {
 		case FilterExists:
 			if !exists {

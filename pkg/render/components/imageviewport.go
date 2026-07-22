@@ -73,7 +73,7 @@ type ImageViewport struct {
 	MaxHeight int
 	Disabled  bool
 	Alt       string
-	OnChange      func(ImageTransform, *types.ApplicationState)
+	OnChange  func(ImageTransform, *types.ApplicationState)
 	// OnActivate receives normalized viewport coordinates for a short
 	// background click or tap.
 	OnActivate func(float64, float64, *types.ApplicationState)

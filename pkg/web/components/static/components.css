@@ -16,6 +16,12 @@
   opacity: 0.55;
 }
 
+.poem-button[aria-pressed="true"] {
+  background: var(--poem-selection);
+  border-color: var(--poem-primary);
+  color: var(--poem-text);
+}
+
 .poem-button--small {
   font-size: 0.875rem;
   padding: 0.4rem 0.7rem;

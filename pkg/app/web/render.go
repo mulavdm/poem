@@ -80,6 +80,9 @@ func renderNode(node app.Node, path string) template.HTML {
 	case app.ActionNode:
 		label := actionLabel(n.Icon, n.Label)
 		attrs := components.Attrs{"name": msgFieldName, "value": actionSubmitValue(n.Invoke), "data-poem-placement": actionPlacementName(n.Placement)}
+		if n.Selected {
+			attrs["aria-pressed"] = "true"
+		}
 		if n.Semantic.Running {
 			attrs["aria-busy"] = "true"
 		}
@@ -365,7 +368,7 @@ func renderNode(node app.Node, path string) template.HTML {
 		return template.HTML(fmt.Sprintf(`<section class="poem-section" aria-labelledby="%s-title"><header><h2 id="%s-title">%s</h2>%s</header><div class="poem-section__body">%s</div></section>`, html.EscapeString(path), html.EscapeString(path), html.EscapeString(n.Title), description, body.String()))
 
 	case app.WorkspaceNode:
-		var header, content, tools, status strings.Builder
+		var header, content, tools, detail, status strings.Builder
 		for i, child := range n.Header {
 			header.WriteString(string(renderNode(child, childPath(path+"/header", i))))
 		}
@@ -375,6 +378,9 @@ func renderNode(node app.Node, path string) template.HTML {
 		for i, child := range n.Tools {
 			tools.WriteString(string(renderNode(child, childPath(path+"/tools", i))))
 		}
+		for i, child := range n.Detail {
+			detail.WriteString(string(renderNode(child, childPath(path+"/detail", i))))
+		}
 		if n.Status != nil {
 			status.WriteString(string(renderNode(n.Status, path+"/status")))
 		}
@@ -382,7 +388,7 @@ func renderNode(node app.Node, path string) template.HTML {
 		if n.Navigation != nil {
 			navigation = string(renderNode(n.Navigation, path+"/navigation"))
 		}
-		return template.HTML(fmt.Sprintf(`<div class="poem-workspace" data-poem-workspace><header class="poem-workspace__header"><div><h1>%s</h1><p>%s</p></div><div class="poem-workspace__status">%s</div><div class="poem-workspace__actions">%s</div></header>%s<div class="poem-workspace__body"><main class="poem-workspace__content">%s</main><aside class="poem-workspace__tools" aria-label="Planning tools" data-poem-workspace-tools><button class="poem-workspace__handle" type="button" aria-label="Resize planning panel" data-poem-workspace-handle><span></span></button><div class="poem-workspace__tools-scroll">%s</div></aside></div></div>`, html.EscapeString(n.Title), html.EscapeString(n.Subtitle), status.String(), header.String(), navigation, content.String(), tools.String()))
+		return template.HTML(fmt.Sprintf(`<div class="poem-workspace" data-poem-workspace><header class="poem-workspace__header"><div><h1>%s</h1><p>%s</p></div><div class="poem-workspace__status">%s</div><div class="poem-workspace__actions">%s</div></header>%s<div class="poem-workspace__body"><main class="poem-workspace__content">%s</main><aside class="poem-workspace__tools" aria-label="Planning tools" data-poem-workspace-tools><button class="poem-workspace__handle" type="button" aria-label="Resize planning panel" data-poem-workspace-handle><span></span></button><div class="poem-workspace__tools-scroll">%s</div></aside><aside class="poem-workspace__detail" aria-label="Route details"><div class="poem-workspace__detail-scroll">%s</div></aside></div></div>`, html.EscapeString(n.Title), html.EscapeString(n.Subtitle), status.String(), header.String(), navigation, content.String(), tools.String(), detail.String()))
 
 	case app.ResponsiveNode:
 		breakpoint := n.Breakpoint
@@ -711,6 +717,9 @@ func collectFields(node app.Node, path string, out map[string]postedField) {
 		for i, child := range n.Tools {
 			collectFields(child, childPath(path+"/tools", i), out)
 		}
+		for i, child := range n.Detail {
+			collectFields(child, childPath(path+"/detail", i), out)
+		}
 
 	case app.TextInputNode:
 		out[fieldPrefix+path] = postedField{msg: n.OnChange, kind: valueField}
@@ -827,6 +836,9 @@ func collectMessages(node app.Node, out map[string]bool) {
 			collectMessages(child, out)
 		}
 		for _, child := range n.Tools {
+			collectMessages(child, out)
+		}
+		for _, child := range n.Detail {
 			collectMessages(child, out)
 		}
 

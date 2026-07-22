@@ -32,6 +32,7 @@ type LabelCandidate struct {
 	WorldY       float64
 	Size         float64
 	Priority     int32
+	Weight       LabelWeight
 	AllowOverlap bool
 }
 
@@ -84,7 +85,7 @@ func PlaceLabels(ctx context.Context, camera Camera, shaper *TextShaper, candida
 	for _, candidate := range ordered {
 		if candidate.ID == "" || len(candidate.ID) > 1024 || candidate.Text == "" || len(candidate.Text) > 16<<10 ||
 			!finite(candidate.WorldX) || !finite(candidate.WorldY) || candidate.WorldX < 0 || candidate.WorldX > 1 || candidate.WorldY < 0 || candidate.WorldY > 1 ||
-			!finite(candidate.Size) || candidate.Size < 6 || candidate.Size > 256 || len(candidate.Locale) > 128 {
+			!finite(candidate.Size) || candidate.Size < 6 || candidate.Size > 256 || candidate.Weight > LabelWeightSemibold || len(candidate.Locale) > 128 {
 			return nil, errors.New("cartography: invalid label candidate")
 		}
 	}

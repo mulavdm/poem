@@ -155,16 +155,23 @@ func (b *Button) Measure(avail image.Point, state *types.ApplicationState) types
 	// which is exactly how "Calculate route" shipped as "Calculate …" with
 	// free space beside it (design guide TOKENS "scale independence", lint
 	// UI023). Truncation stays only as a genuine last resort below intrinsicMin.
-	intrinsicMin := labelWidth + buttonLabelPadding
-	width := maxInt(140, intrinsicMin)
-	if avail.X > 0 {
-		width = clampInt(width, minInt(intrinsicMin, avail.X), avail.X)
-	}
+	intrinsicWidth := labelWidth + buttonLabelPadding
+	minimumWidth := longestWordRunes(strings.TrimSpace(b.Text))*charW + buttonLabelPadding
+	width := maxInt(140, intrinsicWidth)
 	height := 38
 	if themed(b.UseTheme, state) {
 		height = controlHeight(activeTheme(state), b.Size)
 	}
-	minWidth := intrinsicMin
+	if avail.X > 0 && width > avail.X {
+		width = maxInt(minimumWidth, avail.X)
+		maxChars := maxInt(1, (width-buttonLabelPadding)/charW)
+		lineCount := len(wrapPlainText(strings.TrimSpace(b.Text), maxChars))
+		if lineCount > 1 {
+			th := activeTheme(state)
+			height = maxInt(height, lineCount*int(th.Typography.Body.LineHeight)+2*th.Spacing.SM)
+		}
+	}
+	minWidth := intrinsicWidth
 	// Only an author-set FixedWidth overrides content sizing. Rect is where
 	// layout put the button on a previous pass, not a size request, so it is
 	// deliberately NOT read here — treating it as explicit froze the button at
@@ -177,7 +184,7 @@ func (b *Button) Measure(avail image.Point, state *types.ApplicationState) types
 	}
 	return types.MeasureResult{
 		Preferred: image.Pt(width, height),
-		Min:       image.Pt(minValueInt(width, minWidth), height),
+		Min:       image.Pt(minWidth, height),
 	}
 }
 
@@ -206,11 +213,8 @@ func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 		if charW <= 0 {
 			charW = 8
 		}
-		label = fitButtonLabel(label, b.Rect.Dx(), charW)
-		tx := b.Rect.Min.X + maxInt(10, (b.Rect.Dx()-len([]rune(label))*charW)/2)
-		ty := b.Rect.Min.Y + (b.Rect.Dy() / 2) + 5
 		pnt.PushClip(b.Rect)
-		pnt.DrawText(label, tx, ty, visual.foreground)
+		drawWrappedButtonLabel(pnt, b.Rect, label, charW, activeTheme(state), visual.foreground)
 		pnt.PopClip()
 		return
 	}
@@ -250,6 +254,21 @@ func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 	pnt.PushClip(b.Rect)
 	pnt.DrawText(label, tx, ty, color.RGBA{255, 255, 255, 255})
 	pnt.PopClip()
+}
+
+func drawWrappedButtonLabel(pnt types.Painter, bounds image.Rectangle, label string, charW int, th theme.Theme, col color.RGBA) {
+	maxChars := maxInt(1, (bounds.Dx()-buttonLabelPadding)/charW)
+	lines := wrapPlainText(strings.TrimSpace(label), maxChars)
+	lineHeight := int(th.Typography.Body.LineHeight)
+	if lineHeight <= 0 {
+		lineHeight = defaultFontHeight
+	}
+	totalHeight := len(lines) * lineHeight
+	baseline := bounds.Min.Y + (bounds.Dy()-totalHeight)/2 + defaultFontBaseline
+	for index, line := range lines {
+		tx := bounds.Min.X + maxInt(10, (bounds.Dx()-len([]rune(line))*charW)/2)
+		pnt.DrawText(line, tx, baseline+index*lineHeight, col)
+	}
 }
 func (b *Button) SetBounds(r image.Rectangle) { b.Rect = r }
 func (b *Button) HitTest(pt image.Point) string {
@@ -378,12 +397,33 @@ func (l *Label) Measure(avail image.Point, state *types.ApplicationState) types.
 	}
 	l.lineHeight = lineHeight
 	size := measurePlainText(l.Text, charW, lineHeight)
-	return types.MeasureResult{Preferred: size, Min: size}
+	minimumWidth := longestWordRunes(l.Text) * charW
+	if avail.X > 0 && size.X > avail.X {
+		size.X = maxInt(minimumWidth, avail.X)
+		size.Y = len(wrapPlainText(l.Text, maxInt(1, size.X/charW))) * lineHeight
+	}
+	return types.MeasureResult{Preferred: size, Min: image.Pt(minimumWidth, lineHeight)}
 }
 func (l *Label) Draw(pnt types.Painter, state *types.ApplicationState) {
 	col := l.Color
 	if themed(l.UseTheme, state) {
 		col = textRoleColor(activeTheme(state), l.Role)
+	}
+	if !l.rect.Empty() {
+		charW := 8
+		if state != nil && state.FontCharWidth > 0 {
+			charW = state.FontCharWidth
+		}
+		style := typographyStyle(activeTheme(state), l.Typography)
+		scale := style.Size / activeTheme(state).Typography.Body.Size
+		charW = int(float32(charW) * scale)
+		lineHeight := maxInt(1, int(style.LineHeight))
+		lines := wrapPlainText(l.Text, maxInt(1, l.rect.Dx()/maxInt(1, charW)))
+		baseline := l.rect.Min.Y + int(float32(defaultFontBaseline)*scale)
+		for index, line := range lines {
+			drawTypography(pnt, line, l.rect.Min.X, baseline+index*lineHeight, col, activeTheme(state), l.Typography)
+		}
+		return
 	}
 	drawTypography(pnt, l.Text, l.Pos.X, l.Pos.Y, col, activeTheme(state), l.Typography)
 }
@@ -463,12 +503,15 @@ func (dl *DynamicLabel) Measure(avail image.Point, state *types.ApplicationState
 		text = dl.GetText(state)
 	}
 	width := maxInt(120, len([]rune(text))*charW)
-	if width == 120 && avail.X > 0 {
-		width = min(width, avail.X)
+	minimumWidth := longestWordRunes(text) * charW
+	height := lineHeight
+	if avail.X > 0 && width > avail.X {
+		width = maxInt(minimumWidth, avail.X)
+		height = len(wrapPlainText(text, maxInt(1, width/charW))) * lineHeight
 	}
 	return types.MeasureResult{
-		Preferred: image.Pt(width, lineHeight),
-		Min:       image.Pt(minValueInt(width, 120), lineHeight),
+		Preferred: image.Pt(width, height),
+		Min:       image.Pt(minimumWidth, lineHeight),
 	}
 }
 func (dl *DynamicLabel) Draw(pnt types.Painter, state *types.ApplicationState) {

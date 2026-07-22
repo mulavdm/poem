@@ -60,7 +60,10 @@ func (f *FlexBox) Bounds() image.Rectangle {
 }
 
 func (f *FlexBox) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
-	if f.Rect.Dx() > 0 || f.Rect.Dy() > 0 {
+	// A nil-state SetBounds pass may intentionally query the assigned viewport,
+	// while a live state pass must re-measure font and control metrics instead
+	// of freezing geometry from boot or the previous text scale.
+	if state == nil && (f.Rect.Dx() > 0 || f.Rect.Dy() > 0) {
 		measured := f.measure(avail, state).Preferred
 		if f.Rect.Dx() > 0 {
 			measured.X = f.Rect.Dx()

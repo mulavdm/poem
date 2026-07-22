@@ -89,10 +89,25 @@ func DefaultLabelRulesFor(locale string, categories POICategories) []LabelRule {
 	if locale == "" {
 		locale = "und"
 	}
-	return []LabelRule{
-		{ID: "place", SourceLayer: "place", Geometry: GeometryPoint, TextKeys: []string{"name:" + locale, "name"}, Locale: locale, MinZoom: 3, MaxZoom: 24, Size: []ZoomStop{{Zoom: 3, Value: 12}, {Zoom: 14, Value: 18}}, Priority: 400},
-		{ID: "road-name", SourceLayer: "transportation_name", Geometry: GeometryLine, TextKeys: []string{"name:" + locale, "name"}, Locale: locale, MinZoom: 11, MaxZoom: 24, Size: []ZoomStop{{Zoom: 11, Value: 11}, {Zoom: 20, Value: 16}}, Priority: 200},
-		{ID: "poi", SourceLayer: "poi", Geometry: GeometryPoint, TextKeys: []string{"name:" + locale, "name"}, Locale: locale, MinZoom: 14, MaxZoom: 24, Size: []ZoomStop{{Zoom: 14, Value: 11}, {Zoom: 20, Value: 14}}, Priority: 100, FilterPOI: true, POICategories: categories},
-		{ID: "water-name", SourceLayer: "water_name", Geometry: GeometryPoint, TextKeys: []string{"name:" + locale, "name"}, Locale: locale, MinZoom: 5, MaxZoom: 24, Size: []ZoomStop{{Zoom: 5, Value: 11}, {Zoom: 18, Value: 16}}, Priority: 250},
+	textKeys := []string{"name:" + locale, "name"}
+	place := func(id, class string, minZoom, smallZoom, smallSize, largeZoom, largeSize float64, priority int32, weight LabelWeight) LabelRule {
+		return LabelRule{ID: id, SourceLayer: "place", Geometry: GeometryPoint, TextKeys: textKeys, Locale: locale, Filters: []Filter{{Key: "class", Value: class, Operation: FilterEqual}}, MinZoom: minZoom, MaxZoom: 24, Size: []ZoomStop{{Zoom: smallZoom, Value: smallSize}, {Zoom: largeZoom, Value: largeSize}}, Priority: priority, Weight: weight}
 	}
+	rules := []LabelRule{
+		place("place-city", "city", 3, 3, 16, 14, 22, 600, LabelWeightSemibold),
+		place("place-town", "town", 6, 6, 14, 15, 19, 560, LabelWeightSemibold),
+		place("place-village", "village", 8, 8, 13, 16, 17, 520, LabelWeightMedium),
+		place("place-district", "suburb", 10, 10, 13, 17, 17, 460, LabelWeightMedium),
+		place("place-quarter", "quarter", 11, 11, 12, 18, 16, 430, LabelWeightMedium),
+		place("place-neighbourhood", "neighbourhood", 12, 12, 11, 19, 15, 400, LabelWeightRegular),
+		{ID: "water-name", SourceLayer: "water_name", Geometry: GeometryPoint, TextKeys: textKeys, Locale: locale, MinZoom: 5, MaxZoom: 24, Size: []ZoomStop{{Zoom: 5, Value: 11}, {Zoom: 18, Value: 16}}, Priority: 350, Weight: LabelWeightMedium},
+		{ID: "road-name", SourceLayer: "transportation_name", Geometry: GeometryLine, TextKeys: textKeys, Locale: locale, MinZoom: 11, MaxZoom: 24, Size: []ZoomStop{{Zoom: 11, Value: 10}, {Zoom: 20, Value: 15}}, Priority: 300, Weight: LabelWeightRegular},
+		{ID: "poi", SourceLayer: "poi", Geometry: GeometryPoint, TextKeys: textKeys, Locale: locale, MinZoom: 14, MaxZoom: 24, Size: []ZoomStop{{Zoom: 14, Value: 10}, {Zoom: 20, Value: 13}}, Priority: 100, Weight: LabelWeightRegular, FilterPOI: true, POICategories: categories},
+	}
+	fallbackFilters := make([]Filter, 0, 6)
+	for _, class := range []string{"city", "town", "village", "suburb", "quarter", "neighbourhood"} {
+		fallbackFilters = append(fallbackFilters, Filter{Key: "class", Value: class, Operation: FilterNotEqual})
+	}
+	rules = append(rules, LabelRule{ID: "place-other", SourceLayer: "place", Geometry: GeometryPoint, TextKeys: textKeys, Locale: locale, Filters: fallbackFilters, MinZoom: 8, MaxZoom: 24, Size: []ZoomStop{{Zoom: 8, Value: 12}, {Zoom: 18, Value: 16}}, Priority: 380, Weight: LabelWeightRegular})
+	return rules
 }

@@ -61,6 +61,15 @@ Wrap a vertical `render.FlexBox` container inside a `render.ScrollView` and plac
 
 Downstream developers get fully functional, hover-reactive, and click-sensitive components out-of-the-box inside scrolling panels — coordinate translation is handled transparently.
 
+`ScrollView` measurement treats its assigned `Rect` as layout output, not an
+intrinsic size request. It measures the child's full `ContentSize`, reserves a
+semantic scrollbar gutter, and performs a state-aware relayout before drawing
+so font/text-scale changes update the extent. After descendant draw-time
+reflow, the viewport expands `ContentH` to the final descendant geometry; a
+control moved below the initial estimate therefore remains reachable in the
+same frame. This is what lets an adaptive workspace scroll tools independently
+without moving or resizing its primary canvas.
+
 ## See also
 - [Architecture Overview](/concepts/architecture/overview.md)
 - [Cursor and Layout Sync](/concepts/architecture/cursor-and-layout-sync.md)

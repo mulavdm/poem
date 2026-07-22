@@ -37,18 +37,15 @@ func (s *ScrollView) GetID() string           { return s.CompID }
 func (s *ScrollView) Bounds() image.Rectangle { return s.Rect }
 func (s *ScrollView) Focusable() bool         { return false }
 func (s *ScrollView) Measure(avail image.Point, state *types.ApplicationState) types.MeasureResult {
-	if size := explicitSize(s.Rect); size.X > 0 && size.Y > 0 {
-		return types.MeasureResult{Preferred: size, Min: image.Pt(minValueInt(size.X, 120), minValueInt(size.Y, 120))}
-	}
 	if len(s.Children) > 0 {
-		child := types.MeasureComponent(s.Children[0], avail, state)
-		width := child.Preferred.X
-		height := child.Preferred.Y
+		content := s.ContentSize(avail, state)
+		width := content.X
+		height := content.Y
 		if avail.X > 0 {
-			width = avail.X
+			width = minValueInt(width, avail.X)
 		}
 		if avail.Y > 0 {
-			height = minValueInt(child.Preferred.Y, avail.Y)
+			height = minValueInt(height, avail.Y)
 		}
 		return types.MeasureResult{
 			Preferred: image.Pt(width, height),
@@ -69,21 +66,48 @@ func (s *ScrollView) Measure(avail image.Point, state *types.ApplicationState) t
 	}
 }
 
+// ContentSize reports the intrinsic child extent plus the viewport gutter.
+// Rect is deliberately ignored: it is the result of a previous layout pass,
+// not an author-specified size, and must not freeze an adaptive parent width.
+func (s *ScrollView) ContentSize(avail image.Point, state *types.ApplicationState) image.Point {
+	if len(s.Children) == 0 {
+		return image.Point{}
+	}
+	current := activeTheme(state)
+	scrollbar := s.ScrollbarW
+	if scrollbar <= 0 {
+		scrollbar = current.Controls.Scrollbar
+	}
+	gutter := current.Spacing.MD + scrollbar
+	childAvail := avail
+	if childAvail.X > gutter {
+		childAvail.X -= gutter
+	}
+	content := types.MeasureContent(s.Children[0], childAvail, state)
+	content.X += gutter
+	return content
+}
+
 func (s *ScrollView) SetBounds(r image.Rectangle) {
 	s.Rect = r
+	s.layout(nil)
+}
+
+func (s *ScrollView) layout(state *types.ApplicationState) {
 	if s.ScrollbarW <= 0 {
-		s.ScrollbarW = activeTheme(nil).Controls.Scrollbar
+		s.ScrollbarW = activeTheme(state).Controls.Scrollbar
 	}
 
 	if len(s.Children) > 0 {
-		childWidth := s.Rect.Dx() - 15 // baseline gutter
+		gutter := activeTheme(state).Spacing.MD
+		childWidth := s.Rect.Dx() - gutter
 		if childWidth < 0 {
 			childWidth = 0
 		}
 		contentSize := types.MeasureContent(s.Children[0], image.Pt(childWidth, s.Rect.Dy()), nil)
 		s.ContentH = contentSize.Y
 		if s.ContentH > s.Rect.Dy() {
-			childWidth = s.Rect.Dx() - (s.ScrollbarW + 15) // extra gutter when scrollbar is present
+			childWidth = s.Rect.Dx() - (s.ScrollbarW + gutter) // extra gutter when scrollbar is present
 			if childWidth < 0 {
 				childWidth = 0
 			}
@@ -144,6 +168,11 @@ func (s *ScrollView) scrollbarThumbRect() image.Rectangle {
 }
 
 func (s *ScrollView) Draw(p types.Painter, state *types.ApplicationState) {
+	// Text scale, font metrics, and theme controls can change after SetBounds.
+	// Re-measure before drawing so the scroll extent and child layout stay
+	// state-aware instead of retaining the boot-time nil-state geometry.
+	s.layout(state)
+
 	// Restore scroll state from persistent maps
 	if state.ScrollPositions != nil {
 		s.ScrollY = state.ScrollPositions[s.CompID]
@@ -222,6 +251,17 @@ func (s *ScrollView) Draw(p types.Painter, state *types.ApplicationState) {
 	// Draw Children
 	for _, child := range s.Children {
 		child.Draw(p, state)
+	}
+	// Descendant containers can reflow during their state-aware Draw pass
+	// (notably after a text-scale change). Include their final geometry in the
+	// scroll extent so controls that moved below the initial estimate remain
+	// reachable on this frame.
+	for _, child := range s.Children {
+		child.Walk(func(descendant types.Component) {
+			if extent := descendant.Bounds().Max.Y - s.Rect.Min.Y; extent > s.ContentH {
+				s.ContentH = extent
+			}
+		})
 	}
 
 	// Reset clip and offset.

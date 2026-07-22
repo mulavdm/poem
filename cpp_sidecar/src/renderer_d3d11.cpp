@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <iterator>
 #include <unordered_set>
 #include <vector>
 
@@ -113,11 +114,13 @@ struct MarkerIn {
     float3 pos : POSITION;
     float3 corner : TEXCOORD0; // cornerX cornerY radius
     float4 color : COLOR0;
+    float symbol : TEXCOORD1;
 };
 struct MarkerOut {
     float4 pos : SV_POSITION;
     float4 color : COLOR0;
     float2 corner : TEXCOORD0;
+    float symbol : TEXCOORD1;
 };
 
 MarkerOut vsmarker(MarkerIn input) {
@@ -127,11 +130,12 @@ MarkerOut vsmarker(MarkerIn input) {
     output.pos = MapMarkerClip(clip, input.corner.xy, input.corner.z, uScreen);
     output.color = input.color;
     output.corner = input.corner.xy;
+    output.symbol = input.symbol;
     return output;
 }
 
 float4 psmarker(MarkerOut input) : SV_TARGET {
-    float alpha = MapMarkerAlpha(input.corner);
+    float alpha = MapMarkerAlpha(input.corner, input.symbol);
     if (alpha <= 0.0) discard;
     return float4(input.color.rgb, input.color.a * alpha * uDraw.x);
 }
@@ -602,6 +606,12 @@ Microsoft::WRL::ComPtr<ID3DBlob> CompileShader(const char* source, const char* e
     const UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
     const HRESULT hr = D3DCompile(source, std::strlen(source), nullptr, nullptr, nullptr, entry, target, flags, 0, &blob, &errors);
     if (FAILED(hr)) {
+        if (errors && errors->GetBufferPointer() && errors->GetBufferSize() > 0) {
+            const auto* message = static_cast<const char*>(errors->GetBufferPointer());
+            std::fprintf(stderr, "D3D11 shader compilation failed for %s (%s): %.*s\n", entry, target,
+                         static_cast<int>(errors->GetBufferSize()), message);
+            OutputDebugStringA(message);
+        }
         return nullptr;
     }
     return blob;
@@ -641,7 +651,11 @@ bool RendererD3D11::CreateDeviceAndSwapchain(HWND hwnd, int width, int height) {
     desc.OutputWindow = hwnd;
     desc.SampleDesc.Count = 1;
     desc.Windowed = TRUE;
-    desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    // Use the modern flip presentation model. The legacy blit/discard model
+    // can retain a valid D3D backbuffer while Desktop Window Manager keeps
+    // presenting the window's blank redirection surface, which makes the app
+    // appear hung even though frames continue to render.
+    desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
     const UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     D3D_FEATURE_LEVEL featureLevel{};
@@ -761,8 +775,9 @@ bool RendererD3D11::CreateShaders() {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 1, DXGI_FORMAT_R32_FLOAT, 0, 28, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
-    if (FAILED(device_->CreateInputLayout(markerLayout, 3, markerVs->GetBufferPointer(), markerVs->GetBufferSize(), &markerInputLayout_))) return false;
+    if (FAILED(device_->CreateInputLayout(markerLayout, static_cast<UINT>(std::size(markerLayout)), markerVs->GetBufferPointer(), markerVs->GetBufferSize(), &markerInputLayout_))) return false;
 
     D3D11_SAMPLER_DESC samp{};
     samp.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -1174,6 +1189,10 @@ void RendererD3D11::DrawGpuMapBatches(RetainedMapScene& scene, const DrawRange& 
 	context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
 	context_->VSSetConstantBuffers(0, 1, constantBuffer_.GetAddressOf());
 	context_->PSSetConstantBuffers(0, 1, constantBuffer_.GetAddressOf());
+	// The shadow pass bound a comparison sampler at slot 0; every UI range drawn
+	// after this map viewport samples the glyph atlas through slot 0, so the UI
+	// sampler must be restored or all later text and UI renders blank.
+	context_->PSSetSamplers(0, 1, sampler_.GetAddressOf());
 }
 
 bool RendererD3D11::EnsureShadowTargets() {

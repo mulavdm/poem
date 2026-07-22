@@ -25,6 +25,7 @@ const (
 type GlyphKey struct {
 	ID       uint32
 	Size64th uint16
+	Weight   LabelWeight
 }
 
 type GlyphAtlasEntry struct {
@@ -57,7 +58,7 @@ func BuildGlyphAtlas(placements []LabelPlacement, shaper *TextShaper) (GlyphAtla
 			return GlyphAtlas{}, errors.New("cartography: invalid glyph atlas size")
 		}
 		for _, glyph := range placement.Shaped.Glyphs {
-			keys[GlyphKey{ID: glyph.ID, Size64th: uint16(size64)}] = struct{}{}
+			keys[GlyphKey{ID: glyph.ID, Size64th: uint16(size64), Weight: placement.Candidate.Weight}] = struct{}{}
 		}
 	}
 	if len(keys) == 0 || len(keys) > 8192 {
@@ -70,6 +71,9 @@ func BuildGlyphAtlas(placements []LabelPlacement, shaper *TextShaper) (GlyphAtla
 	sort.Slice(ordered, func(i, j int) bool {
 		if ordered[i].Size64th != ordered[j].Size64th {
 			return ordered[i].Size64th < ordered[j].Size64th
+		}
+		if ordered[i].Weight != ordered[j].Weight {
+			return ordered[i].Weight < ordered[j].Weight
 		}
 		return ordered[i].ID < ordered[j].ID
 	})
@@ -173,7 +177,35 @@ func rasterizeGlyph(shaper *TextShaper, key GlyphKey) (rasterGlyph, error) {
 	}
 	alpha := image.NewAlpha(image.Rect(0, 0, width, height))
 	rasterizer.Draw(alpha, alpha.Bounds(), image.NewUniform(color.Alpha{A: 255}), image.Point{})
+	if key.Weight != LabelWeightRegular {
+		alpha = emboldenGlyph(alpha, key.Weight)
+		minX--
+		maxY++
+	}
 	return rasterGlyph{key: key, alpha: alpha, minX: minX, maxY: maxY}, nil
+}
+
+func emboldenGlyph(source *image.Alpha, weight LabelWeight) *image.Alpha {
+	bounds := source.Bounds()
+	result := image.NewAlpha(image.Rect(0, 0, bounds.Dx()+2, bounds.Dy()+2))
+	for y := 0; y < result.Bounds().Dy(); y++ {
+		for x := 0; x < result.Bounds().Dx(); x++ {
+			var coverage uint8
+			for dy := -1; dy <= 1; dy++ {
+				if weight == LabelWeightMedium && dy != 0 {
+					continue
+				}
+				for dx := -1; dx <= 1; dx++ {
+					sx, sy := x-1+dx, y-1+dy
+					if sx >= 0 && sx < bounds.Dx() && sy >= 0 && sy < bounds.Dy() {
+						coverage = max(coverage, source.AlphaAt(sx, sy).A)
+					}
+				}
+			}
+			result.SetAlpha(x, y, color.Alpha{A: coverage})
+		}
+	}
+	return result
 }
 
 // AddLabelPlacements appends one alpha atlas and textured glyph quads to a
@@ -193,7 +225,7 @@ func AddLabelPlacements(scene Scene, placements []LabelPlacement, shaper *TextSh
 		baselineY := (placement.Shaped.Ascent + placement.Shaped.Descent) / 2
 		keySize := uint16(math.Round(placement.Candidate.Size * 64))
 		for _, glyph := range placement.Shaped.Glyphs {
-			entry, ok := atlas.Entries[GlyphKey{ID: glyph.ID, Size64th: keySize}]
+			entry, ok := atlas.Entries[GlyphKey{ID: glyph.ID, Size64th: keySize, Weight: placement.Candidate.Weight}]
 			if !ok {
 				return Scene{}, errors.New("cartography: shaped glyph missing from atlas")
 			}

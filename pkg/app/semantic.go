@@ -10,6 +10,7 @@ type Semantic struct {
 	Enabled     bool
 	ReadOnly    bool
 	Running     bool
+	Empty       bool
 	Error       string
 }
 
@@ -94,6 +95,7 @@ type ActionNode struct {
 	Label      string
 	Icon       IconID
 	Invoke     Msg
+	Selected   bool
 	Importance ActionImportance
 	Placement  ActionPlacement
 }
@@ -266,6 +268,7 @@ type WorkspaceNode struct {
 	Navigation    Node
 	Content       []Node
 	Tools         []Node
+	Detail        []Node
 }
 
 func (WorkspaceNode) isNode() {}
@@ -396,6 +399,7 @@ func lowerSemantic(node Node, commands map[string]Command) Node {
 		}
 		n.Content = lowerChildren(n.Content)
 		n.Tools = lowerChildren(n.Tools)
+		n.Detail = lowerChildren(n.Detail)
 		for _, commandID := range n.HeaderActions {
 			if command, ok := commands[commandID]; ok && command.Visible {
 				n.Header = append(n.Header, lowerSemantic(ActionNode{Semantic: Semantic{ID: "header-" + commandID, Enabled: true}, Command: commandID, Placement: PlacementToolbar}, commands))

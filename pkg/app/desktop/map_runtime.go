@@ -518,11 +518,14 @@ func (cache *nativeTileCache) Get(key nativeTileCacheKey) ([]cartography.Layer, 
 }
 
 func (cache *nativeTileCache) Add(key nativeTileCacheKey, layers []cartography.Layer, bytes int64) {
-	if cache == nil || bytes <= 0 || bytes > cache.maxBytes {
+	if cache == nil || bytes <= 0 {
 		return
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	if bytes > cache.maxBytes {
+		return
+	}
 	if existing := cache.entries[key]; existing != nil {
 		cache.recent.MoveToFront(existing)
 		return
@@ -738,6 +741,9 @@ func collectMapNodes(node app.Node, output []app.MapViewportNode) []app.MapViewp
 			output = collectMapNodes(child, output)
 		}
 		for _, child := range value.Tools {
+			output = collectMapNodes(child, output)
+		}
+		for _, child := range value.Detail {
 			output = collectMapNodes(child, output)
 		}
 	case app.SectionNode:

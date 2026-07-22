@@ -161,9 +161,32 @@ FLOAT4 MapMarkerClip(FLOAT4 clip, FLOAT2 corner, FLOAT radius, FLOAT4 screen) {
     return result;
 }
 
-// MapMarkerAlpha turns the unit quad into a soft-edged dot.
-FLOAT MapMarkerAlpha(FLOAT2 corner) {
-    return 1.0 - smoothstep(0.75, 1.0, length(corner));
+// MapMarkerAlpha turns the unit quad into a portable category silhouette.
+// Symbol zero remains the ordinary application marker dot. POI category bits
+// use distinct geometry so category is never communicated by colour alone.
+FLOAT MapMarkerAlpha(FLOAT2 corner, FLOAT symbol) {
+    FLOAT ax = abs(corner.x), ay = abs(corner.y);
+    if (symbol < 0.5) return 1.0 - smoothstep(0.75, 1.0, length(corner));
+    if (symbol < 1.5) return 1.0 - smoothstep(0.78, 1.0, ax + ay);
+    if (symbol < 3.0) return 1.0 - smoothstep(0.76, 0.96, max(ax, ay));
+    if (symbol < 6.0) return 1.0 - smoothstep(0.10, 0.22, abs(length(corner) - 0.62));
+    if (symbol < 12.0) {
+        FLOAT crossDistance = min(max(ax, ay - 0.58), max(ay, ax - 0.58));
+        return 1.0 - smoothstep(0.18, 0.28, crossDistance);
+    }
+    if (symbol < 24.0) {
+        FLOAT body = 1.0 - smoothstep(0.68, 0.88, max(ax, abs(corner.y + 0.15)));
+        FLOAT handle = 1.0 - smoothstep(0.10, 0.20, abs(length(FLOAT2(corner.x, corner.y - 0.52)) - 0.34));
+        return max(body, handle);
+    }
+    if (symbol < 48.0) {
+        FLOAT diagonalA = abs(corner.x + corner.y) * 0.70710678;
+        FLOAT diagonalB = abs(corner.x - corner.y) * 0.70710678;
+        FLOAT rays = min(min(ax, ay), min(diagonalA, diagonalB));
+        return (1.0 - smoothstep(0.14, 0.25, rays)) * (1.0 - smoothstep(0.72, 1.0, length(corner)));
+    }
+    FLOAT triangleDistance = max(-corner.y - 0.82, ax + corner.y * 0.55 - 0.62);
+    return 1.0 - smoothstep(0.0, 0.16, triangleDistance);
 }
 
 FLOAT3 MapFog(FLOAT3 color, FLOAT3 local, FLOAT4 fog, FLOAT4 fogParams) {

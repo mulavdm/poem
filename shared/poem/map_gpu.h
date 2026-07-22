@@ -191,16 +191,18 @@ inline bool HasGpuBatches(const std::vector<protocol::MapDrawBatch>& draws) {
 }
 
 // Cartography vertex layout (stride 32): float3 position, RGBA8 colour, float
-// width, uint64 feature id, pad. Ground/extrusion batches read only position
-// and colour; markers also need width, which carries their radius.
+// width, uint64 feature id, uint32 marker symbol. Ground/extrusion batches read
+// only position and colour; markers also use width and the semantic symbol.
 inline constexpr unsigned int kVertexStride = 32;
 inline constexpr unsigned int kColorOffset = 12;
 inline constexpr unsigned int kWidthOffset = 16;
+inline constexpr unsigned int kSymbolOffset = 28;
 
 struct SourceVertex {
     float x = 0, y = 0, z = 0;
     std::uint8_t rgba[4] = {0, 0, 0, 0};
     float width = 0;
+    std::uint32_t symbol = 0;
 };
 
 // ReadSourceVertex decodes one cartography vertex. Returns false when the index
@@ -213,6 +215,7 @@ inline bool ReadSourceVertex(const std::vector<std::uint8_t>& bytes, std::uint32
     std::memcpy(&out.z, bytes.data() + offset + 8, 4);
     std::memcpy(out.rgba, bytes.data() + offset + kColorOffset, 4);
     std::memcpy(&out.width, bytes.data() + offset + kWidthOffset, 4);
+    std::memcpy(&out.symbol, bytes.data() + offset + kSymbolOffset, 4);
     return true;
 }
 
@@ -224,7 +227,7 @@ struct MarkerVertex {
     float cornerX = 0, cornerY = 0;  // unit quad corner, [-1,1]
     float radius = 0;                // screen pixels
     std::uint8_t rgba[4] = {0, 0, 0, 0};
-    float pad = 0;                   // keep a 32-byte stride
+    float symbol = 0;                // portable POI category symbol
 };
 
 inline constexpr unsigned int kMarkerStride = 32;
@@ -266,6 +269,7 @@ inline void AppendMarkerVertices(std::vector<MarkerVertex>& out,
             vertex.cornerX = kCornerX[corner];
             vertex.cornerY = kCornerY[corner];
             vertex.radius = radius;
+            vertex.symbol = static_cast<float>(source.symbol);
             std::memcpy(vertex.rgba, source.rgba, 4);
             out.push_back(vertex);
         }

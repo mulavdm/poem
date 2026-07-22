@@ -624,10 +624,15 @@ func TestInspectFramePNGPrefersDesktopWhenForegrounded(t *testing.T) {
 			if !req.CaptureDesktopFrame {
 				t.Fatalf("expected desktop capture request, got %+v", req)
 			}
+			if !req.RestoreWindow || !req.ClampToWorkArea || !req.BringToForeground {
+				t.Fatalf("desktop capture did not repeat foreground preparation: %+v", req)
+			}
 			return protocol.NativeDebugResponse{
-				FrameWidth:  1,
-				FrameHeight: 1,
-				FrameRGBA:   []byte{255, 0, 0, 255},
+				WindowVisible:    true,
+				WindowForeground: true,
+				FrameWidth:       1,
+				FrameHeight:      1,
+				FrameRGBA:        []byte{255, 0, 0, 255},
 			}, nil
 		default:
 			t.Fatalf("unexpected extra native request: %+v", req)

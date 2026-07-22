@@ -214,7 +214,7 @@ void GpuBatchSelectionOwnsUntexturedTriangles() {
 void MarkerExpansionBuildsBillboards() {
     // Two cartography vertices (stride 32): float3 pos, RGBA8, float width.
     std::vector<std::uint8_t> vertices(2 * poem::mapgpu::kVertexStride, 0);
-    auto writeVertex = [&](std::size_t index, float x, float y, float z, std::uint8_t red, float width) {
+    auto writeVertex = [&](std::size_t index, float x, float y, float z, std::uint8_t red, float width, std::uint32_t symbol) {
         const std::size_t base = index * poem::mapgpu::kVertexStride;
         std::memcpy(vertices.data() + base, &x, 4);
         std::memcpy(vertices.data() + base + 4, &y, 4);
@@ -222,9 +222,10 @@ void MarkerExpansionBuildsBillboards() {
         vertices[base + poem::mapgpu::kColorOffset] = red;
         vertices[base + poem::mapgpu::kColorOffset + 3] = 255;
         std::memcpy(vertices.data() + base + poem::mapgpu::kWidthOffset, &width, 4);
+        std::memcpy(vertices.data() + base + poem::mapgpu::kSymbolOffset, &symbol, 4);
     };
-    writeVertex(0, 0.25f, 0.5f, 0.0f, 200, 8.0f);
-    writeVertex(1, 0.30f, 0.6f, 12.0f, 100, 1.0f); // width below the floor
+    writeVertex(0, 0.25f, 0.5f, 0.0f, 200, 8.0f, 4);
+    writeVertex(1, 0.30f, 0.6f, 12.0f, 100, 1.0f, 0); // width below the floor
 
     std::vector<std::uint8_t> indices(2 * 4, 0);
     const std::uint32_t zero = 0, one = 1;
@@ -244,6 +245,7 @@ void MarkerExpansionBuildsBillboards() {
             "billboard corners keep the marker world position");
     Require(markers[0].rgba[0] == 200, "marker colour is carried through");
     Require(Near(markers[0].radius, 8.0, 1e-6), "radius comes from the vertex width");
+    Require(Near(markers[0].symbol, 4.0, 1e-6), "semantic POI symbol is carried through");
     Require(Near(markers[6].radius, poem::mapgpu::kMinMarkerRadius, 1e-6),
             "a too-small width is lifted to the minimum radius");
     Require(Near(markers[6].z, 12.0, 1e-6), "elevation is preserved so raised markers occlude correctly");

@@ -3,9 +3,11 @@ package designlint
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	"github.com/mulavdm/poem/pkg/app"
+	"github.com/mulavdm/poem/pkg/render/theme"
 )
 
 // Diagnostic is one guide-coded design contract violation.
@@ -141,6 +143,12 @@ func Lint(root app.Node, commands []app.Command) []Diagnostic {
 			if strings.TrimSpace(n.Title) == "" {
 				add("UI017", n.Semantic.ID, "section requires a visible title")
 			}
+			if n.Semantic.Running && !containsProgress(n.Children) {
+				add("UI072", n.Semantic.ID, "running section requires a visible and accessible loading state")
+			}
+			if n.Semantic.Empty && !containsEmptyFeedback(n.Children) {
+				add("UI073", n.Semantic.ID, "empty section requires visible guidance or recovery")
+			}
 			visitNodes(n.Children)
 		case app.WorkspaceNode:
 			checkMeta(n.Semantic)
@@ -156,6 +164,7 @@ func Lint(root app.Node, commands []app.Command) []Diagnostic {
 			visitNodes(n.Header)
 			visitNodes(n.Content)
 			visitNodes(n.Tools)
+			visitNodes(n.Detail)
 		case app.MapViewportNode:
 			checkMeta(n.Semantic)
 			if strings.TrimSpace(n.Semantic.Name) == "" {
@@ -163,6 +172,9 @@ func Lint(root app.Node, commands []app.Command) []Diagnostic {
 			}
 			if !n.Valid() {
 				add("UI041", n.Semantic.ID, "map viewport contains an invalid source, camera, feature, or limit")
+			}
+			if mapStyleUsesRawColor(n.Style) {
+				add("UI042", n.Semantic.ID, "map viewport uses a raw color instead of a semantic color token")
 			}
 		case app.AdaptiveNode:
 			checkMeta(n.Semantic)
@@ -206,6 +218,87 @@ func Lint(root app.Node, commands []app.Command) []Diagnostic {
 	}
 	visit(root)
 	return diagnostics
+}
+
+func mapStyleUsesRawColor(styles app.MapStyleSet) bool {
+	for _, style := range [...]app.MapStyle{styles.House, styles.Windows, styles.Android, styles.Web} {
+		colors := style.Colors
+		for _, value := range [...]string{colors.Land, colors.Water, colors.Road, colors.Building, colors.Label, colors.Route, colors.Traffic} {
+			if strings.HasPrefix(strings.TrimSpace(value), "#") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// LintTheme validates contrast between resolved semantic token pairs. It is
+// deliberately separate from Lint because contrast only becomes meaningful
+// after the design system resolves a platform, mode, and accessibility state.
+func LintTheme(value theme.Theme) []Diagnostic {
+	type pair struct {
+		name                   string
+		foreground, background color.RGBA
+		minimum                float64
+	}
+	colors := value.Colors
+	pairs := []pair{
+		{"text/background", colors.Text, colors.Background, 4.5},
+		{"text/surface", colors.Text, colors.Surface, 4.5},
+		{"text/raised surface", colors.Text, colors.SurfaceRaised, 4.5},
+		{"text/sunken surface", colors.Text, colors.SurfaceSunken, 4.5},
+		{"muted text/background", colors.TextMuted, colors.Background, 4.5},
+		{"accent foreground", colors.OnAccent, colors.Accent, 4.5},
+		{"danger foreground", colors.OnDanger, colors.Danger, 4.5},
+		{"warning foreground", colors.OnWarning, colors.Warning, 4.5},
+		{"success foreground", colors.OnSuccess, colors.Success, 4.5},
+		{"focus/background", colors.Focus, colors.Background, 3},
+		{"focus/surface", colors.Focus, colors.Surface, 3},
+		{"strong border/surface", colors.BorderStrong, colors.Surface, 3},
+	}
+	var diagnostics []Diagnostic
+	for _, candidate := range pairs {
+		ratio := theme.ContrastRatio(candidate.foreground, candidate.background)
+		if candidate.foreground.A == 0 || candidate.background.A == 0 || ratio < candidate.minimum {
+			diagnostics = append(diagnostics, Diagnostic{
+				Code:   "UI043",
+				NodeID: value.Name,
+				Message: fmt.Sprintf("semantic token pair %s has contrast %.2f; required %.1f",
+					candidate.name, ratio, candidate.minimum),
+			})
+		}
+	}
+	return diagnostics
+}
+
+func containsProgress(nodes []app.Node) bool {
+	for _, node := range nodes {
+		switch n := node.(type) {
+		case app.ProgressNode:
+			return strings.TrimSpace(n.Semantic.Name) != ""
+		case app.ContainerNode:
+			if containsProgress(n.Children) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsEmptyFeedback(nodes []app.Node) bool {
+	for _, node := range nodes {
+		switch n := node.(type) {
+		case app.StatusNode:
+			return strings.TrimSpace(n.Text) != ""
+		case app.LabelNode:
+			return strings.TrimSpace(n.Text) != ""
+		case app.ContainerNode:
+			if containsEmptyFeedback(n.Children) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // AssertClean fails a test when the tree contains a non-allowlisted code.

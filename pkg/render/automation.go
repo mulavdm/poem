@@ -586,11 +586,21 @@ func inspectFramePNG(req InspectFrameRequest) ([]byte, string, NativeAutomationS
 	state := nativeAutomationStateFromProtocol(stateResp)
 
 	if req.PreferDesktop && state.WindowVisible && !state.WindowMinimized && state.WindowForeground {
-		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{CaptureDesktopFrame: true})
+		// Re-apply foreground preparation in the same native request that captures
+		// the desktop. A separate HTTP/tool process can otherwise regain focus in
+		// the gap after the readiness request, producing a valid PNG of an
+		// occluding window instead of the application being inspected.
+		captureReq := protocol.NativeDebugRequest{CaptureDesktopFrame: true}
+		if req.PrepareWindow {
+			captureReq.RestoreWindow = req.RestoreWindow
+			captureReq.ClampToWorkArea = req.ClampToWorkArea
+			captureReq.BringToForeground = req.BringToForeground
+		}
+		resp, err := nativeDebugRequest(captureReq)
 		if err == nil {
 			pngBytes, encodeErr := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
 			if encodeErr == nil {
-				return pngBytes, "desktop", state, nil
+				return pngBytes, "desktop", nativeAutomationStateFromProtocol(resp), nil
 			}
 		}
 	}

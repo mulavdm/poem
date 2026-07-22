@@ -140,6 +140,7 @@ func currentMapSource(node app.Node, providerID, sourceID, snapshot string) (app
 			}
 			visitNodes(n.Content)
 			visitNodes(n.Tools)
+			visitNodes(n.Detail)
 		case app.ContainerNode:
 			visitNodes(n.Children)
 		case app.ResponsiveNode:

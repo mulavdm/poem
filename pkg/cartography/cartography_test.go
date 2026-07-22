@@ -286,6 +286,60 @@ func TestBuildLabelCandidatesUsesTypedRulesAndStableTileOrder(t *testing.T) {
 	}
 }
 
+func TestDefaultLabelRulesExpressCartographicHierarchy(t *testing.T) {
+	camera := Camera{Latitude: 0, Longitude: 0, Zoom: 14, Width: 800, Height: 600}
+	tile := Tile{ID: TileID{Z: 14, X: 8192, Y: 8192}, Layers: []Layer{
+		{Name: "place", Extent: 4096, Features: []Feature{
+			{ID: 1, Kind: GeometryPoint, Tags: map[string]string{"name": "City", "class": "city"}, Paths: [][]Point{{{100, 100}}}},
+			{ID: 2, Kind: GeometryPoint, Tags: map[string]string{"name": "District", "class": "suburb"}, Paths: [][]Point{{{200, 200}}}},
+			{ID: 3, Kind: GeometryPoint, Tags: map[string]string{"name": "Neighbourhood", "class": "neighbourhood"}, Paths: [][]Point{{{300, 300}}}},
+		}},
+		{Name: "transportation_name", Extent: 4096, Features: []Feature{{ID: 4, Kind: GeometryLine, Tags: map[string]string{"name": "Street"}, Paths: [][]Point{{{400, 400}, {500, 500}}}}}},
+		{Name: "poi", Extent: 4096, Features: []Feature{{ID: 5, Kind: GeometryPoint, Tags: map[string]string{"name": "Cafe", "amenity": "cafe"}, Paths: [][]Point{{{600, 600}}}}}},
+	}}
+	candidates, err := BuildLabelCandidates(camera, DefaultLabelRulesFor("en", POIAll), []Tile{tile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byText := make(map[string]LabelCandidate, len(candidates))
+	for _, candidate := range candidates {
+		byText[candidate.Text] = candidate
+	}
+	city, district := byText["City"], byText["District"]
+	neighbourhood, street, poi := byText["Neighbourhood"], byText["Street"], byText["Cafe"]
+	if !(city.Size > district.Size && district.Size > neighbourhood.Size && neighbourhood.Size > street.Size && street.Size > poi.Size) {
+		t.Fatalf("label sizes city=%v district=%v neighbourhood=%v street=%v poi=%v", city.Size, district.Size, neighbourhood.Size, street.Size, poi.Size)
+	}
+	if city.Weight != LabelWeightSemibold || district.Weight != LabelWeightMedium || neighbourhood.Weight != LabelWeightRegular || city.Priority <= district.Priority || district.Priority <= poi.Priority {
+		t.Fatalf("label hierarchy city=%+v district=%+v neighbourhood=%+v poi=%+v", city, district, neighbourhood, poi)
+	}
+}
+
+func TestGlyphAtlasKeepsDistinctSemanticWeights(t *testing.T) {
+	shaper, err := NewTextShaper(goregular.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regular, err := shaper.Shape("A", "en", 18)
+	if err != nil {
+		t.Fatal(err)
+	}
+	placements := []LabelPlacement{
+		{Candidate: LabelCandidate{ID: "regular", Text: "A", Size: 18, Weight: LabelWeightRegular}, Shaped: regular},
+		{Candidate: LabelCandidate{ID: "semibold", Text: "A", Size: 18, Weight: LabelWeightSemibold}, Shaped: regular},
+	}
+	atlas, err := BuildGlyphAtlas(placements, shaper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	glyphID := regular.Glyphs[0].ID
+	regularEntry := atlas.Entries[GlyphKey{ID: glyphID, Size64th: 18 * 64, Weight: LabelWeightRegular}]
+	semiboldEntry := atlas.Entries[GlyphKey{ID: glyphID, Size64th: 18 * 64, Weight: LabelWeightSemibold}]
+	if regularEntry.Width == 0 || semiboldEntry.Width <= regularEntry.Width || semiboldEntry.Height <= regularEntry.Height {
+		t.Fatalf("regular=%+v semibold=%+v", regularEntry, semiboldEntry)
+	}
+}
+
 func TestPOILabelCategoriesAndDensityAreAppliedDeterministically(t *testing.T) {
 	camera := Camera{Latitude: 0, Longitude: 0, Zoom: 15, Width: 800, Height: 600}
 	tile := Tile{ID: TileID{Z: 1}, Layers: []Layer{{Name: "poi", Extent: 4096, Features: []Feature{
@@ -303,6 +357,28 @@ func TestPOILabelCategoriesAndDensityAreAppliedDeterministically(t *testing.T) {
 	limited, err := LimitLabelCandidates(input, 4, 2)
 	if err != nil || len(limited) != 2 || limited[0].ID != "high-a" || limited[1].ID != "high-b" || input[0].ID != "low" {
 		t.Fatalf("limited=%+v input=%+v err=%v", limited, input, err)
+	}
+}
+
+func TestPOIPointVerticesCarryFilteredCategorySymbol(t *testing.T) {
+	style := DefaultStyleWithOptions(DefaultPalette(), StyleOptions{POICategories: POIFoodDrink})
+	tile := Tile{ID: TileID{Z: 14, X: 8192, Y: 8192}, Layers: []Layer{{Name: "poi", Extent: 4096, Features: []Feature{
+		{ID: 1, Kind: GeometryPoint, Tags: map[string]string{"name": "Cafe", "amenity": "cafe"}, Paths: [][]Point{{{100, 100}}}},
+		{ID: 2, Kind: GeometryPoint, Tags: map[string]string{"name": "Museum", "tourism": "museum"}, Paths: [][]Point{{{200, 200}}}},
+	}}}}
+	scene, err := BuildScene("map", 1, Camera{Zoom: 14, Width: 800, Height: 600}, style, []Tile{tile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scene.Delta.Draws) != 1 || len(scene.Delta.Resources) != 2 {
+		t.Fatalf("filtered POI scene draws=%d resources=%d", len(scene.Delta.Draws), len(scene.Delta.Resources))
+	}
+	vertices := scene.Delta.Resources[0].Bytes
+	if len(vertices) != vertexStride {
+		t.Fatalf("filtered POI vertex bytes=%d", len(vertices))
+	}
+	if symbol := POICategories(binary.LittleEndian.Uint32(vertices[28:32])); symbol != POIFoodDrink {
+		t.Fatalf("POI symbol=%d, want food/drink=%d", symbol, POIFoodDrink)
 	}
 }
 
@@ -419,6 +495,23 @@ func TestTriangulatePolygonSupportsMultipleExteriors(t *testing.T) {
 	}
 	if area := indexedTriangleArea(t, points, encoded); area != 200 {
 		t.Fatalf("multipolygon twice-area=%d want 200", area)
+	}
+}
+
+func TestTriangulatePolygonDoesNotBridgeAcrossLowZoomWaterHole(t *testing.T) {
+	// Reduced directly from Noord-Holland water feature 15246133. The nearly
+	// repeated coastline vertices leave no point inside the invalid ear that the
+	// old containment-only test clipped across, inflating area from 3,074 to
+	// 22,590 and rendering a hard-edged wedge over the map.
+	outer := []Point{{266, 2299}, {268, 2297}, {417, 2352}, {361, 2503}, {213, 2447}, {157, 2597}, {8, 2541}, {35, 2467}, {9, 2540}, {156, 2596}, {211, 2447}, {124, 2414}, {125, 2413}, {212, 2444}, {266, 2299}}
+	hole := []Point{{266, 2465}, {361, 2501}, {415, 2353}, {408, 2350}, {406, 2354}, {407, 2351}, {387, 2343}, {366, 2397}, {385, 2341}, {364, 2334}, {362, 2340}, {363, 2333}, {327, 2320}, {323, 2328}, {326, 2319}, {268, 2297}, {213, 2445}, {266, 2465}}
+	points := append(append([]Point(nil), outer...), hole...)
+	var encoded []byte
+	if _, err := triangulatePolygon([][]Point{outer, hole}, []uint32{0, uint32(len(outer))}, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	if area := indexedTriangleArea(t, points, encoded); area != 3074 {
+		t.Fatalf("low-zoom water triangle area=%d, want 3074", area)
 	}
 }
 

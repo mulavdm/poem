@@ -67,42 +67,57 @@ func measurePlainText(text string, charW, lineH int) image.Point {
 }
 
 func wrapLineCount(text string, maxCharsPerLine int) int {
+	return len(wrapPlainText(text, maxCharsPerLine))
+}
+
+func wrapPlainText(text string, maxCharsPerLine int) []string {
 	if maxCharsPerLine <= 0 {
 		maxCharsPerLine = 1
 	}
 
-	lines := 0
+	var lines []string
 	for _, paragraph := range strings.Split(text, "\n") {
 		if paragraph == "" {
-			lines++
+			lines = append(lines, "")
 			continue
 		}
 
 		words := strings.Fields(paragraph)
 		if len(words) == 0 {
-			lines++
+			lines = append(lines, "")
 			continue
 		}
 
-		currentLen := 0
+		current := ""
 		for _, word := range words {
-			wordLen := len([]rune(word))
-			if currentLen == 0 {
-				currentLen = wordLen
-				lines++
+			if current == "" {
+				current = word
 				continue
 			}
-			if currentLen+1+wordLen <= maxCharsPerLine {
-				currentLen += 1 + wordLen
+			if len([]rune(current))+1+len([]rune(word)) <= maxCharsPerLine {
+				current += " " + word
 				continue
 			}
-			lines++
-			currentLen = wordLen
+			lines = append(lines, current)
+			current = word
+		}
+		if current != "" {
+			lines = append(lines, current)
 		}
 	}
 
-	if lines == 0 {
-		return 1
+	if len(lines) == 0 {
+		return []string{""}
 	}
 	return lines
+}
+
+func longestWordRunes(text string) int {
+	longest := 1
+	for _, word := range strings.Fields(text) {
+		if length := len([]rune(word)); length > longest {
+			longest = length
+		}
+	}
+	return longest
 }

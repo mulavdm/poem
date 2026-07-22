@@ -194,6 +194,7 @@ std::string MarkerVertexShaderSource() {
 attribute vec3 aPos;
 attribute vec3 aCorner; // cornerX cornerY radius
 attribute vec4 aColor;
+attribute float aSymbol;
 uniform vec4 uCenter;
 uniform vec4 uWorld;
 uniform vec4 uPitch;
@@ -201,6 +202,7 @@ uniform vec4 uRect;
 uniform vec4 uScreen;
 varying vec4 vColor;
 varying vec2 vCorner;
+varying float vSymbol;
 )" + std::string(poem::mapshader::kBody) + R"(
 void main() {
     vec3 local = MapLocal(aPos, uCenter, uWorld);
@@ -208,6 +210,7 @@ void main() {
     gl_Position = MapMarkerClip(clip, aCorner.xy, aCorner.z, uScreen);
     vColor = aColor;
     vCorner = aCorner.xy;
+    vSymbol = aSymbol;
 }
 )";
 }
@@ -216,10 +219,11 @@ std::string MarkerFragmentShaderSource() {
     return std::string("precision mediump float;\n") + std::string(poem::mapshader::kGlslPrelude) + R"(
 varying vec4 vColor;
 varying vec2 vCorner;
+varying float vSymbol;
 uniform float uOpacity;
 )" + std::string(poem::mapshader::kBody) + R"(
 void main() {
-    float alpha = MapMarkerAlpha(vCorner);
+    float alpha = MapMarkerAlpha(vCorner, vSymbol);
     if (alpha <= 0.0) discard;
     gl_FragColor = vec4(vColor.rgb, vColor.a * alpha * uOpacity);
 }
@@ -406,6 +410,7 @@ bool RendererGLES::Init(int width, int height, float scale) {
     glBindAttribLocation(markerProgram_, 0, "aPos");
     glBindAttribLocation(markerProgram_, 1, "aCorner");
     glBindAttribLocation(markerProgram_, 2, "aColor");
+    glBindAttribLocation(markerProgram_, 3, "aSymbol");
     glLinkProgram(markerProgram_);
     GLint markerLinked = GL_FALSE;
     glGetProgramiv(markerProgram_, GL_LINK_STATUS, &markerLinked);
@@ -1040,10 +1045,12 @@ void RendererGLES::DrawMapMarkers(RetainedMapScene& scene, const DrawRange& rang
 	glBindBuffer(GL_ARRAY_BUFFER, markerVbo_);
 	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(markers.size() * sizeof(poem::mapgpu::MarkerVertex)),
 	             markers.data(), GL_STREAM_DRAW);
-	for (int i = 3; i <= 4; ++i) glDisableVertexAttribArray(i);
+	glDisableVertexAttribArray(4);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, poem::mapgpu::kMarkerStride, reinterpret_cast<void*>(0));
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, poem::mapgpu::kMarkerStride, reinterpret_cast<void*>(12));
 	glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, poem::mapgpu::kMarkerStride, reinterpret_cast<void*>(24));
+	glEnableVertexAttribArray(3);
+	glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, poem::mapgpu::kMarkerStride, reinterpret_cast<void*>(28));
 
 	// Read depth so buildings hide markers, but do not write it: markers must
 	// not occlude one another.

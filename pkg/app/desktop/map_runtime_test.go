@@ -102,6 +102,37 @@ func TestNativeMapSignatureAndSceneFeaturesIncludeApplicationOverlays(t *testing
 	}
 }
 
+func TestNativeMapPaletteUsesCartographicTokensInEveryTheme(t *testing.T) {
+	node := app.MapViewportNode{Style: app.MapStyleSet{House: app.MapStyle{
+		ID: "semantic-map", Colors: app.MapSemanticColors{
+			Land: "land", Water: "water", Road: "road", Building: "building", Label: "label", Route: "route", Traffic: "traffic",
+		},
+	}}}
+	for _, test := range []struct {
+		name         string
+		dark         bool
+		highContrast bool
+	}{
+		{name: "light"},
+		{name: "dark", dark: true},
+		{name: "high-contrast", highContrast: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tokens := design.DefaultSystem().Resolve(design.Environment{Platform: design.PlatformWindows, Width: 800, Height: 600, Dark: test.dark, HighContrast: test.highContrast})
+			_, palette, _ := nativeResolvedMapStyle(node, tokens)
+			if palette.Water != mapRGBA(tokens.Theme.Colors.Cartography.Water) {
+				t.Fatalf("water=%v want cartographic token %v", palette.Water, tokens.Theme.Colors.Cartography.Water)
+			}
+			if palette.Water == mapRGBA(tokens.Theme.Colors.Accent) {
+				t.Fatalf("water reuses UI accent %v", palette.Water)
+			}
+			if palette.Land == palette.Water || palette.Label != mapRGBA(tokens.Theme.Colors.Text) {
+				t.Fatalf("palette lacks map hierarchy: %+v", palette)
+			}
+		})
+	}
+}
+
 func TestNativeTileCacheEvictsLeastRecentAndIsolatesSnapshots(t *testing.T) {
 	cache := newNativeTileCache(2, 10)
 	one := nativeTileCacheKey{Provider: "tiles", Source: "map", Snapshot: "one", Tile: cartography.TileID{Z: 1}}
@@ -178,6 +209,7 @@ func TestCollectMapNodesTraversesSemanticContainers(t *testing.T) {
 	cases := map[string]app.Node{
 		"workspace-content": app.WorkspaceNode{Content: []app.Node{mapNode}},
 		"workspace-tools":   app.WorkspaceNode{Tools: []app.Node{mapNode}},
+		"workspace-detail":  app.WorkspaceNode{Detail: []app.Node{mapNode}},
 		"section":           app.SectionNode{Children: []app.Node{mapNode}},
 		"adaptive-compact":  app.AdaptiveNode{Compact: []app.Node{mapNode}},
 		"nested":            app.WorkspaceNode{Content: []app.Node{app.SectionNode{Children: []app.Node{app.ContainerNode{Children: []app.Node{mapNode}}}}}},

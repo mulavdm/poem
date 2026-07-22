@@ -42,6 +42,15 @@ func TestBuildButtonDispatchesOnClick(t *testing.T) {
 	}
 }
 
+func TestBuildSelectedActionCarriesSelectionState(t *testing.T) {
+	node := app.ActionNode{Semantic: app.Semantic{Enabled: true}, Label: "Destination", Selected: true, Importance: app.ImportanceSecondary, Invoke: app.Msg{Name: "destination"}}
+	component, _ := collectDispatched(node)
+	button, ok := component.(*render.Button)
+	if !ok || !button.Selected || button.Variant != render.VariantSecondary {
+		t.Fatalf("selected action built as %#v", component)
+	}
+}
+
 func TestBuildTextAreaDispatchesValue(t *testing.T) {
 	node := app.TextArea("draft", "write here", app.Msg{Name: "edit"})
 	node.Disabled = true

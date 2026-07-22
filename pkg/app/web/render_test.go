@@ -45,6 +45,14 @@ func TestActionSubmitValueRoundTripsPayloadAndProtectsPrefixNames(t *testing.T) 
 	}
 }
 
+func TestSelectedActionUsesPressedSelectionSemantics(t *testing.T) {
+	node := app.ActionNode{Semantic: app.Semantic{Enabled: true}, Label: "From", Selected: true, Importance: app.ImportanceSecondary, Invoke: app.Msg{Name: "endpoint"}}
+	html := string(renderNode(node, rootPath))
+	if !strings.Contains(html, `aria-pressed="true"`) || strings.Contains(html, "poem-button--primary") {
+		t.Fatalf("selected action did not remain a non-primary selection: %s", html)
+	}
+}
+
 func TestResponsiveRendersCompactBaselineAndCollectsBothBranches(t *testing.T) {
 	node := app.Responsive(700,
 		[]app.Node{app.Button("Compact", app.Msg{Name: "compact"})},
@@ -90,9 +98,9 @@ func TestRenderBadgeCarriesVariantClass(t *testing.T) {
 }
 
 func TestWorkspaceRendersSemanticLandmarks(t *testing.T) {
-	node := app.WorkspaceNode{Semantic: app.Semantic{ID: "work", Name: "Workspace", Enabled: true}, Title: "MAPPS", Subtitle: "Private", Content: []app.Node{app.Text("Map")}, Tools: []app.Node{app.SectionNode{Semantic: app.Semantic{ID: "plan", Name: "Planner", Enabled: true}, Title: "Plan", Children: []app.Node{app.Text("Search")}}}}
+	node := app.WorkspaceNode{Semantic: app.Semantic{ID: "work", Name: "Workspace", Enabled: true}, Title: "MAPPS", Subtitle: "Private", Content: []app.Node{app.Text("Map")}, Tools: []app.Node{app.SectionNode{Semantic: app.Semantic{ID: "plan", Name: "Planner", Enabled: true}, Title: "Plan", Children: []app.Node{app.Text("Search")}}}, Detail: []app.Node{app.SectionNode{Semantic: app.Semantic{ID: "detail", Name: "Route details", Enabled: true}, Title: "Route details", Children: []app.Node{app.Text("12 minutes")}}}}
 	html := string(renderNode(node, rootPath))
-	for _, wanted := range []string{`class="poem-workspace"`, `<main class="poem-workspace__content">`, `<aside class="poem-workspace__tools"`, `<h1>MAPPS</h1>`, `class="poem-section"`} {
+	for _, wanted := range []string{`class="poem-workspace"`, `<main class="poem-workspace__content">`, `<aside class="poem-workspace__tools"`, `<aside class="poem-workspace__detail"`, `<h1>MAPPS</h1>`, `Route details`, `class="poem-section"`} {
 		if !strings.Contains(html, wanted) {
 			t.Fatalf("workspace markup missing %q: %s", wanted, html)
 		}

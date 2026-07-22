@@ -26,6 +26,7 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 		button := render.NewButton(path, desktopActionLabel(n.Icon, n.Label), func(*render.ApplicationState) { dispatch(n.Invoke) })
 		button.Disabled = !n.Semantic.Enabled || n.Semantic.Running
 		button.Loading = n.Semantic.Running
+		button.Selected = n.Selected
 		switch n.Importance {
 		case app.ImportancePrimary:
 			button.Variant = render.VariantPrimary
@@ -322,7 +323,7 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 		for index, child := range n.Header {
 			headerChildren = append(headerChildren, build(child, childPath(path+"/header", index), dispatch))
 		}
-		header := &render.FlexBox{CompID: path + "/header", Direction: render.Horizontal, Gap: 10, Padding: 12, Children: headerChildren}
+		header := &render.FlexBox{CompID: path + "/header", Direction: render.Horizontal, Wrap: true, Gap: 10, LineGap: 8, Padding: 12, Children: headerChildren}
 		contentChildren := make([]render.Component, len(n.Content))
 		for index, child := range n.Content {
 			contentChildren[index] = build(child, childPath(path+"/content", index), dispatch)
@@ -331,9 +332,19 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 		for index, child := range n.Tools {
 			toolChildren[index] = build(child, childPath(path+"/tools", index), dispatch)
 		}
+		detailChildren := make([]render.Component, len(n.Detail))
+		for index, child := range n.Detail {
+			detailChildren[index] = build(child, childPath(path+"/detail", index), dispatch)
+		}
 		content := &render.FlexBox{CompID: path + "/content", Direction: render.Vertical, Gap: 8, Children: contentChildren}
 		tools := &render.FlexBox{CompID: path + "/tools", Direction: render.Vertical, Gap: 10, Padding: 16, Children: toolChildren}
-		return &render.Workspace{CompID: path, Header: header, Content: content, Tools: tools}
+		toolsViewport := render.NewScrollView(path+"/tools-scroll", tools)
+		var detailViewport render.Component
+		if len(detailChildren) > 0 {
+			detail := &render.FlexBox{CompID: path + "/detail", Direction: render.Vertical, Gap: 10, Padding: 16, Children: detailChildren}
+			detailViewport = render.NewScrollView(path+"/detail-scroll", detail)
+		}
+		return &render.Workspace{CompID: path, Header: header, Content: content, Tools: toolsViewport, Detail: detailViewport}
 
 	case app.ResponsiveNode:
 		compact := make([]render.Component, len(n.Compact))

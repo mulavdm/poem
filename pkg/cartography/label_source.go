@@ -29,6 +29,16 @@ const (
 	POIAll = POITransport | POIParkingFuel | POIFoodDrink | POIHealth | POIShoppingServices | POILeisureTourism | POICivic
 )
 
+// LabelWeight is a portable cartographic emphasis tier. It is rendered from
+// the same pinned face with deterministic bounded emboldening.
+type LabelWeight uint8
+
+const (
+	LabelWeightRegular LabelWeight = iota
+	LabelWeightMedium
+	LabelWeightSemibold
+)
+
 // LabelRule is the bounded typed-style subset that converts tile features
 // into immutable label candidates. TextKeys are tried in order.
 type LabelRule struct {
@@ -40,6 +50,8 @@ type LabelRule struct {
 	MaxZoom         float64
 	Size            []ZoomStop
 	Priority        int32
+	Weight          LabelWeight
+	Filters         []Filter
 	AllowOverlap    bool
 	FilterPOI       bool
 	POICategories   POICategories
@@ -53,12 +65,17 @@ func BuildLabelCandidates(camera Camera, rules []LabelRule, tiles []Tile) ([]Lab
 		return nil, errors.New("cartography: invalid label rules")
 	}
 	for _, rule := range rules {
-		if rule.ID == "" || len(rule.ID) > 256 || rule.SourceLayer == "" || len(rule.SourceLayer) > 256 || rule.Geometry < GeometryPoint || rule.Geometry > GeometryPolygon || len(rule.TextKeys) == 0 || len(rule.TextKeys) > 8 || len(rule.Locale) > 128 || !finite(rule.MinZoom) || !finite(rule.MaxZoom) || rule.MinZoom < 0 || rule.MaxZoom > 24 || rule.MaxZoom < rule.MinZoom || len(rule.Size) == 0 || len(rule.Size) > 32 || rule.POICategories&^POIAll != 0 {
+		if rule.ID == "" || len(rule.ID) > 256 || rule.SourceLayer == "" || len(rule.SourceLayer) > 256 || rule.Geometry < GeometryPoint || rule.Geometry > GeometryPolygon || len(rule.TextKeys) == 0 || len(rule.TextKeys) > 8 || len(rule.Locale) > 128 || !finite(rule.MinZoom) || !finite(rule.MaxZoom) || rule.MinZoom < 0 || rule.MaxZoom > 24 || rule.MaxZoom < rule.MinZoom || len(rule.Size) == 0 || len(rule.Size) > 32 || len(rule.Filters) > 32 || rule.Weight > LabelWeightSemibold || rule.POICategories&^POIAll != 0 {
 			return nil, errors.New("cartography: invalid label rule")
 		}
 		for _, key := range rule.TextKeys {
 			if key == "" || len(key) > 256 {
 				return nil, errors.New("cartography: invalid label text key")
+			}
+		}
+		for _, filter := range rule.Filters {
+			if filter.Key == "" || len(filter.Key) > 256 || len(filter.Value) > 4096 || filter.Operation > FilterNotEqual {
+				return nil, errors.New("cartography: invalid label filter")
 			}
 		}
 		if _, err := interpolateStops(rule.Size, camera.Zoom, 6, 256); err != nil {
@@ -90,6 +107,9 @@ func BuildLabelCandidates(camera Camera, rules []LabelRule, tiles []Tile) ([]Lab
 					if feature.Kind != rule.Geometry {
 						continue
 					}
+					if !filtersMatch(feature.Tags, rule.Filters) {
+						continue
+					}
 					if rule.FilterPOI && rule.POICategories&classifyPOI(feature.Tags) == 0 {
 						continue
 					}
@@ -112,7 +132,7 @@ func BuildLabelCandidates(camera Camera, rules []LabelRule, tiles []Tile) ([]Lab
 					if featureID == 0 {
 						featureID = syntheticFeatureID(tile.ID, layer.Name, featureIndex)
 					}
-					candidates = append(candidates, LabelCandidate{ID: fmt.Sprintf("%s/%d/%d/%d/%d", rule.ID, tile.ID.Z, tile.ID.X, tile.ID.Y, featureID), Text: text, Locale: rule.Locale, WorldX: float64(x), WorldY: float64(y), Size: size, Priority: rule.Priority, AllowOverlap: rule.AllowOverlap})
+					candidates = append(candidates, LabelCandidate{ID: fmt.Sprintf("%s/%d/%d/%d/%d", rule.ID, tile.ID.Z, tile.ID.X, tile.ID.Y, featureID), Text: text, Locale: rule.Locale, WorldX: float64(x), WorldY: float64(y), Size: size, Priority: rule.Priority, Weight: rule.Weight, AllowOverlap: rule.AllowOverlap})
 					if len(candidates) > maxLabelCandidates {
 						return nil, errors.New("cartography: label candidates exceed bounds")
 					}

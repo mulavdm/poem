@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/mulavdm/poem/pkg/render/protocol"
+	earcut "github.com/oliverbestmann/earcut-go"
 )
 
 const (
@@ -147,6 +148,10 @@ func BuildScene(viewportID string, generation uint64, camera Camera, style Style
 						switch feature.Kind {
 						case GeometryPoint:
 							pathStart := vertexCount
+							var symbol uint32
+							if styleLayer.FilterPOI {
+								symbol = uint32(classifyPOI(feature.Tags))
+							}
 							for _, point := range path {
 								x, y := tilePosition(tile.ID, source.Extent, point)
 								fade := float32(1)
@@ -157,7 +162,7 @@ func BuildScene(viewportID string, generation uint64, camera Camera, style Style
 									}
 									fade = scale
 								}
-								appendVertex(&vertices, x, y, height, fadedColor(styleLayer.Color, fade), styleLayer.width(camera.Zoom), featureID)
+								appendVertexSymbol(&vertices, x, y, height, fadedColor(styleLayer.Color, fade), styleLayer.width(camera.Zoom), featureID, symbol)
 								vertexCount++
 							}
 							count := vertexCount - pathStart
@@ -343,27 +348,7 @@ func triangulatePolygon(paths [][]Point, starts []uint32, indices *[]byte) (uint
 	}
 	var added uint32
 	for _, polygon := range polygons {
-		merged := append([]ringVertex(nil), polygon.exterior...)
-		holes := append([][]ringVertex(nil), polygon.holes...)
-		sort.SliceStable(holes, func(i, j int) bool {
-			a := rightmostRingVertex(holes[i])
-			b := rightmostRingVertex(holes[j])
-			if holes[i][a].point.X != holes[j][b].point.X {
-				return holes[i][a].point.X > holes[j][b].point.X
-			}
-			if holes[i][a].point.Y != holes[j][b].point.Y {
-				return holes[i][a].point.Y < holes[j][b].point.Y
-			}
-			return holes[i][a].index < holes[j][b].index
-		})
-		for holeIndex, hole := range holes {
-			var err error
-			merged, err = bridgeHole(merged, hole, holes[holeIndex+1:])
-			if err != nil {
-				return 0, err
-			}
-		}
-		count, err := triangulateSimpleRing(merged, indices)
+		count, err := triangulatePolygonRings(polygon, indices)
 		if err != nil {
 			return 0, err
 		}
@@ -372,117 +357,57 @@ func triangulatePolygon(paths [][]Point, starts []uint32, indices *[]byte) (uint
 	return added, nil
 }
 
-func rightmostRingVertex(ring []ringVertex) int {
-	best := 0
-	for index := 1; index < len(ring); index++ {
-		if ring[index].point.X > ring[best].point.X ||
-			(ring[index].point.X == ring[best].point.X && ring[index].point.Y < ring[best].point.Y) ||
-			(ring[index].point == ring[best].point && ring[index].index < ring[best].index) {
-			best = index
-		}
+func triangulatePolygonRings(polygon polygonRings, dst *[]byte) (uint32, error) {
+	exterior := make([]earcut.Point[float64], len(polygon.exterior))
+	localToGlobal := make([]uint32, 0, len(polygon.exterior))
+	for index, vertex := range polygon.exterior {
+		exterior[index] = earcut.Point[float64]{X: float64(vertex.point.X), Y: float64(vertex.point.Y)}
+		localToGlobal = append(localToGlobal, vertex.index)
 	}
-	return best
+	holes := make([][]earcut.Point[float64], len(polygon.holes))
+	expectedArea := absoluteArea(ringArea(polygon.exterior))
+	for holeIndex, ring := range polygon.holes {
+		holes[holeIndex] = make([]earcut.Point[float64], len(ring))
+		for vertexIndex, vertex := range ring {
+			holes[holeIndex][vertexIndex] = earcut.Point[float64]{X: float64(vertex.point.X), Y: float64(vertex.point.Y)}
+			localToGlobal = append(localToGlobal, vertex.index)
+		}
+		holeArea := absoluteArea(ringArea(ring))
+		if holeArea >= expectedArea {
+			return 0, errors.New("cartography: polygon hole exceeds exterior")
+		}
+		expectedArea -= holeArea
+	}
+	points, localIndices := earcut.Triangulate(exterior, holes)
+	if len(points) != len(localToGlobal) || len(localIndices) == 0 || len(localIndices)%3 != 0 {
+		return 0, errors.New("cartography: polygon triangulation is incomplete")
+	}
+	var actualArea int64
+	for offset := 0; offset < len(localIndices); offset += 3 {
+		a, b, c := localIndices[offset], localIndices[offset+1], localIndices[offset+2]
+		if int(a) >= len(points) || int(b) >= len(points) || int(c) >= len(points) {
+			return 0, errors.New("cartography: polygon triangulation index is out of bounds")
+		}
+		actualArea += absoluteArea(pointCross(
+			Point{X: int32(points[a].X), Y: int32(points[a].Y)},
+			Point{X: int32(points[b].X), Y: int32(points[b].Y)},
+			Point{X: int32(points[c].X), Y: int32(points[c].Y)},
+		))
+	}
+	if actualArea != expectedArea {
+		return 0, errors.New("cartography: polygon triangulation does not cover its bounded area")
+	}
+	for _, localIndex := range localIndices {
+		appendIndex(dst, localToGlobal[localIndex])
+	}
+	return uint32(len(localIndices)), nil
 }
 
-func bridgeHole(exterior, hole []ringVertex, unmergedHoles [][]ringVertex) ([]ringVertex, error) {
-	holeIndex := rightmostRingVertex(hole)
-	holePoint := hole[holeIndex].point
-	best := -1
-	var bestDistance uint64
-	for exteriorIndex, candidate := range exterior {
-		if !bridgeVisible(holePoint, candidate.point, exterior, exteriorIndex, hole, holeIndex, unmergedHoles) {
-			continue
-		}
-		dx := int64(candidate.point.X) - int64(holePoint.X)
-		dy := int64(candidate.point.Y) - int64(holePoint.Y)
-		distance := uint64(dx*dx + dy*dy)
-		if best < 0 || distance < bestDistance || (distance == bestDistance && candidate.index < exterior[best].index) {
-			best, bestDistance = exteriorIndex, distance
-		}
+func absoluteArea(area int64) int64 {
+	if area < 0 {
+		return -area
 	}
-	if best < 0 {
-		return nil, errors.New("cartography: polygon hole cannot be joined to exterior")
-	}
-	merged := make([]ringVertex, 0, len(exterior)+len(hole)+2)
-	merged = append(merged, exterior[:best+1]...)
-	for offset := 0; offset < len(hole); offset++ {
-		merged = append(merged, hole[(holeIndex+offset)%len(hole)])
-	}
-	merged = append(merged, hole[holeIndex], exterior[best])
-	merged = append(merged, exterior[best+1:]...)
-	return merged, nil
-}
-
-func bridgeVisible(a, b Point, exterior []ringVertex, exteriorIndex int, hole []ringVertex, holeIndex int, otherHoles [][]ringVertex) bool {
-	if a == b {
-		return false
-	}
-	if segmentCrossesRing(a, b, exterior, exteriorIndex) || segmentCrossesRing(a, b, hole, holeIndex) {
-		return false
-	}
-	for _, other := range otherHoles {
-		if segmentCrossesRing(a, b, other, -1) {
-			return false
-		}
-	}
-	midX := (float64(a.X) + float64(b.X)) / 2
-	midY := (float64(a.Y) + float64(b.Y)) / 2
-	if !pointInRing(midX, midY, exterior) || pointInRing(midX, midY, hole) {
-		return false
-	}
-	for _, other := range otherHoles {
-		if pointInRing(midX, midY, other) {
-			return false
-		}
-	}
-	return true
-}
-
-func segmentCrossesRing(a, b Point, ring []ringVertex, allowedVertex int) bool {
-	for index, vertex := range ring {
-		nextIndex := (index + 1) % len(ring)
-		next := ring[nextIndex]
-		if allowedVertex >= 0 && (index == allowedVertex || nextIndex == allowedVertex) {
-			continue
-		}
-		if segmentsIntersect(a, b, vertex.point, next.point) {
-			return true
-		}
-	}
-	return false
-}
-
-func segmentsIntersect(a, b, c, d Point) bool {
-	abc := pointCross(a, b, c)
-	abd := pointCross(a, b, d)
-	cda := pointCross(c, d, a)
-	cdb := pointCross(c, d, b)
-	if abc == 0 && pointOnSegment(c, a, b) || abd == 0 && pointOnSegment(d, a, b) ||
-		cda == 0 && pointOnSegment(a, c, d) || cdb == 0 && pointOnSegment(b, c, d) {
-		return true
-	}
-	return (abc > 0) != (abd > 0) && (cda > 0) != (cdb > 0)
-}
-
-func pointOnSegment(point, a, b Point) bool {
-	return point.X >= min(a.X, b.X) && point.X <= max(a.X, b.X) &&
-		point.Y >= min(a.Y, b.Y) && point.Y <= max(a.Y, b.Y)
-}
-
-func pointInRing(x, y float64, ring []ringVertex) bool {
-	inside := false
-	for index, vertex := range ring {
-		next := ring[(index+1)%len(ring)]
-		ay, by := float64(vertex.point.Y), float64(next.point.Y)
-		if (ay > y) == (by > y) {
-			continue
-		}
-		intersectionX := float64(next.point.X-vertex.point.X)*(y-ay)/(by-ay) + float64(vertex.point.X)
-		if x < intersectionX {
-			inside = !inside
-		}
-	}
-	return inside
+	return area
 }
 
 func triangulateSimpleRing(vertices []ringVertex, indices *[]byte) (uint32, error) {
@@ -563,6 +488,10 @@ func tilePosition(id TileID, extent uint32, point Point) (float32, float32) {
 }
 
 func appendVertex(dst *[]byte, x, y, z float32, color Color, width float32, featureID uint64) {
+	appendVertexSymbol(dst, x, y, z, color, width, featureID, 0)
+}
+
+func appendVertexSymbol(dst *[]byte, x, y, z float32, color Color, width float32, featureID uint64, symbol uint32) {
 	var data [vertexStride]byte
 	binary.LittleEndian.PutUint32(data[0:4], math.Float32bits(x))
 	binary.LittleEndian.PutUint32(data[4:8], math.Float32bits(y))
@@ -570,6 +499,7 @@ func appendVertex(dst *[]byte, x, y, z float32, color Color, width float32, feat
 	data[12], data[13], data[14], data[15] = color.R, color.G, color.B, color.A
 	binary.LittleEndian.PutUint32(data[16:20], math.Float32bits(width))
 	binary.LittleEndian.PutUint64(data[20:28], featureID)
+	binary.LittleEndian.PutUint32(data[28:32], symbol)
 	*dst = append(*dst, data[:]...)
 }
 

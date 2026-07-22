@@ -45,6 +45,23 @@ type EffectsConfig struct {
 	Glass, Particles, Audio bool
 }
 
+func pannableTargetsAt(root types.Component, point image.Point) []types.PannableComponent {
+	if root == nil {
+		return nil
+	}
+	hitID := root.HitTest(point)
+	var targets []types.PannableComponent
+	root.Walk(func(component types.Component) {
+		// A canvas can geometrically sit behind an overlay. Only let it claim
+		// the pan when it owns the topmost hit target; otherwise event routing
+		// can fall back to an overlaid ScrollView.
+		if target, ok := component.(types.PannableComponent); ok && point.In(component.Bounds()) && component.ID() == hitID {
+			targets = append(targets, target)
+		}
+	})
+	return targets
+}
+
 type TypographyConfig struct {
 	PrimaryFontPath   string
 	FallbackFontPaths []string
@@ -1341,12 +1358,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			handled := false
 			comps := interactionRoots()
 			for rootIndex := len(comps) - 1; rootIndex >= 0 && !handled; rootIndex-- {
-				var targets []types.PannableComponent
-				comps[rootIndex].Walk(func(c types.Component) {
-					if target, ok := c.(types.PannableComponent); ok && pt.In(c.Bounds()) {
-						targets = append(targets, target)
-					}
-				})
+				targets := pannableTargetsAt(comps[rootIndex], pt)
 				for targetIndex := len(targets) - 1; targetIndex >= 0; targetIndex-- {
 					if targets[targetIndex].OnPanGesture(pt, delta, phase, globalState) {
 						handled = true
