@@ -60,8 +60,29 @@ func (b *Badge) Measure(avail image.Point, state *types.ApplicationState) types.
 	if state != nil && state.FontCharWidth > 0 {
 		cw = state.FontCharWidth
 	}
-	return types.MeasureResult{Preferred: applyExplicitSize(explicitSize(b.Rect), image.Pt(len([]rune(b.Text))*cw+2*t.Spacing.SM, t.Controls.Small)), Min: image.Pt(t.Controls.Small, t.Controls.Small)}
+	// Size to the label. Rect is where layout put the badge, not a requested
+	// size, so it is not read here — treating it as explicit froze the badge at
+	// its first-laid-out width, so "Engine unavailable" kept rendering as
+	// "Engine unava…" after a resize (design lint UI101, TYPOGRAPHY clipping).
+	// Min holds the full label too, so a flex row cannot shrink it into an
+	// ellipsis; a status badge that says half its state is worse than one that
+	// wraps or pushes the row wider.
+	// The horizontal padding must clear fitButtonLabel's truncation reserve, or
+	// the badge is sized to exactly the width at which its own draw path trims
+	// the label — the failure that shipped "Engine unavailable" as "Engine
+	// unava…". Reserve a little more than fitButtonLabel subtracts.
+	padding := maxInt(2*t.Spacing.SM, badgeLabelPadding)
+	width := len([]rune(b.Text))*cw + padding
+	return types.MeasureResult{
+		Preferred: image.Pt(width, t.Controls.Small),
+		Min:       image.Pt(width, t.Controls.Small),
+	}
 }
+
+// badgeLabelPadding mirrors buttonLabelPadding: enough horizontal room that a
+// badge sized by Measure never truncates its own label in Draw.
+const badgeLabelPadding = 24
+
 func (b *Badge) Draw(p types.Painter, state *types.ApplicationState) {
 	t := activeTheme(state)
 	bg, fg := badgeVisual(t, b.Variant)

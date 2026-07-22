@@ -1,8 +1,11 @@
 package components
 
 import (
+	"image"
 	"image/color"
 	"testing"
+
+	"github.com/mulavdm/poem/pkg/render/types"
 
 	"github.com/mulavdm/poem/pkg/render/theme"
 )
@@ -49,5 +52,26 @@ func TestBadgeVisualBackgroundIsTintedNotFlat(t *testing.T) {
 	}
 	if bg == th.Colors.SurfaceRaised {
 		t.Fatalf("expected the background to be tinted toward the variant color, got the untinted surface %v", bg)
+	}
+}
+
+// A status badge must size to its label and not freeze at its laid-out width;
+// "Engine unavailable" shipped as "Engine unava…" because Badge.Measure read
+// its stale Rect as an explicit size (design lint UI101).
+func TestBadgeSizesToLabelNotStaleBounds(t *testing.T) {
+	const charW = 8
+	badge := NewBadge("status", "Engine unavailable")
+	state := &types.ApplicationState{FontCharWidth: charW}
+
+	// A prior layout at a cramped width must not pin the badge.
+	badge.SetBounds(image.Rect(0, 0, 90, 24))
+
+	result := badge.Measure(image.Pt(1200, 80), state)
+	labelWidth := len([]rune("Engine unavailable")) * charW
+	if result.Preferred.X < labelWidth || result.Min.X < labelWidth {
+		t.Fatalf("badge froze narrower than its label: preferred %d, min %d, label %d", result.Preferred.X, result.Min.X, labelWidth)
+	}
+	if fitted := fitButtonLabel("Engine unavailable", result.Min.X, charW); fitted != "Engine unavailable" {
+		t.Fatalf("badge label truncated at its own width: %q", fitted)
 	}
 }
