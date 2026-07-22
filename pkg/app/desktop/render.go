@@ -176,9 +176,7 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 			view.ImageHeight = decoded.height
 			view.Pixels = decoded.pixels
 		}
-		if n.Image.MaxWidth > 0 || n.Image.MaxHeight > 0 {
-			view.Rect = image.Rect(0, 0, n.Image.MaxWidth, n.Image.MaxHeight)
-		}
+		view.MaxWidth, view.MaxHeight = n.Image.MaxWidth, n.Image.MaxHeight
 		msg := n.OnChange
 		if msg.Name != "" {
 			view.OnChange = func(transform render.ImageTransform, _ *render.ApplicationState) {
@@ -223,12 +221,12 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 		if !n.Valid() {
 			return render.NewLabel(path+"/invalid", "Map unavailable")
 		}
+		// A map viewport fills its container and re-fills on every resize; the
+		// fallback's Max dimensions are the raster resolution, not a display cap,
+		// so they are deliberately not imposed on the interactive canvas here.
 		view := &render.ImageViewport{CompID: path, Alt: n.Semantic.Name, MinScale: 0.5, MaxScale: 8, Disabled: !n.Semantic.Enabled, MapViewportID: n.Semantic.ID}
 		if decoded, ok := decodeImageCached(n.Fallback.Encoded); ok {
 			view.ImageWidth, view.ImageHeight, view.Pixels = decoded.width, decoded.height, decoded.pixels
-		}
-		if n.Fallback.MaxWidth > 0 || n.Fallback.MaxHeight > 0 {
-			view.Rect = image.Rect(0, 0, n.Fallback.MaxWidth, n.Fallback.MaxHeight)
 		}
 		if n.OnCameraChange.Name != "" {
 			msg := n.OnCameraChange

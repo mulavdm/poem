@@ -66,8 +66,13 @@ type ImageViewport struct {
 	Transform     ImageTransform
 	MinScale      float64
 	MaxScale      float64
-	Disabled      bool
-	Alt           string
+	// MaxWidth and MaxHeight cap the measured size in logical pixels when the
+	// author wants a bounded image. They are the author's intent — distinct from
+	// the laid-out Rect, which layout owns. Zero means unbounded (fill available).
+	MaxWidth  int
+	MaxHeight int
+	Disabled  bool
+	Alt       string
 	OnChange      func(ImageTransform, *types.ApplicationState)
 	// OnActivate receives normalized viewport coordinates for a short
 	// background click or tap.
@@ -116,6 +121,11 @@ func (i *ImageViewport) normalized() ImageTransform {
 }
 
 func (i *ImageViewport) Measure(avail image.Point, _ *types.ApplicationState) types.MeasureResult {
+	// Preferred size comes from the available space and the author's Max caps —
+	// never from i.Rect. Feeding the laid-out Rect back as an explicit request
+	// freezes the viewport at its first layout, so it stops tracking window
+	// resizes and drifts controls anchored to its edges off-screen (see the
+	// design guide's "layout output reused as an intrinsic size request").
 	width, height := avail.X, avail.Y
 	if width <= 0 {
 		width = 320
@@ -123,11 +133,20 @@ func (i *ImageViewport) Measure(avail image.Point, _ *types.ApplicationState) ty
 	if height <= 0 {
 		height = 240
 	}
-	if i.ImageWidth > 0 && i.ImageHeight > 0 {
+	if i.MaxWidth > 0 && width > i.MaxWidth {
+		width = i.MaxWidth
+	}
+	if i.MaxHeight > 0 && height > i.MaxHeight {
+		height = i.MaxHeight
+	}
+	// A map fills its box: the retained scene renders at whatever size the map is
+	// laid out to, so it should claim the whole available area. A still image
+	// instead keeps its aspect ratio, contained within the available box.
+	if i.MapViewportID == "" && i.ImageWidth > 0 && i.ImageHeight > 0 {
 		contained := containRect(image.Rect(0, 0, width, height), i.ImageWidth, i.ImageHeight)
 		width, height = contained.Dx(), contained.Dy()
 	}
-	size := applyExplicitSize(explicitSize(i.Rect), image.Pt(width, height))
+	size := image.Pt(width, height)
 	return types.MeasureResult{Preferred: size, Min: image.Pt(minValueInt(size.X, 120), minValueInt(size.Y, 120))}
 }
 

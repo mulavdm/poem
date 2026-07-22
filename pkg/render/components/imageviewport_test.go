@@ -77,3 +77,31 @@ func TestImageViewportWheelClampsScale(t *testing.T) {
 		t.Fatalf("scale = %v, want 2", view.Transform.Scale)
 	}
 }
+
+func TestImageViewportMapFillsAvailableAndTracksResize(t *testing.T) {
+	// A map viewport must re-fill the available space every measure rather than
+	// freezing at its first laid-out Rect — otherwise it stops tracking window
+	// resizes and carries edge-anchored controls off-screen.
+	view := &ImageViewport{CompID: "map", MapViewportID: "map", ImageWidth: 960, ImageHeight: 640, MinScale: 0.5, MaxScale: 8}
+	first := view.Measure(image.Pt(800, 600), nil).Preferred
+	if first != image.Pt(800, 600) {
+		t.Fatalf("map should fill available space, got %v", first)
+	}
+	// Simulate a layout pass pinning a Rect, then a larger window.
+	view.SetBounds(image.Rect(0, 0, 800, 600))
+	grown := view.Measure(image.Pt(1400, 900), nil).Preferred
+	if grown != image.Pt(1400, 900) {
+		t.Fatalf("map must track a larger viewport, got %v (froze at laid-out Rect?)", grown)
+	}
+}
+
+func TestImageViewportImageContainsWithinMaxCaps(t *testing.T) {
+	// A still image keeps its aspect ratio and honours author Max caps, without
+	// reading the laid-out Rect.
+	view := &ImageViewport{CompID: "img", ImageWidth: 200, ImageHeight: 100, MaxWidth: 300, MaxHeight: 300}
+	got := view.Measure(image.Pt(1000, 1000), nil).Preferred
+	// Capped to 300 wide, contained to 2:1 aspect -> 300x150.
+	if got != image.Pt(300, 150) {
+		t.Fatalf("image should cap and keep aspect, got %v", got)
+	}
+}
