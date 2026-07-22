@@ -136,3 +136,52 @@ func TestSliderMeasureProvidesNonZeroControlHeight(t *testing.T) {
 		t.Fatalf("slider measurement=%+v", result)
 	}
 }
+
+// A button's reported Min must hold its own label. The regression this guards:
+// Min was clamped to 90px while Preferred held the full label, so a flex row
+// under pressure shrank the button and fitButtonLabel truncated the text —
+// "Calculate route" rendered as "Calculate …" with free space beside it
+// (design guide: TOKENS scale independence, lint UI023 / clipped scaled text).
+func TestButtonMinWidthHoldsItsLabel(t *testing.T) {
+	const charW = 8
+	button := &Button{Text: "Calculate route"}
+	result := button.Measure(image.Pt(1200, 80), &types.ApplicationState{FontCharWidth: charW})
+
+	labelWidth := len([]rune("Calculate route")) * charW
+	if result.Min.X < labelWidth {
+		t.Fatalf("Min width %d cannot hold a %d px label; the label would truncate under pressure", result.Min.X, labelWidth)
+	}
+	// And the label fits without an ellipsis at that minimum width.
+	if fitted := fitButtonLabel("Calculate route", result.Min.X, charW); fitted != "Calculate route" {
+		t.Fatalf("label truncated at its own minimum width: %q", fitted)
+	}
+}
+
+// An author-set FixedWidth pins the width, so fixed toolbar slots stay fixed.
+func TestFixedWidthButtonKeepsItsWidth(t *testing.T) {
+	button := &Button{Text: "A very long label that would otherwise expand", FixedWidth: 120}
+	result := button.Measure(image.Pt(1200, 80), &types.ApplicationState{FontCharWidth: 8})
+	if result.Preferred.X != 120 || result.Min.X != 120 {
+		t.Fatalf("fixed-width button reported %dx (min %d), want 120", result.Preferred.X, result.Min.X)
+	}
+}
+
+// The regression that shipped as truncated labels after a resize: a button
+// remeasured after layout wrote its bounds must size to its content again, not
+// freeze at the width it was first laid out at. Rect is layout output, not a
+// size request.
+func TestButtonRemeasuresToContentAfterLayout(t *testing.T) {
+	const charW = 8
+	button := &Button{Text: "From · Choose a starting point"}
+	state := &types.ApplicationState{FontCharWidth: charW}
+
+	// Simulate a first layout at a cramped width, as happens in a narrow window.
+	button.SetBounds(image.Rect(0, 0, 120, 36))
+
+	// Remeasured with room available, it must ask for its full label width.
+	result := button.Measure(image.Pt(1200, 80), state)
+	labelWidth := len([]rune("From · Choose a starting point")) * charW
+	if result.Preferred.X < labelWidth {
+		t.Fatalf("button froze at its laid-out width: Preferred %d < label %d", result.Preferred.X, labelWidth)
+	}
+}

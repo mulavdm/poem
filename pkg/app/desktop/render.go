@@ -421,11 +421,18 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 		for i, child := range n.Children {
 			children[i] = build(child, childPath(path, i), dispatch)
 		}
+		// A horizontal row of controls wraps onto new lines when it runs out of
+		// width, instead of clipping its trailing children off the panel edge or
+		// shrinking them until their labels truncate ("Refresh s…", "Engine
+		// set…"). This is the layout-level answer to the design guide's "support
+		// user text scaling without clipping" (TYPOGRAPHY) and lint UI023: the
+		// row asks for the height it needs rather than eating its own content.
 		return &render.FlexBox{
 			CompID:    path,
 			Direction: flexDirection(n.Direction),
 			Gap:       n.Gap,
 			Padding:   n.Padding,
+			Wrap:      n.Direction == app.Horizontal,
 			Children:  children,
 		}
 

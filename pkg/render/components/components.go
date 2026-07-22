@@ -128,6 +128,12 @@ type Button struct {
 	Mnemonic       rune
 	Relations      semantics.Relationships
 	Style          *StyleOverride
+	// FixedWidth pins the button width to an author-specified value. It is
+	// distinct from Rect: Rect holds the bounds layout assigns, which Measure
+	// must NOT treat as a requested size — doing so froze a button at whatever
+	// width it was first laid out at, so after a window resize the label kept
+	// truncating in a panel with room to spare. Zero means "size to content".
+	FixedWidth int
 }
 
 func NewButton(id, label string, onClick func(*types.ApplicationState)) *Button {
@@ -143,20 +149,43 @@ func (b *Button) Measure(avail image.Point, state *types.ApplicationState) types
 		charW = state.FontCharWidth
 	}
 	labelWidth := len([]rune(strings.TrimSpace(b.Text))) * charW
-	width := maxInt(140, labelWidth+24)
+	// intrinsicMin is the width the label actually needs plus horizontal
+	// padding. A control's minimum has to hold its own text, or a flex row
+	// under pressure shrinks the button until fitButtonLabel eats the label —
+	// which is exactly how "Calculate route" shipped as "Calculate …" with
+	// free space beside it (design guide TOKENS "scale independence", lint
+	// UI023). Truncation stays only as a genuine last resort below intrinsicMin.
+	intrinsicMin := labelWidth + buttonLabelPadding
+	width := maxInt(140, intrinsicMin)
 	if avail.X > 0 {
-		width = clampInt(width, 90, avail.X)
+		width = clampInt(width, minInt(intrinsicMin, avail.X), avail.X)
 	}
 	height := 38
 	if themed(b.UseTheme, state) {
 		height = controlHeight(activeTheme(state), b.Size)
 	}
-	size := applyExplicitSize(explicitSize(b.Rect), image.Pt(width, height))
+	minWidth := intrinsicMin
+	// Only an author-set FixedWidth overrides content sizing. Rect is where
+	// layout put the button on a previous pass, not a size request, so it is
+	// deliberately NOT read here — treating it as explicit froze the button at
+	// its first-laid-out width, so after a resize the label kept truncating in
+	// a panel with room to spare (design guide: TYPOGRAPHY "support user text
+	// scaling without clipping", lint UI023).
+	if b.FixedWidth > 0 {
+		width = b.FixedWidth
+		minWidth = b.FixedWidth
+	}
 	return types.MeasureResult{
-		Preferred: size,
-		Min:       image.Pt(minValueInt(size.X, 90), size.Y),
+		Preferred: image.Pt(width, height),
+		Min:       image.Pt(minValueInt(width, minWidth), height),
 	}
 }
+
+// buttonLabelPadding is the horizontal room a button reserves around its label.
+// fitButtonLabel subtracts 20 before truncating, so the intrinsic minimum keeps
+// a little more, leaving the label uncut at the reported minimum width.
+const buttonLabelPadding = 24
+
 func (b *Button) Draw(pnt types.Painter, state *types.ApplicationState) {
 	if themed(b.UseTheme, state) {
 		hovered := state != nil && state.HoveredID == b.CompID
