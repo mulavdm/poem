@@ -189,14 +189,27 @@ This confirms the analysis above: axis-aligned `DrawLine` output was entirely
 invisible on the D3D11 presenter, and diagonals were misplaced. Release build is
 clean and CTest passes 3/3.
 
-**Verification — Android: not done.** `renderer_gles.cpp` and `main.cpp`
-syntax-check against NDK 30.0.15729638 for `aarch64-linux-android30`, which is
-compile coverage only. **The GLES line fix and the transport-spin fix have not
-been seen running** — both need an emulator or device pass before they are
-trusted.
+**Verification — Android: line fix confirmed on emulator.** The `preferences`
+example was built with `build_apk.sh` (x86_64) and run on an API-36 emulator at
+baseline and with the fix, tapping the same checkbox in both:
 
-Note what this exercise required: building and packaging the app, driving it
-over HTTP, and eyeballing zoomed crops. Nothing in the test suite would have
+| Subject | Baseline | Fixed |
+|---|---|---|
+| Checkbox checkmark (`selection.go:55`, two diagonals) | two solid black blocks filling the circle — the bounding boxes of the two strokes | clean checkmark, both strokes correct |
+
+The host log confirms GLES3, `transport thread up`, and frames flowing at
+411x866 logical.
+
+**The transport-spin fix is verified only as non-regressive.** The app runs
+normally at ~4% CPU with the change, but a normal activity lifecycle never
+exercises the branch: the engine does not close its end on pause/stop/destroy
+(deliberately — see `TASK.md`), and force-stop kills the process outright. The
+`n == 0` path stays unexercised until something drives the engine to close its
+end of the transport while the host is alive.
+
+Note what this exercise required across both hosts: building and packaging, driving
+the app by hand, and eyeballing zoomed crops. Nothing in the test suite would have
 caught either defect, and nothing will catch the next one. That is the argument
 for the conformance corpus in §4, and the reason it should land before the
 shared core rather than after it.
+

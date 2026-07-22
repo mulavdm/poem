@@ -15,8 +15,11 @@ cpp_sidecar/build-*/
 # windows_host/build.ps1 packaging output (portable bundle, ZIP, MSIX)
 /dist/
 
-# android_engine/build_apk.sh output (per-ABI apkroot, .apk, .so)
+# android_engine/build_apk.sh output (per-ABI apkroot, .apk, .so, and the
+# signed APK it writes next to the script)
 android_engine/build/
+*.apk
+*.apk.idsig
 
 # Go cache
 .gocache/
