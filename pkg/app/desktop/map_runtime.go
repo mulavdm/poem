@@ -612,8 +612,8 @@ func nativeResolvedMapStyle(node app.MapViewportNode, tokens design.ResolvedToke
 	}
 	colors := tokens.Theme.Colors
 	palette := cartography.SemanticPalette{
-		Land: mapRGBA(colors.SurfaceSunken), Water: mapRGBA(colors.Accent), Waterway: mapRGBA(colors.Accent), Road: mapRGBA(colors.SurfaceRaised),
-		Building: mapRGBA(colors.Border), Label: mapRGBA(colors.Text), Route: mapRGBA(colors.Accent), Marker: mapRGBA(colors.Success), Traffic: mapRGBA(colors.Danger),
+		Land: mapRGBA(colors.Cartography.Land), Water: mapRGBA(colors.Cartography.Water), Waterway: mapRGBA(colors.Cartography.Waterway), Road: mapRGBA(colors.Cartography.Road),
+		Building: mapRGBA(colors.Cartography.Building), Label: mapRGBA(colors.Text), Route: mapRGBA(colors.Accent), Marker: mapRGBA(colors.Success), Traffic: mapRGBA(colors.Danger),
 	}
 	if selected.Valid() {
 		palette.Land = resolveNativeMapColor(selected.Colors.Land, palette.Land, palette, colors)

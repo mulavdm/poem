@@ -77,31 +77,49 @@ type Typography struct {
 }
 
 type Colors struct {
-	Background      color.RGBA
-	Surface         color.RGBA
-	SurfaceRaised   color.RGBA
-	SurfaceSunken   color.RGBA
-	Border          color.RGBA
-	BorderStrong    color.RGBA
-	Text            color.RGBA
-	TextMuted       color.RGBA
-	TextDisabled    color.RGBA
-	Accent          color.RGBA
-	AccentHover     color.RGBA
-	AccentPressed   color.RGBA
-	OnAccent        color.RGBA
-	OnDanger        color.RGBA
-	OnWarning       color.RGBA
-	OnSuccess       color.RGBA
-	Focus           color.RGBA
-	Danger          color.RGBA
-	Warning         color.RGBA
-	Success         color.RGBA
-	Selection       color.RGBA
+	Background    color.RGBA
+	Surface       color.RGBA
+	SurfaceRaised color.RGBA
+	SurfaceSunken color.RGBA
+	Border        color.RGBA
+	BorderStrong  color.RGBA
+	Text          color.RGBA
+	TextMuted     color.RGBA
+	TextDisabled  color.RGBA
+	Accent        color.RGBA
+	AccentHover   color.RGBA
+	AccentPressed color.RGBA
+	OnAccent      color.RGBA
+	OnDanger      color.RGBA
+	OnWarning     color.RGBA
+	OnSuccess     color.RGBA
+	Focus         color.RGBA
+	Danger        color.RGBA
+	Warning       color.RGBA
+	Success       color.RGBA
+	Selection     color.RGBA
+	// Cartography holds the map's own surface tones. The map is a themed canvas,
+	// not a control, so it must not borrow the UI accent (design guide COLOR
+	// "canvas and layout container structures should remain neutral"): painting
+	// water with Accent made water the loudest thing on screen and turned gold
+	// in high contrast. These resolve through the theme pipeline like every
+	// other token, so high contrast and dark mode get map colours too.
+	Cartography     Cartography
 	Overlay         color.RGBA
 	ScrollbarTrack  color.RGBA
 	ScrollbarThumb  color.RGBA
 	ScrollbarActive color.RGBA
+}
+
+// Cartography are the map canvas tones: neutral land and buildings so the built
+// environment reads as the subject, with water calm enough to sit beneath it
+// rather than dominate. Kept distinct from the UI accent on purpose.
+type Cartography struct {
+	Water    color.RGBA
+	Waterway color.RGBA
+	Land     color.RGBA
+	Building color.RGBA
+	Road     color.RGBA
 }
 
 type Spacing struct{ XXS, XS, SM, MD, LG, XL, XXL int }
@@ -234,6 +252,14 @@ func ModernDark() Theme {
 			Success: color.RGBA{79, 174, 121, 255}, Selection: color.RGBA{66, 105, 170, 180},
 			Overlay: color.RGBA{0, 0, 0, 150}, ScrollbarTrack: color.RGBA{255, 255, 255, 12},
 			ScrollbarThumb: color.RGBA{151, 158, 170, 115}, ScrollbarActive: color.RGBA{184, 191, 204, 180},
+			// Dark map tones: desaturated slate water, neutral land and buildings.
+			Cartography: Cartography{
+				Water:    color.RGBA{38, 52, 68, 255},
+				Waterway: color.RGBA{44, 60, 78, 255},
+				Land:     color.RGBA{24, 27, 32, 255},
+				Building: color.RGBA{48, 54, 63, 255},
+				Road:     color.RGBA{60, 66, 76, 255},
+			},
 		},
 		Typography: Typography{
 			BodyFamily: body, MonoFamily: mono,
@@ -272,6 +298,16 @@ func ModernLight() Theme {
 		t.Colors.ScrollbarTrack = color.RGBA{0, 0, 0, 8}
 		t.Colors.ScrollbarThumb = color.RGBA{75, 82, 94, 90}
 		t.Colors.ScrollbarActive = color.RGBA{52, 59, 70, 150}
+		// Light map tones: a calm desaturated blue for water — deliberately far
+		// from the saturated UI accent — over near-white land so the grey city
+		// reads as the subject.
+		t.Colors.Cartography = Cartography{
+			Water:    color.RGBA{176, 202, 222, 255},
+			Waterway: color.RGBA{162, 191, 214, 255},
+			Land:     color.RGBA{237, 240, 244, 255},
+			Building: color.RGBA{214, 220, 229, 255},
+			Road:     color.RGBA{249, 250, 252, 255},
+		}
 	})
 }
 
@@ -304,6 +340,16 @@ func HighContrast() Theme {
 		t.Colors.AccentPressed = color.RGBA{220, 185, 0, 255}
 		t.Colors.OnAccent = color.RGBA{0, 0, 0, 255}
 		t.Colors.Focus = color.RGBA{255, 255, 0, 255}
+		// High contrast: distinguish map surfaces by luminance against the black
+		// canvas, never by the gold accent. Water reads as a deep blue, roads as
+		// mid grey, buildings outlined lighter — all clearly separable.
+		t.Colors.Cartography = Cartography{
+			Water:    color.RGBA{0, 60, 130, 255},
+			Waterway: color.RGBA{0, 80, 160, 255},
+			Land:     color.RGBA{0, 0, 0, 255},
+			Building: color.RGBA{90, 90, 90, 255},
+			Road:     color.RGBA{150, 150, 150, 255},
+		}
 		t.Motion.Reduced = true
 	})
 }
