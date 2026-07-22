@@ -90,4 +90,4 @@ Interpretation:
 - [Inspect Flow](/concepts/automation/inspect-flow.md)
 
 # Citations
-- [AGENTS.md](../../../AGENTS.md) — Common Gotchas
+- [AGENTS.md](file:///d:/Programming/GUIProject/POEM/AGENTS.md) — Common Gotchas

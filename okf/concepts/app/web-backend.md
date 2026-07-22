@@ -3,7 +3,7 @@ type: concept
 title: Web Backend
 description: How web.Run drives a core.App[S] as a real, stateful GopherWeb-style web app — a forms-only, no-JavaScript-required state transport, plus GopherWeb's own vanilla JS for backend-local UI chrome like Modal.
 tags: [architecture, web, github.com/mulavdm/gopherweb, backend, session]
-timestamp: 2026-07-10T00:00:00Z
+timestamp: 2026-07-22T00:00:00Z
 ---
 
 > **Ported from the Trellis/GopherWeb bundles at the 2026-07-16 consolidation.** Historical names map as: "Trellis" = `pkg/app`; "GopherWeb" = `pkg/web` (CSS prefix now `poem-`); "POEM" as a sibling project = the `pkg/render` engine layer. All are now this repository.
@@ -111,6 +111,21 @@ bearing content nested inside the modal (a `Checkbox`, a `Select`, a real submit
 still goes through the normal `collectFields`/`eventHandler` path — `collectFields` has a
 `core.ModalNode` case that walks `n.Content` exactly like `ContainerNode`'s does, so fields
 are discovered regardless of whether the modal happens to be open or closed at submit time.
+
+## Vector map viewport
+
+`MapViewportNode` (`pkg/app/web/render.go`) renders as a `poem-map-viewport` `<section>` with a
+focusable `<canvas>` and the accepted scene's camera, source, style, features, and limits carried
+as `data-*` attributes. The map is drawn by the **same retained scene the native presenters use**,
+projected on the GPU through a WebGL2 bridge driven by a Go/WASM worker (`map-viewport.js`), so the
+web target is not a second cartography implementation — it consumes the identical
+[map scene protocol](/concepts/protocol.md) and shared maths described in
+[GPU Vector Map Rendering](/concepts/architecture/map-rendering.md). Camera and feature
+interactions post through the normal event transport; a server-rendered raster `POST
+/api/v1/staticmap` fallback and the accessible feature buttons keep the map usable with no
+JavaScript or on hardware without WebGL2. `OverlayNode` renders as a `position:relative` box whose
+layers are absolutely positioned against their anchored edges, matching the native compositor, so
+map controls float over the canvas identically on every target.
 
 ## Two bugs a real browser caught that `curl` couldn't
 

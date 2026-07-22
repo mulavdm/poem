@@ -3,7 +3,7 @@ type: concept
 title: Architecture Overview
 description: The core.App[S] model, the Node IR, and why Trellis's event model uses named messages instead of closures.
 tags: [architecture, core, node, app]
-timestamp: 2026-07-10T00:00:00Z
+timestamp: 2026-07-22T00:00:00Z
 ---
 
 > **Ported from the Trellis/GopherWeb bundles at the 2026-07-16 consolidation.** Historical names map as: "Trellis" = `pkg/app`; "GopherWeb" = `pkg/web` (CSS prefix now `poem-`); "POEM" as a sibling project = the `pkg/render` engine layer. All are now this repository.
@@ -28,15 +28,15 @@ interface. See [POEM Backend](/concepts/app/desktop-driver.md) and
 
 ## The `Node` IR
 
-`core.Node` (`pkg/app/node.go`) is a closed interface with nineteen concrete kinds today:
+`core.Node` (`pkg/app/node.go`) is a closed interface with twenty concrete kinds today:
 `TextNode`, `ButtonNode`, `TextInputNode`, `TextAreaNode`, `CheckboxNode`, `SwitchNode`,
 `SelectNode`, `RadioGroupNode`, `SliderNode`, `BadgeNode`, `ProgressBarNode`, `TableNode`,
-`AccordionNode`, `TabsNode`, `ImageNode`, `ImageViewportNode`, `ResponsiveNode`, `ContainerNode`, and `ModalNode`. Each backend's `render.go`
+`AccordionNode`, `TabsNode`, `ImageNode`, `ImageViewportNode`, `ResponsiveNode`, `ContainerNode`, `ModalNode`, and `OverlayNode`. Each backend's `render.go`
 translates a `Node` tree into that backend's real component tree — POEM's `components.Button`/
 `components.TextArea`/`components.Checkbox`/`components.Switch`/`components.Select`/
 `components.Radio`/`components.Slider`/`components.Badge`/`components.ProgressBar`/
 `components.DataTable`/`components.Accordion`/`components.Tabs`/`components.Modal`/
-`layout.FlexBox`, GopherWeb's `action.Button`/`form.Textarea`/`form.Checkbox`/`form.Switch`/
+`layout.FlexBox`/`layout.Overlay`, GopherWeb's `action.Button`/`form.Textarea`/`form.Checkbox`/`form.Switch`/
 `form.Select`/`form.RadioGroup`/`form.Range`/`feedback.Badge`/`feedback.Progress`/`data.Table`/
 `widget.Disclosure`/`widget.FormTabs`/`widget.Modal`/`form.Input`. Node field names deliberately reuse the vocabulary POEM and
 GopherWeb already converged on (`Text`/`Label`/`Value`/`Options`/`Disabled`/`Variant`), so both
@@ -129,10 +129,19 @@ an `ImageMarker` hit emits that marker's stable ID. Marker positions follow the 
 while their accessible hit targets stay at least 44 logical pixels. Web field commits are resolved
 against the current node tree, so forged marker IDs and stale paths are rejected.
 
-`ResponsiveNode` is the nineteenth kind. It selects Compact or Wide children from assigned width,
+`ResponsiveNode` selects Compact or Wide children from assigned width,
 with a 600 logical-pixel default breakpoint. Native layout makes the choice during measurement and
 draw. Web renders both branches but keeps only one enabled; Compact is the usable no-JavaScript
 baseline and a small `matchMedia` enhancement switches branches without application state.
+
+`OverlayNode` is the other structural node: it z-stacks floating `OverlayLayer`s over a `Base`
+within one box. The base fills the box and alone determines its measured size; each layer is sized
+to itself and pinned to one of nine anchors, inset from the edges it hugs, so it floats without
+affecting layout. Layers paint last-on-top and are hit-tested before the base — a floating control
+wins the pointer over the canvas beneath it, a miss falls through. It is the non-modal counterpart
+to `ModalNode`, for controls that act *on* a canvas (map zoom/fit clusters, a floating action
+button) rather than beside it. See [Desktop Driver](/concepts/app/desktop-driver.md) for how each
+backend renders it and why the underlying canvas must fit its viewport.
 
 ## `ModalNode`: the first `Node` that isn't part of `App[S]` at all
 

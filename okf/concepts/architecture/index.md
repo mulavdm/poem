@@ -16,6 +16,7 @@
 * [Keyboard Focus Engine](/concepts/architecture/keyboard-focus-engine.md) — focus cycling, scroll centering, hotkeys
 * [Sound Engine](/concepts/architecture/sound-engine.md) — synthesized waveform audio pipeline
 * [DPI Coordinate Translation](/concepts/architecture/dpi-coordinate-translation.md) — logical vs. physical coordinate spaces
+* [GPU Vector Map Rendering](/concepts/architecture/map-rendering.md) — the cartography pipeline, the shared projection/lighting/shadow maths, and the GPU depth path
 * [Component Catalog](/concepts/architecture/component-catalog.md) — panels, labels, buttons, sliders, inputs
 * [FlexBox Layout](/concepts/architecture/flexbox-layout.md) — multi-axis positioning
 * [Layout Measurement](/concepts/architecture/layout-measurement.md) — `Measure()`/`ContentSize()` contract

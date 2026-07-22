@@ -3,7 +3,7 @@ type: concept
 title: Component Parity
 description: What the pkg/app Node set covers across desktop, web, and Android — per-kind status including the Android touch-sweep verification — and which catalog components are portable, excluded, or backend-specific.
 tags: [architecture, parity, node, roadmap]
-timestamp: 2026-07-12T00:00:00Z
+timestamp: 2026-07-22T00:00:00Z
 ---
 
 > **Ported from the Trellis/GopherWeb bundles at the 2026-07-16 consolidation.** Historical names map as: "Trellis" = `pkg/app`; "GopherWeb" = `pkg/web` (CSS prefix now `poem-`); "POEM" as a sibling project = the `pkg/render` engine layer. All are now this repository.
@@ -46,9 +46,11 @@ verification of 2026-07-16 (API 36 emulator, preferences/settings examples).
 | `AccordionNode`  | `Accordion`         | `widget.Disclosure` | ✅ header tap expands; nested control dispatches | Expand state is backend-local chrome, not `App[S]`. Known cosmetic overlap after expansion (TASK.md). |
 | `TabsNode`       | `Tabs` (controlled) | `widget.FormTabs`   | ✅ tab tap switches panel | Selection is `App[S]`-owned so the app can set it. |
 | `ImageNode`      | `ImageView`/`DrawImage` | data-URI `<img>` | ✅ renders through GLES texture cache | Encoded bytes and alt text. |
-| `ImageViewportNode` | `ImageViewport` | clipped `<img>` + Pointer Events | ✅ pan + two-pointer pinch + tap/markers | Controlled transform, normalized point activation, and stable accessible markers. |
+| `ImageViewportNode` | `ImageViewport` | clipped `<img>` + Pointer Events | ✅ pan + two-pointer pinch + tap/markers | Controlled transform, normalized point activation, and stable accessible markers. Fills its container rather than freezing at a laid-out size (`UI101`). |
+| `MapViewportNode` | `ImageViewport` (retained map scene) | `poem-map-viewport` canvas + WebGL2/WASM | ✅ GPU vector map, camera + feature messages, raster fallback | See [GPU Vector Map Rendering](/concepts/architecture/map-rendering.md). |
 | `ResponsiveNode` | `Responsive` | compact/wide fieldsets + `matchMedia` | ✅ width-selected branch | Compact is the no-JS baseline; inactive web fields are disabled. |
 | `ContainerNode`  | `FlexBox`           | `<div>` flex        | ✅ layout correct at density | |
+| `OverlayNode`    | `Overlay`           | `position:relative` box + absolutely-positioned layers | ✅ base fills; layers anchor + hit-test above base | Non-modal z-stack for canvas controls; see [Desktop Driver](/concepts/app/desktop-driver.md). |
 | `ModalNode`      | `Modal` (overlay)   | `widget.Modal`      | ✅ trigger opens overlay; nested control dispatches; back gesture (→Escape) dismisses | Open state is not `App[S]`; content is an open-time snapshot — verified visibly on Android. |
 
 ## Portable

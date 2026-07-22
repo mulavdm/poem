@@ -80,5 +80,5 @@ HTTP is the recommended path because it works well across shell contexts, test r
 - [Native Presenter Protocol](/concepts/protocol.md)
 
 # Citations
-- [README.md](../../../README.md) — Automation
-- [AGENTS.md](../../../AGENTS.md) — Automation Rules
+- [README.md](file:///d:/Programming/GUIProject/POEM/README.md) — Automation
+- [AGENTS.md](file:///d:/Programming/GUIProject/POEM/AGENTS.md) — Automation Rules

@@ -3,7 +3,7 @@ type: Concept
 title: Single-Process Windows Host
 description: The versioned Go DLL ABI, secure native loader, in-memory transport, lifecycle, and packaging contract.
 tags: [windows, cgo, dll, d3d11, packaging, msix]
-timestamp: 2026-07-18T00:00:00Z
+timestamp: 2026-07-22T00:00:00Z
 ---
 # Single-Process Windows Host
 
@@ -15,6 +15,8 @@ The window host owns Win32, D3D11, UI Automation, IME, audio, DPI, dialogs, auto
 
 Closing the window sends the normal protocol close event, cancels the engine cooperatively, closes transport endpoints to release blocking reads, and waits for bounded Go cleanup. Startup failures are reported before or alongside window creation and cannot leave a presenter child or extracted file.
 
+The host presents D3D11 through **DXGI flip-discard**, not the legacy blit/discard swap model. Under blit/discard the presenter rendered a correct backbuffer but DWM kept showing a white redirection surface — a fully composed semantic tree and map that never reached the screen. Flip-discard hands the backbuffer directly to the compositor, which fixed that class of driver/compositor blank-window failure; default and maximized visible-capture gates confirm the real UI and map are on screen.
+
 `windows_host/build.ps1` produces a portable EXE plus DLL folder/ZIP and a packaged Win32 full-trust MSIX. Signing is optional and externally configured. Development certificate creation and certificate trust installation are separate commands so package construction never silently changes trust stores.
 
 ## See also
@@ -25,5 +27,5 @@ Closing the window sends the normal protocol close event, cancels the engine coo
 
 # Citations
 
-- [README](../../../README.md)
-- [M7 migration guide](../../../MIGRATION_M7.md)
+- [README](file:///d:/Programming/GUIProject/POEM/README.md)
+- [M7 migration guide](file:///d:/Programming/GUIProject/POEM/MIGRATION_M7.md)

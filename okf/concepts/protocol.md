@@ -3,7 +3,7 @@ type: Concept
 title: Native Presenter Protocol
 description: The repo-owned binary wire protocol shared by the Go engine and native in-process presenters.
 tags: [protocol, transport, windows, android]
-timestamp: 2026-07-10T00:00:00Z
+timestamp: 2026-07-22T00:00:00Z
 ---
 # Native Presenter Protocol
 
@@ -12,6 +12,8 @@ timestamp: 2026-07-10T00:00:00Z
 Protocol v4 appends `MapSceneDelta` and `MapCamera` messages, an explicit `DrawMapScene` frame command, and map camera/feature/failure events without changing earlier numeric values. Scene deltas carry a viewport generation, hash-keyed vertex/index/glyph/icon resources, upload/release operations, ordered draw batches, camera and lighting uniforms. The draw command associates an accepted scene with its clipped component rectangle and carries fallback pixels for presenters without that scene. Decoders bound resource counts, draw counts, and aggregate bytes and reject trailing data. Presenters must discard generations older than the newest accepted generation for that viewport.
 
 The Go codec and C++ enum boundary are updated. Both decoders validate buffer strides, texture dimensions/byte counts, opacity, aggregate bounds, and trailing data. Native scene submission omits bytes for unchanged hash/descriptor pairs, emits deterministic releases for resources no longer referenced, and rejects late generations before transport. D3D11 and GLES3 apply generation-fenced retained resources, project accepted scene geometry into the requested viewport, cache that geometry in a dedicated immutable/static GPU buffer, and interleave texture-aware ranges at `DrawMapScene`; hash-keyed label atlases upload once and release with the scene resource. Unchanged frames do not re-project or upload it. Hash-resource-level vertex/index GPU buffers, the WebGL2 bridge, and the Go/WASM worker remain required.
+
+The lighting model grew inside v4 without a version bump, by **appending** uniform fields so existing numeric positions are preserved: `MapSceneDelta` carries height-fog density and colour, and then `ShadowCascades` after the fog fields (count 0/1/2 by quality tier). POI category likewise travels in the previously-unused tail of the existing 32-byte map vertex, so distinct marker silhouettes need no stride change. Decoders that predate a field see the earlier layout unchanged; newer decoders read the appended tail. How the presenters consume all of this — the shared projection/lighting/shadow maths, the GPU depth path, marker billboards, and the cartography pipeline that produces the delta — is [GPU Vector Map Rendering](/concepts/architecture/map-rendering.md).
 
 ## Adaptive capability updates
 
@@ -32,4 +34,4 @@ Protocol changes are cross-language changes: update both the Go and C++ implemen
 - [Automation Overview](/concepts/automation/overview.md)
 
 # Citations
-- [AGENTS.md](../../AGENTS.md) — Repo-Owned Protocol
+- [AGENTS.md](file:///d:/Programming/GUIProject/POEM/AGENTS.md) — Repo-Owned Protocol

@@ -56,4 +56,4 @@ Historical note: the former Go executable plus C++ child-sidecar runtime, named 
 - [Process Isolation Comparison](/concepts/architecture/process-isolation-comparison.md)
 
 # Citations
-- [README.md](../../../README.md)
+- [README.md](file:///d:/Programming/GUIProject/POEM/README.md)

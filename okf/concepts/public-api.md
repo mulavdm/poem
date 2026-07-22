@@ -84,5 +84,5 @@ document deliberate breaking changes in the same commit that makes them.
 - [Single-Process Windows Host](/concepts/architecture/windows-host.md)
 
 # Citations
-- [README.md](../../README.md)
-- [AGENTS.md](../../AGENTS.md) — Public API Stability
+- [README.md](file:///d:/Programming/GUIProject/POEM/README.md)
+- [AGENTS.md](file:///d:/Programming/GUIProject/POEM/AGENTS.md) — Public API Stability

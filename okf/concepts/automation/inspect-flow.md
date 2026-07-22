@@ -100,4 +100,4 @@ For general inspection, use this order:
 - [HTTP Endpoints](/concepts/automation/endpoints.md)
 
 # Citations
-- [AGENTS.md](../../../AGENTS.md) — Automation Rules
+- [AGENTS.md](file:///d:/Programming/GUIProject/POEM/AGENTS.md) — Automation Rules

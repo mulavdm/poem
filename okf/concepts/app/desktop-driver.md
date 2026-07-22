@@ -3,7 +3,7 @@ type: concept
 title: POEM Native Configuration Driver
 description: How desktop.Configure adapts App[S] into native renderer configuration for process hosts.
 tags: [architecture, poem, backend]
-timestamp: 2026-07-10T00:00:00Z
+timestamp: 2026-07-22T00:00:00Z
 ---
 
 > **Ported from the Trellis/GopherWeb bundles at the 2026-07-16 consolidation.** Historical names map as: "Trellis" = `pkg/app`; "GopherWeb" = `pkg/web` (CSS prefix now `poem-`); "POEM" as a sibling project = the `pkg/render` engine layer. All are now this repository.
@@ -60,7 +60,7 @@ POEM's theme variant), `ProgressBarNode` (`render.NewProgressBar`), `TableNode`
 `Direction`/`Gap`/`Padding`), `ImageNode` (content-hash decoded image), `ImageViewportNode`
 (clipped controlled image with local drag, wheel, pan/pinch preview, point activation, and
 accessible transformed markers), `ResponsiveNode` (compact/wide branch selected from assigned
-width), and `ModalNode` (see below). A viewport emits one strict transform message at gesture end;
+width), `ModalNode` (see below), and `OverlayNode` (`render.Overlay`, see below). A viewport emits one strict transform message at gesture end;
 a short tap emits either a normalized point or one marker ID, never both. Decoded pixels continue
 to use the content-hash cache while its destination changes each frame. See
 [Architecture Overview](/concepts/app/overview.md) for the full `Node` set and the policy on
@@ -79,3 +79,30 @@ trigger's `OnClick`, not from `BuildPagesFn`'s own execution — see
 `DismissTopOverlay()` handler and `OpenModal`'s `dismissOnEscape=true`, independent of
 `Modal.OnDismiss` — and since the modal's open/closed state was never tracked in `App[S]` to
 begin with, there's nothing to keep in sync on dismiss.
+
+## `OverlayNode` — floating canvas layers
+
+`OverlayNode` shares the word "overlay" with `ModalNode` but is a different mechanism, and the
+two are not interchangeable. `ModalNode` is a **focus-blocking dialog** managed out-of-band by
+the `OverlayManager`; `OverlayNode` is an **in-tree, non-modal layout primitive** that z-stacks
+floating layers over a base within one box, leaving the base fully interactive. `build` returns
+it as a `render.Overlay` (`pkg/render/layout/overlay.go`): the `Base` fills the box and *alone*
+determines its measured size, while each `OverlayLayer` is sized to its own preferred measurement
+and pinned by an `OverlayAnchor` (the nine positions — corners, edge centres, centre) held `Inset`
+logical pixels clear of the edges it hugs. Layers paint last-on-top and are hit-tested *before*
+the base, so a floating control always wins the pointer over the canvas beneath it; a press that
+misses every layer falls through to the base. Reach for it when a control acts *on* a spatial or
+media canvas — map zoom/fit clusters, a floating action button — where stacking the controls in a
+strip below would steal canvas height and sever them from the thing they control (the
+[adaptive-ui-ux-guide](file:///d:/Programming/GUIProject/adaptive-ui-ux-guide/PATTERNS.md) records
+this as the Canvas Overlay Controls pattern). The web backend renders it as a
+`position:relative` box with each layer absolutely positioned against its anchored edges, matching
+the native compositor; `collectMapNodes`/`currentMapSource` and design-lint all descend into
+`Base` and the layers, so a map nested under floating controls is still found and linted.
+
+Because layers anchor to the box edges, the base **must fit its container** — a canvas laid out to
+a fixed intrinsic size larger than the viewport carries its edge-anchored controls off-screen. The
+map viewport (`ImageViewportNode`) therefore measures to fill the available space rather than
+feeding its own laid-out `Rect` back as an explicit size request (the "layout output mistaken for
+author intent" anti-pattern, `UI101`); it responds to window resizes instead of freezing at its
+first-laid-out size.

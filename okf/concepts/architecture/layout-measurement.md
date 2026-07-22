@@ -3,7 +3,7 @@ type: Concept
 title: Layout Measurement Contract
 description: The native Measure()/ContentSize() contract that lets FlexBox and ScrollView size children without browser-style intrinsic layout.
 tags: [layout, measurement, api, migration]
-timestamp: 2026-07-10T00:00:00Z
+timestamp: 2026-07-22T00:00:00Z
 ---
 # Layout Measurement Quickstart
 
@@ -58,6 +58,10 @@ Use this when a component's assigned `Bounds()` describes the visible box, but i
 - cap long status text and chips explicitly when sharing a header row
 - preserve explicit component rects when the layout is intentionally fixed
 
+## Anti-pattern: layout output mistaken for author intent (`UI101`)
+
+A `Measure(...)` implementation must derive its preferred size from content and available space, **never from its own laid-out `Rect`**. Feeding the assigned bounds back as an explicit size request freezes a component at whatever size it was first laid out at: after a resize it reports the *old* size, so it truncates its label or fails to track the window. `Button` and `Badge` had this defect (they read `explicitSize(Rect)`) and now size from label content — `Button` carries a separate `FixedWidth` for genuine author sizing, kept distinct from the laid-out bounds. The map viewport (`ImageViewportNode`) had the same defect and now fills its available space, so it responds to window resizes and keeps its edge-anchored overlay controls on-screen. The design guide records this as `UI101`; a canvas that hosts corner controls must fit its viewport for those controls to stay reachable.
+
 **Systematic Layout Rule**: never use hardcoded visual offsets or ad-hoc coordinate bypasses to fix visual text or container clipping. Position and baseline issues must be resolved systematically within the rendering engine's layout components (like `FlexBox` or `Grid`) or component-level metric calculations, and parent container dimensions must be properly sized to fit their contents.
 
 ## See also
@@ -66,5 +70,5 @@ Use this when a component's assigned `Bounds()` describes the visible box, but i
 - [Scroll Viewports](/concepts/architecture/scroll-viewports.md)
 
 # Citations
-- [README.md](../../../README.md) — Layout Measurement
-- [AGENTS.md](../../../AGENTS.md) — Systematic Layout Design
+- [README.md](file:///d:/Programming/GUIProject/POEM/README.md) — Layout Measurement
+- [AGENTS.md](file:///d:/Programming/GUIProject/POEM/AGENTS.md) — Systematic Layout Design

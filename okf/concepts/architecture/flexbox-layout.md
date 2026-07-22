@@ -34,4 +34,4 @@ POEM `FlexBox` is not browser-grade intrinsic flexbox. It is a native layout hel
 - [Component Catalog](/concepts/architecture/component-catalog.md)
 
 # Citations
-- [README.md](../../../README.md) — Layout Measurement
+- [README.md](file:///d:/Programming/GUIProject/POEM/README.md) — Layout Measurement
