@@ -681,6 +681,44 @@ void RendererGLES::AppendQuad(std::vector<Vertex>& vertices, float x1, float y1,
     vertices.push_back(br);
 }
 
+// AppendLineQuad emits the segment as one quad rotated onto the line, matching
+// the Go reference rasterizer (automation.go's drawLine) and the D3D11
+// presenter. Filling the axis-aligned bounding box instead turns every
+// diagonal — chart splines, spinner spokes, checkmarks — into a solid block.
+void RendererGLES::AppendLineQuad(std::vector<Vertex>& vertices, float x1, float y1, float x2, float y2,
+                                  float thickness, float r, float g, float b, float a) {
+    const float dx = x2 - x1;
+    const float dy = y2 - y1;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    if (len <= 0.001f) return;
+    const float hw = std::max(thickness, 1.0f) * 0.5f;
+    const float nx = (-dy / len) * hw;
+    const float ny = (dx / len) * hw;
+
+    // The fragment shader's rounded-box SDF is axis-aligned and cannot describe
+    // a rotated segment, so the shading rect is padded past the quad's bounds:
+    // every fragment the quad rasterizes sits well inside it and shades solid,
+    // leaving the rotated geometry to define the line.
+    const float rectX = std::min(x1, x2) - hw - 2.0f;
+    const float rectY = std::min(y1, y2) - hw - 2.0f;
+    const float rectW = std::abs(dx) + hw * 2.0f + 4.0f;
+    const float rectH = std::abs(dy) + hw * 2.0f + 4.0f;
+
+    const auto corner = [&](float px, float py) {
+        return Vertex{px, py, 0.0f, 0.0f, r, g, b, a, rectX, rectY, rectW, rectH, 0.0f, 0.0f, 0.0f, 0.0f};
+    };
+    const Vertex startLeft = corner(x1 + nx, y1 + ny);
+    const Vertex endLeft = corner(x2 + nx, y2 + ny);
+    const Vertex startRight = corner(x1 - nx, y1 - ny);
+    const Vertex endRight = corner(x2 - nx, y2 - ny);
+    vertices.push_back(startLeft);
+    vertices.push_back(endLeft);
+    vertices.push_back(startRight);
+    vertices.push_back(startRight);
+    vertices.push_back(endLeft);
+    vertices.push_back(endRight);
+}
+
 void RendererGLES::BuildGeometry(const protocol::RenderFrame& frame,
                                  std::vector<Vertex>& vertices, std::vector<DrawRange>& ranges) {
     float currentGlow = 0.0f;
@@ -771,15 +809,9 @@ void RendererGLES::BuildGeometry(const protocol::RenderFrame& frame,
                        0.0f, currentGlow, currentGlass, radius);
             break;
         }
-        case protocol::DrawCommandType::DrawLine: {
-            const float thickness = 1.5f * scale_;
-            const float minX = std::min(x1, x2) - thickness * 0.5f;
-            const float maxX = std::max(x1, x2) + thickness * 0.5f;
-            const float minY = std::min(y1, y2) - thickness * 0.5f;
-            const float maxY = std::max(y1, y2) + thickness * 0.5f;
-            AppendQuad(vertices, minX, minY, maxX, maxY, 0, 0, 1, 1, cr, cg, cb, ca, 0.0f, 0.0f, 0.0f, 0.0f);
+        case protocol::DrawCommandType::DrawLine:
+            AppendLineQuad(vertices, x1, y1, x2, y2, 1.5f * scale_, cr, cg, cb, ca);
             break;
-        }
         case protocol::DrawCommandType::DrawText: {
             float penX = x1;
             const float baselineY = y1;

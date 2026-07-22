@@ -68,6 +68,10 @@ class RendererGLES {
                     float u1, float v1, float u2, float v2,
                     float r, float g, float b, float a,
                     float drawType, float glow, float isGlass, float radius);
+    // Segments are emitted as a quad rotated onto the line, not as their
+    // bounding box, so diagonals render as lines on both presenters.
+    void AppendLineQuad(std::vector<Vertex>& vertices, float x1, float y1, float x2, float y2,
+                        float thickness, float r, float g, float b, float a);
     void BuildGeometry(const protocol::RenderFrame& frame,
                        std::vector<Vertex>& vertices, std::vector<DrawRange>& ranges);
 	struct MapGeometryRange { std::uint32_t start = 0, count = 0; std::string textureHash; };

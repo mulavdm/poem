@@ -164,11 +164,15 @@ void FlushEvents() {
 }
 
 // ReadExact fills buf from the engine stream, blocking; false on EOF.
+// A zero-length read means the engine closed its end: treating it as "try
+// again" spins this thread at 100% instead of shutting the transport down,
+// so it terminates the same way a negative result does (the Windows host's
+// NativeApp::ReadExact rejects `count <= 0` for the same reason).
 bool ReadExact(std::uint8_t* buf, std::size_t need) {
     std::size_t got = 0;
     while (got < need) {
         const int n = PoemHostRead(buf + got, static_cast<int>(need - got));
-        if (n < 0) return false;
+        if (n <= 0) return false;
         got += static_cast<std::size_t>(n);
     }
     return true;

@@ -12,6 +12,12 @@
 cpp_sidecar/build/
 cpp_sidecar/build-*/
 
+# windows_host/build.ps1 packaging output (portable bundle, ZIP, MSIX)
+/dist/
+
+# android_engine/build_apk.sh output (per-ABI apkroot, .apk, .so)
+android_engine/build/
+
 # Go cache
 .gocache/
 # Output of the go coverage tool, specifically when used with LiteIDE

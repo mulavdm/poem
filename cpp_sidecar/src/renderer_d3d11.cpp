@@ -1460,33 +1460,43 @@ void RendererD3D11::AppendQuad(std::vector<Vertex>& vertices, float x1, float y1
     vertices.insert(vertices.end(), std::begin(quad), std::end(quad));
 }
 
+// AppendLineQuad emits the segment as one quad rotated onto the line, matching
+// the Go reference rasterizer (automation.go's drawLine), which draws a true
+// segment between the endpoints rather than filling its bounding box.
+//
+// The corners must be pushed explicitly: AppendQuad takes an axis-aligned
+// extent and expands it into (x1,y1)-(x2,y2), which collapses to zero area
+// whenever the offset endpoints share an X or a Y — that is, for every
+// horizontal and vertical line.
 void RendererD3D11::AppendLineQuad(std::vector<Vertex>& vertices, float x1, float y1, float x2, float y2, float thickness,
                                    float r, float g, float b, float a) {
     const float dx = x2 - x1;
     const float dy = y2 - y1;
     const float len = std::sqrt(dx * dx + dy * dy);
     if (len <= 0.001f) return;
-    const float nx = -dy / len;
-    const float ny = dx / len;
-    const float hw = thickness * 0.5f;
-    const float rx1 = std::min(x1 - hw, x2 - hw);
-    const float ry1 = std::min(y1 - hw, y2 - hw);
-    AppendQuad(vertices,
-               x1 + nx * hw, y1 + ny * hw,
-               x2 + nx * hw, y2 + ny * hw,
-               0, 0, 1, 0,
-               r, g, b, a,
-               rx1, ry1, len, thickness,
-               0.0f, 0.0f, 0.0f, 0.0f,
-               0.0f, 0.0f, 0.0f, 0.0f);
-    AppendQuad(vertices,
-               x1 - nx * hw, y1 - ny * hw,
-               x2 - nx * hw, y2 - ny * hw,
-               0, 1, 1, 1,
-               r, g, b, a,
-               rx1, ry1, len, thickness,
-               0.0f, 0.0f, 0.0f, 0.0f,
-               0.0f, 0.0f, 0.0f, 0.0f);
+    const float hw = std::max(thickness, 1.0f) * 0.5f;
+    const float nx = (-dy / len) * hw;
+    const float ny = (dx / len) * hw;
+
+    // shadeShape's rounded-rect SDF is axis-aligned and cannot describe a
+    // rotated segment, so the shading rect is padded past the quad's bounds:
+    // every fragment the quad rasterizes then sits well inside it and shades
+    // solid, leaving the rotated geometry to define the line.
+    const float rectX = std::min(x1, x2) - hw - 2.0f;
+    const float rectY = std::min(y1, y2) - hw - 2.0f;
+    const float rectW = std::abs(dx) + hw * 2.0f + 4.0f;
+    const float rectH = std::abs(dy) + hw * 2.0f + 4.0f;
+
+    const auto corner = [&](float px, float py) {
+        return Vertex{px, py, 0.0f, 0.0f, r, g, b, a, rectX, rectY, rectW, rectH,
+                      0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    };
+    const Vertex startLeft = corner(x1 + nx, y1 + ny);
+    const Vertex endLeft = corner(x2 + nx, y2 + ny);
+    const Vertex startRight = corner(x1 - nx, y1 - ny);
+    const Vertex endRight = corner(x2 - nx, y2 - ny);
+    const Vertex quad[6] = {startLeft, endLeft, startRight, startRight, endLeft, endRight};
+    vertices.insert(vertices.end(), std::begin(quad), std::end(quad));
 }
 
 void RendererD3D11::AppendRect(std::vector<Vertex>& vertices, float x1, float y1, float x2, float y2,
