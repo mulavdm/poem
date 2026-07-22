@@ -66,11 +66,9 @@ func (b *Badge) Measure(avail image.Point, state *types.ApplicationState) types.
 	// "Engine unava…" after a resize (design lint UI101, TYPOGRAPHY clipping).
 	// Min holds the full label too, so a flex row cannot shrink it into an
 	// ellipsis; a status badge that says half its state is worse than one that
-	// wraps or pushes the row wider.
-	// The horizontal padding must clear fitButtonLabel's truncation reserve, or
-	// the badge is sized to exactly the width at which its own draw path trims
-	// the label — the failure that shipped "Engine unavailable" as "Engine
-	// unava…". Reserve a little more than fitButtonLabel subtracts.
+	// wraps or pushes the row wider. The padding must clear fitButtonLabel's
+	// truncation reserve, or the badge is sized to exactly the width at which
+	// its own draw path would trim the label.
 	padding := maxInt(2*t.Spacing.SM, badgeLabelPadding)
 	width := len([]rune(b.Text))*cw + padding
 	return types.MeasureResult{
