@@ -1,0 +1,333 @@
+# POEM Shared C++ Runtime Conformance Plan
+
+## Summary
+
+POEM does not satisfy the current [TDD](cross_platform_cpp_framework_tdd.md)
+literally, and should not try to: that document specifies one C++ codebase across
+six first-class platforms with native-shell UI, plugins, and WebGPU, which is not
+what POEM is or what it should become. This plan makes the TDD describe the
+system that exists, and makes that system conformant.
+
+| Area | Current assessment |
+|---|---|
+| Portable application API | Strong: one Go `App[S]` runs on Windows, Android, and Web |
+| Shared native runtime | Early: protocol, map math, and shaders are shared (1,432 of 9,151 host C++ lines); host loops, geometry compilation, caches, input, and services remain duplicated |
+| Windows | Mature Win32/D3D11/UIA runtime, packaging, automation, and CI |
+| Android | Functional NativeActivity/GLES presenter with lifecycle, IME, audio, and touch; accessibility, services, and CI are incomplete |
+| Web | Deliberate server-rendered DOM backend with WebGL2/Go-WASM cartography; not a full C++ WASM UI runtime |
+| Services | Useful Go contracts exist, but host implementations and conformance coverage are sparse |
+| Missing platforms | iOS, macOS, and Linux hosts are absent and explicitly outside this plan |
+| Rendered-output verification | **None.** No test at any layer compares what a host actually draws |
+
+That last row is the finding that shapes this plan. See
+[M0 duplication inventory](M0_duplication_inventory.md): `renderer_gles.h`
+states that the two presenters render frames identically, and they do not, in
+nine places. Two were live bugs — `DrawLine` produced *nothing* for axis-aligned
+lines on the mature Windows host, and solid blocks for diagonals on Android —
+sitting undetected in a tree with packaging, automation, and CI.
+
+Two consequences run through everything below:
+
+1. **The shared native core is justified by divergence control, not
+   deduplication.** The measured extractable overlap is ~695 lines against a
+   9,151-line host C++ corpus (~8%), while the scaffolding to extract it is
+   plausibly 1,500–2,500 new lines. Priced as a dedup exercise, the program
+   loses. Priced as "make the two presenters provably agree," it wins.
+2. **The conformance corpus comes first.** Captured protocol streams plus golden
+   `CompiledFrame` snapshots are what make divergence detectable, and they are
+   the same harness the Windows parity gate needs. Building them before the core
+   pays twice.
+
+The target architecture remains a two-stage path:
+
+1. Consolidate at the draw-command boundary now.
+2. Reconsider moving the semantic UI tree into C++ only after measured 120 Hz
+   results and an architecture review justify it.
+
+## Target Architecture and Public Contracts
+
+- Keep Go as the only app-authoring API. Go continues to own `App[S]`, state,
+  reducers, semantic nodes, layout, widget behavior, focus, hit-testing, and
+  command/subscription orchestration.
+- Introduce a shared C++20 native core owning:
+  - ABI transport and protocol validation;
+  - lifecycle, surface, and device state machines;
+  - renderer-neutral frame/geometry compilation;
+  - retained image, font, and map-resource management;
+  - input normalization;
+  - asynchronous platform-service routing;
+  - structured diagnostics and performance counters.
+- Keep D3D11 and GLES3/GLES2 fallback as conforming capability-based backends.
+  D3D12 and Vulkan become optional upgrades justified by capability or measured
+  performance, not compliance requirements.
+- Preserve server-rendered Web as first-class. Reuse C++ through WASM only for
+  canvas-heavy algorithms where it materially reduces duplication; do not replace
+  the accessible DOM driver.
+- Standardize a platform-neutral ABI v2 with application metadata/start/read/
+  write/stop exports. Desktop hosts may dynamically load the Go library; mobile
+  hosts may link it, but both use the same contract and framed protocol.
+- Introduce protocol v5 with stable numeric message IDs and typed modules for
+  frames, input, lifecycle, capabilities, services, diagnostics, and
+  cancellation. Every wire-shape change must bump or explicitly extend the
+  protocol; no silent incompatible appends.
+- Make service calls asynchronous request/response or streaming operations with
+  request IDs, cancellation, size limits, deadlines, explicit error codes, and no
+  callback after cancellation.
+- Apply the planned pre-v1 Go API cleanup:
+  - add `StartContext` containing the immutable capability/platform snapshot;
+  - change `Start` to `func(S, StartContext) (S, Cmd)`;
+  - add optional `Lifecycle func(S, LifecycleEvent) (S, Cmd)`;
+  - add `RequiredCapabilities CapabilitySet`;
+  - remove app-owned `App.Services`;
+  - retain `ServicesFromContext`, backed by host proxies rather than app
+    implementations;
+  - provide explicit host-service overrides through Web and test-driver options.
+    **This replacement API must be specified before the removal lands** —
+    `App.Services` is today's test seam, and removing it without a named
+    substitute breaks downstream test suites with no migration path.
+- Missing optional capabilities return a typed unsupported error. Missing
+  capabilities declared in `RequiredCapabilities` fail startup with an actionable
+  diagnostic.
+
+## Release Criteria
+
+Stated here rather than in the TDD, because M1 rewrites the TDD and criteria that
+live only in the document being rewritten cannot grade the work.
+
+A host is **core-conformant** when it runs on `poem_native_core` with the null
+backend passing the lifecycle, capability, service, input, surface-loss,
+resource-retention, and shutdown suites.
+
+A host is **host-conformant** when, additionally:
+
+1. it reproduces the golden `CompiledFrame` corpus byte-for-byte;
+2. its rendered output matches the reference within tolerance on the gallery and
+   MAPPS scenes;
+3. it publishes a complete accessibility tree from the semantic protocol;
+4. it implements the navigation-ready service set or reports unsupported
+   honestly;
+5. it survives surface loss, resize, DPI/density change, and background/restore
+   without losing Go application state;
+6. it meets the performance gates in M0 (no regression against baseline);
+7. it builds and tests in CI on every supported ABI.
+
+A host is **release-supported** when it is host-conformant and additionally has
+packaging, signing, and downstream MAPPS validation.
+
+Windows and Android are the only hosts in scope for release-supported. iOS,
+macOS, and Linux are future consumers of the completed contracts.
+
+## Milestones
+
+Ordered. Each ends in a buildable, shippable tree and is independently
+revertable. No milestone changes two things at once.
+
+### M0 — Measure before moving *(complete)*
+
+- [Duplication inventory](M0_duplication_inventory.md): what is actually shared,
+  what is API-bound, and what the extraction ceiling is.
+- `rust_engine/` dispositioned: superseded pre-C++ engine, out of scope; stale
+  `README.md` and `okf/concepts/web/index.md` pointers to clean up in M7.
+- [Performance baselines](M0_performance_baselines.md) recorded on the Windows
+  host. Gallery Go work is inside budget at 1.14 ms p95; **MAPPS is 15–24x over
+  at 31.8–49.8 ms p95**, today, before any migration. This confirms the gate
+  design below: an absolute 120 Hz gate would have blocked the migration on a
+  pre-existing condition.
+- **Outstanding, and now scoped by the baseline run:**
+  - there is *no* native-side frame timing anywhere, so the plan's 4.17 ms
+    native gate is currently unmeasurable;
+  - the perf tracker exposes avg/max only — percentiles have to be
+    reconstructed from a 256-entry event ring, and the phase splits are
+    quantized to 0.01 ms;
+  - the gallery and MAPPS "scenes" the gates refer to do not exist as fixtures;
+    MAPPS in particular needs a fixed replayed camera path, since run-to-run
+    variance is currently ~50%.
+
+  All four are prerequisites for the M2 corpus rather than separate work.
+
+### M1 — Make the TDD truthful and measurable
+
+- Rewrite the tracked TDD as "Go Application Framework with Shared C++ Native
+  Runtime."
+- Define `core-conformant`, `host-conformant`, and `release-supported` so future
+  platforms can be added without overstating present support.
+- Add stable requirement IDs and a traceability matrix linking each normative
+  requirement to code, tests, or an explicit gap.
+- Update Web, graphics, build, lifecycle, services, and language-boundary
+  sections to match the selected architecture.
+- Replace the untracked root duplicate with a short pointer to the POEM-owned
+  specification and update the relevant OKF concepts/log.
+
+*Exit:* the TDD describes the system that exists. No code has changed.
+
+### M2 — Conformance corpus
+
+- Capture real protocol streams from gallery and MAPPS sessions into a versioned
+  fixture set.
+- Define the golden `CompiledFrame` snapshot format and record references.
+- Add tolerant rendered-output comparison for both presenters, driven by the
+  existing Windows HTTP automation surface and an Android equivalent.
+- Backfill the nine known divergences as explicit cases, so each is either fixed
+  or recorded as an accepted difference with a reason.
+
+*Exit:* the two presenters' disagreements are visible in CI. This is the single
+highest-value milestone in the plan and it does not depend on the shared core.
+
+### M3 — Create the shared native project
+
+- One CMake/CMakePresets C++20 project producing `poem_native_core`, a
+  headless/null backend, D3D11 and GLES backend modules, host adapters, and
+  contract tests.
+- CMake owns only C++ libraries/tests. Go tooling, the existing Gradle-free
+  `build_apk.sh` path, Windows packaging, and future Xcode packaging compose
+  final applications.
+- Define platform-neutral `Runtime`, `ApplicationTransport`, `RendererBackend`,
+  `PlatformServices`, `CapabilitySet`, `LifecycleEvent`, `InputEvent`, and
+  structured `Result`/`Error` contracts without native SDK types in shared
+  headers.
+- Use the platform UI thread for host operations and presentation, one blocking
+  transport thread, and a bounded cancellable worker pool for native services.
+- Keep lifecycle state separate from surface/device state so Android recreation,
+  resize, suspension, and GPU loss do not destroy Go application state.
+- Move duplicated frame interpretation, clipping, quad/text/image geometry
+  generation, map-scene retention, hash/generation validation, and resource
+  release policy out of the D3D11/GLES implementations. Compile protocol frames
+  into immutable `CompiledFrame` snapshots; GPU backends manage only
+  API-specific resources, surface/device operations, uploads, draw submission,
+  and capture.
+- **Protocol stays frozen at v4 for the whole of M3–M5.** The parity gates below
+  compare two implementations against identical captured streams, which is
+  impossible across a wire-format change.
+- The extraction is nine decisions, not a mechanical lift: each divergence in the
+  inventory needs a winner chosen and verified on both hosts, and four of them
+  change visible output. Budget them as behavior changes with screenshot review.
+
+*Exit:* `poem_native_core` and the null backend pass the conformance suites. No
+host has cut over.
+
+### M4 — Windows onto the core
+
+- Adapt the existing secure DLL loader and Win32 host to `poem_native_core`.
+- Move UIA publication, dialogs, clipboard, system preferences, window
+  operations, capture, and lifecycle mapping behind Windows service/host
+  adapters.
+- Run legacy and new frame compilation against the M2 corpus; compare compiled-
+  frame hashes and tolerant screenshots.
+- Switch the canonical Windows build only after gallery and MAPPS automation,
+  UIA, resize/DPI, capture, shutdown, and packaging gates pass.
+- Remove the legacy Windows path in the same milestone that cuts over.
+
+*Exit:* Windows is host-conformant on the shared core, with one implementation.
+
+### M5 — Android onto the core, still NativeActivity
+
+- Port the GLES presenter onto `poem_native_core`, keeping the existing
+  NativeActivity host, `build_apk.sh` packaging, and JNI surface unchanged.
+- Preserve rotation/background state, input behavior, raster fallback, audio,
+  insets, and existing map functionality.
+- Gate on the M2 corpus plus emulator and physical-device passes on both ABIs.
+
+*Exit:* Android is core-conformant with its renderer on the shared core, and
+exactly one variable has changed.
+
+### M6 — Kotlin host and accessibility
+
+- Add a Gradle application with a minimal Kotlin activity and JNI adapter; keep
+  CMake for the shared runtime/GLES backend and a locked task for building the Go
+  shared library per ABI.
+- Kotlin owns lifecycle forwarding, surfaces, permissions, accessibility,
+  IME/insets, intents, and Android service callbacks. Rendering, frame
+  compilation, resource management, and runtime state stay in C++.
+- Implement Android accessibility from the existing semantic-tree protocol,
+  including focus, actions, text, collections, scrolling, and notifications. The
+  `cpp_sidecar` UIA bridge is the reference implementation.
+
+*Exit:* Android is host-conformant. The NativeActivity host is removed only once
+this passes.
+
+*Rationale for splitting M5/M6:* the existing NativeActivity host is working code
+with lifecycle, IME, AAudio, rotation, and insets verified on emulator and a
+physical arm64 device. Replacing the host and the renderer simultaneously, on the
+platform with the weakest CI, is two variables at once.
+
+### M7 — Breaking release
+
+Everything that changes a public contract, landed together with migration notes
+and an atomic downstream MAPPS update:
+
+- protocol v5 with stable numeric message IDs and typed modules;
+- ABI v2;
+- the Go API cleanup (`StartContext`, `Start`, `Lifecycle`,
+  `RequiredCapabilities`, `App.Services` removal with its named replacement);
+- removal of obsolete ABI symbols, zero-Java packaging, and stale documentation,
+  including the `rust_engine/` pointers in `README.md` and
+  `okf/concepts/web/index.md`;
+- gallery, examples, MAPPS launchers, packaging scripts, CI, README, migration
+  notes, and OKF updated atomically.
+
+*Exit:* one wire format, one ABI, one Go API, no legacy duplication.
+
+### M8 — Services, demand-driven
+
+- Define contracts for logical paths/files, clipboard, dialogs, preferences,
+  secure storage, device/system information, accessibility, permissions,
+  location, haptics, notifications, sharing, wake locks, and speech.
+- **Implement only what gallery and MAPPS actually call, plus what navigation
+  needs.** Fourteen implemented contracts plus five stubs is too much surface for
+  a pre-v1 framework with two hosts; let the first real consumer pull each one in.
+  Where supported:
+  - Windows: known folders, atomic preferences, DPAPI secrets, clipboard/dialogs,
+    system preferences, device/window state, UIA, location, speech, and wake
+    control; report unsupported honestly where packaging or hardware prevents a
+    service.
+  - Android: app/cache/temp paths, preferences, Keystore, clipboard/SAF, runtime
+    permissions, `LocationManager`, vibrator, notifications, Sharesheet, wake
+    locks, text-to-speech, accessibility, and IME/insets.
+- Camera, biometrics, purchases, push registration, and background scheduling
+  are defined but return tested unsupported results until a product requirement
+  drives them.
+- Validate all paths, imports, service payloads, enum values, permissions, sizes,
+  and secrets at the native boundary.
+
+## Test and Acceptance Plan
+
+- Cross-language golden fixtures must be encoded and decoded by both Go and C++
+  for every protocol message.
+- Fuzz Go and C++ decoders for malformed lengths, unknown enums, trailing bytes,
+  resource exhaustion, cancellation races, and service payload attacks.
+- Run the same lifecycle, capability, service, input, surface-loss,
+  resource-retention, and shutdown conformance suite against the null, Windows,
+  and Android adapters.
+- **Rendered output is a gate, not an afterthought** (M2). Every host compares
+  compiled-frame hashes against the corpus and rendered output within tolerance.
+  The two live bugs M0 found were invisible to every existing test.
+- CI must run Go format/test/race/vet, C++ warnings-as-errors and CTest on
+  Windows and Linux, Windows D3D/UIA/package tests, Android builds per ABI, and
+  emulator lifecycle/accessibility/service tests.
+- Gallery is the component/accessibility breadth gate; MAPPS is the map,
+  async-service, lifecycle, performance, and downstream compatibility gate.
+- Preserve Web form, session, CSRF, accessibility, responsive-layout, and
+  WebGL2/WASM map tests.
+- Performance gates, measured against the M0 baselines:
+  - **primary gate: no regression against the recorded baseline** on the defined
+    gallery and MAPPS scenes;
+  - target, tracked separately and not a migration blocker: native framework CPU
+    work below 4.17 ms at p95, Go build/render/serialize below 2.08 ms at p95,
+    and p99 within one 8.33 ms frame without GC-attributable missed frames.
+- Open the Stage 2 semantic-tree review only if repeated failures remain after
+  targeted profiling/optimization, or the post-migration architecture review
+  finds that the draw boundary materially obstructs maintainability or another
+  host. **Stage 2 is not automatically authorized.**
+
+## Assumptions
+
+- This program makes the reusable native backend and current Windows/Android
+  hosts conformant; it does not implement iOS, macOS, or Linux.
+- Native-shell UI, plugins, camera, biometrics, purchases, push, and background
+  execution are deferred capabilities.
+- The custom bounded protocol remains dependency-free; no FlatBuffers, protobuf,
+  Dawn, wgpu-native, or Vulkan portability layer is introduced.
+- Breaking Go/ABI changes are acceptable before v1, with explicit migration notes
+  and an atomic downstream MAPPS update — concentrated in M7 rather than spread
+  across the migration.
+- `rust_engine/` is the superseded pre-C++ engine and is not a migration target.
