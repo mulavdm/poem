@@ -27,6 +27,7 @@
 
 #include "audio_aaudio.h"
 #include "ime_jni.h"
+#include "poem/perf.h"
 #include "poem/protocol.h"
 #include "renderer_gles.h"
 
@@ -204,6 +205,7 @@ void TransportLoop() {
                 break;
             }
             case poem::protocol::MessageType::RenderFrame: {
+                poem::perf::ScopedTimer decodeTimer("decode_frame");
                 auto frame = poem::protocol::DecodeRenderFrame(envelope.body);
                 static int frames = 0;
                 if (frames++ % 300 == 0) {
@@ -214,7 +216,11 @@ void TransportLoop() {
                 break;
             }
             case poem::protocol::MessageType::MapSceneDelta: {
-                auto scene = poem::protocol::DecodeMapSceneDelta(envelope.body);
+                poem::protocol::MapSceneDelta scene;
+                {
+                    poem::perf::ScopedTimer decodeTimer("decode_map_scene");
+                    scene = poem::protocol::DecodeMapSceneDelta(envelope.body);
+                }
                 HLOGI("map scene: viewport=%s gen=%llu resources=%zu draws=%zu sun=%.1f/%.1f",
                       scene.viewportId.c_str(), static_cast<unsigned long long>(scene.generation),
                       scene.resources.size(), scene.draws.size(), scene.sunAzimuth, scene.sunElevation);
@@ -223,8 +229,11 @@ void TransportLoop() {
                     HLOGI("  draw[%zu] prim=%d count=%u layer=%d opacity=%.2f depthTest=%d",
                           i, static_cast<int>(d.primitive), d.count, d.layer, d.opacity, d.depthTest ? 1 : 0);
                 }
-                std::lock_guard<std::mutex> lock(g_host.frameMutex);
-                g_host.renderer.ApplyMapScene(scene);
+                {
+                    poem::perf::ScopedTimer applyTimer("apply_map_scene");
+                    std::lock_guard<std::mutex> lock(g_host.frameMutex);
+                    g_host.renderer.ApplyMapScene(scene);
+                }
                 break;
             }
             case poem::protocol::MessageType::SetImeVisible: {
@@ -237,6 +246,55 @@ void TransportLoop() {
             case poem::protocol::MessageType::PlaySound: {
                 static poem::AudioEngineAAudio audio;
                 audio.Play(poem::protocol::DecodePlaySound(envelope.body).type);
+                break;
+            }
+            case poem::protocol::MessageType::NativeDebugRequest: {
+                // Answers /native-state and /perf/native. Capture is not
+                // implemented here: glReadPixels needs the GL context current
+                // on the render thread, so it cannot be served from this
+                // transport thread. Use `adb shell screencap` for presented
+                // pixels; the request reports the gap rather than returning a
+                // blank image that would read as a rendering failure.
+                const auto request = poem::protocol::DecodeNativeDebugRequest(envelope.body);
+                poem::protocol::NativeDebugResponse response;
+                if (request.captureFrame || request.capturePresentedFrame || request.captureDesktopFrame) {
+                    response.error = "native frame capture is not implemented on the Android presenter";
+                }
+                for (const auto& phase : poem::perf::Global().Snapshot()) {
+                    poem::protocol::NativePerfPhase wire;
+                    wire.name = phase.name;
+                    wire.count = phase.count;
+                    wire.meanMS = phase.meanMS;
+                    wire.p50MS = phase.p50MS;
+                    wire.p95MS = phase.p95MS;
+                    wire.p99MS = phase.p99MS;
+                    wire.maxMS = phase.maxMS;
+                    response.perfPhases.push_back(std::move(wire));
+                }
+                if (request.resetPerf) {
+                    poem::perf::Global().Reset();
+                }
+                {
+                    std::lock_guard<std::mutex> lock(g_host.frameMutex);
+                    // The surface is the window: there is no separate window
+                    // rect, and density stands in for DPI.
+                    // Density is reported where Windows reports DPI, in the
+                    // same 160-dpi-per-scale-unit terms the renderer scales by.
+                    response.dpi = static_cast<std::int32_t>(g_host.scale * 160.0f);
+                    response.windowVisible = g_host.display != EGL_NO_DISPLAY;
+                    response.windowForeground = response.windowVisible;
+                    response.windowRight = g_host.width;
+                    response.windowBottom = g_host.height;
+                    response.clientWidth = g_host.logicalW;
+                    response.clientHeight = g_host.logicalH;
+                    response.workRight = g_host.width;
+                    response.workBottom = g_host.height;
+                    response.backbufferWidth = g_host.width;
+                    response.backbufferHeight = g_host.height;
+                }
+                if (!WriteFramed(poem::protocol::EncodeNativeDebugResponse(response))) {
+                    HLOGE("native debug response write failed");
+                }
                 break;
             }
             case poem::protocol::MessageType::SemanticTree:
@@ -434,7 +492,14 @@ void DrawFrame(Host* host) {
         frame = host->latestFrame;
     }
     if (atlas) host->renderer.UploadAtlas(*atlas);
-    if (frame) host->renderer.Render(*frame);
+    if (frame) {
+        // "present" is the same channel the D3D11 host records: geometry
+        // compilation plus draw submission, excluding the GPU's own execution
+        // and excluding the eglSwapBuffers below, which blocks on the
+        // compositor rather than measuring framework CPU work.
+        poem::perf::ScopedTimer timer("present");
+        host->renderer.Render(*frame);
+    }
     if (!eglSwapBuffers(host->display, host->surface)) {
         // EGL_BAD_SURFACE etc. — the surface died under us (seen during
         // aggressive lifecycle churn); tear down and wait for INIT_WINDOW.
@@ -773,6 +838,10 @@ void android_main(android_app* app) {
         }
         HLOGI("app data dir: %s", g_host.dataDir.empty() ? "(unresolved)" : g_host.dataDir.c_str());
     }
+    // Opt-in inspection is gated on the `debug.poem.inspection` system
+    // property, but the property is read on the Go side (pkg/mobile): the Go
+    // runtime snapshots the environment at init, so a setenv() from here would
+    // never be visible to os.Getenv.
     HLOGI("poem android host entered");
 
     while (true) {

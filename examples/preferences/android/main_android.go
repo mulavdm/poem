@@ -9,6 +9,8 @@ package main
 import "C"
 
 import (
+	"os"
+
 	"github.com/mulavdm/poem/pkg/mobile"
 	"github.com/mulavdm/poem/pkg/render"
 
@@ -23,7 +25,16 @@ import (
 //export PoemAndroidStart
 func PoemAndroidStart(width, height C.int, dataDir *C.char) {
 	_ = dataDir // preferences resolve via HOME (set by the host)
-	config := desktop.Configure(preferences.App, render.AppConfig{Title: "Preferences", Effects: render.EffectsConfig{Audio: true}})
+	base := render.AppConfig{Title: "Preferences", Effects: render.EffectsConfig{Audio: true}}
+	// Opt-in only: the host exports POEM_INSPECTION when
+	// `debug.poem.inspection` is set. An invalid port is a configuration
+	// mistake worth surfacing, but it must not stop the app from running.
+	if automation, err := render.InspectionAutomationConfig(os.Getenv); err != nil {
+		mobile.Logf("inspection disabled: %v", err)
+	} else {
+		base.Automation = automation
+	}
+	config := desktop.Configure(preferences.App, base)
 	mobile.Start(config, int(width), int(height))
 }
 

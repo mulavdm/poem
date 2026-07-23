@@ -17,9 +17,16 @@ package mobile
 #cgo LDFLAGS: -llog
 #include <android/log.h>
 #include <stdlib.h>
+#include <sys/system_properties.h>
 
 static void poemLog(const char* msg) {
     __android_log_write(ANDROID_LOG_INFO, "poem-go", msg);
+}
+
+// poemSystemProperty reads an Android system property into caller-owned
+// storage. PROP_VALUE_MAX bounds the result, so the buffer cannot overflow.
+static int poemSystemProperty(const char* name, char* out) {
+    return __system_property_get(name, out);
 }
 */
 import "C"
@@ -70,6 +77,50 @@ func (logcatWriter) Write(p []byte) (int, error) {
 func logcat(format string, args ...any) {
 	w := logcatWriter{}
 	w.Write([]byte(fmt.Sprintf(format, args...)))
+}
+
+// Logf writes to logcat from application code. Android apps have no usable
+// stderr before the engine starts, so a bootstrap diagnostic would otherwise
+// be invisible.
+func Logf(format string, args ...any) {
+	logcat(format, args...)
+}
+
+// systemProperty reads an Android system property, returning "" when unset.
+func systemProperty(name string) string {
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+
+	buf := make([]C.char, C.PROP_VALUE_MAX)
+	length := C.poemSystemProperty(cName, &buf[0])
+	if length <= 0 {
+		return ""
+	}
+	return C.GoStringN(&buf[0], length)
+}
+
+// NativeActivity has no command line to carry a launch flag, so inspection is
+// gated on a system property:
+//
+//	adb shell setprop debug.poem.inspection 1
+//	adb forward tcp:47831 tcp:47831
+//
+// The property is translated into the same environment contract
+// render.InspectionAutomationConfig reads on every platform, so there is one
+// gate rather than a per-platform variant. It must happen here in Go rather
+// than in the C++ host: the Go runtime snapshots the environment at init, so a
+// setenv() from the host after that point is invisible to os.Getenv.
+//
+// This runs at package init, before any exported entry point, so an
+// application reading the config in its start function sees the result.
+func init() {
+	if systemProperty("debug.poem.inspection") != "1" {
+		return
+	}
+	_ = os.Setenv("POEM_INSPECTION", "1")
+	if port := systemProperty("debug.poem.inspection.port"); port != "" {
+		_ = os.Setenv("POEM_INSPECTION_PORT", port)
+	}
 }
 
 var (

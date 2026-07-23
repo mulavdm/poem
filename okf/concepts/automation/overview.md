@@ -3,7 +3,7 @@ type: Concept
 title: Automation Layer Overview
 description: Goals, configuration, and the transport model of POEM's shared HTTP automation/inspection layer.
 tags: [automation, http, config, transport]
-timestamp: 2026-07-10T00:00:00Z
+timestamp: 2026-07-23T00:00:00Z
 ---
 # POEM Automation Reference
 
@@ -25,6 +25,57 @@ POEM automation exists to solve three related problems:
    - what is actually visible on the user's desktop
 
 That third distinction is critical. A native app can be alive and rendering correctly while still being occluded, backgrounded, or partially off-screen — see [Capture Modes](/concepts/automation/capture-modes.md).
+
+## Platform support
+
+The automation layer is plain Go in `pkg/render` with no build tags, and every
+host reaches it through the same `RunHosted` path, so **it runs on Android as
+well as Windows**. Both presenters now implement the native debug channel
+(protocol messages 201/202); the remaining difference is frame capture.
+
+| Surface | Windows | Android |
+|---|---|---|
+| `/state`, `/components`, `/click`, `/focus`, `/set-text`, `/press-key` | yes | yes |
+| `/frame` (Go reference rasterizer) | yes | yes |
+| `/perf/state`, `/perf/events`, `/perf/reset` | yes | yes |
+| `/native-state` | yes | yes |
+| `/perf/native` | yes | yes |
+| `/native-frame`, `/self-frame`, `/window-frame`, `/desktop-frame` | yes | no |
+| `/prepare-window` | yes | no-op (no window manager) |
+
+Capture is unimplemented on Android because `glReadPixels` needs the GL context
+current on the render thread and cannot be served from the transport thread.
+The request returns 500 carrying the presenter's own explanation rather than a
+blank image, which would read as a rendering failure. For real presented pixels
+use `adb shell screencap`; the Go `/frame` rasterizer is the reference image,
+not the GLES output.
+
+On Android `/native-state` reports the surface as the window — there is no
+separate window rect — and density where Windows reports DPI.
+
+### Enabling it on Android
+
+NativeActivity has no command line to carry a launch flag, so the gate is a
+system property read by `pkg/mobile` at package init and translated into the
+same `POEM_INSPECTION` environment contract every platform uses. It must be
+read on the Go side: the Go runtime snapshots the environment at init, so a
+`setenv()` from the C++ host afterwards is invisible to `os.Getenv`.
+
+```bash
+adb shell setprop debug.poem.inspection 1
+adb shell am force-stop <package> && adb shell am start -n <package>/android.app.NativeActivity
+adb forward tcp:47831 tcp:47831
+```
+
+The property is read once at process start, so relaunch the activity after
+setting it. `debug.poem.inspection.port` overrides the port. The surface can
+click, type, and read the component tree, so it stays off unless asked for and
+binds loopback only — on a device that still means any local process can reach
+it, so enable it on development builds only.
+
+Applications opt in by calling `render.InspectionAutomationConfig(os.Getenv)`
+and assigning the result to `AppConfig.Automation`; a nil result means
+inspection was not requested.
 
 ## Configuration
 

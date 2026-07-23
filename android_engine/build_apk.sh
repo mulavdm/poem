@@ -45,7 +45,7 @@ echo "==> Go application ($GOARCH)"
 echo "==> C++ presenter"
 "$CC" -c -fPIC -o "$WORK/glue.o" "$GLUE/android_native_app_glue.c" -I"$GLUE"
 "$CXX" -shared -fPIC -std=c++17 -fexceptions -static-libstdc++ -o "$LIBDIR/libpoemhost.so" \
-  "$ENGINE_DIR/src/main.cpp" "$ENGINE_DIR/src/renderer_gles.cpp" "$ENGINE_DIR/src/ime_jni.cpp" "$ENGINE_DIR/src/audio_aaudio.cpp" "$POEM_DIR/shared/poem/protocol.cpp" \
+  "$ENGINE_DIR/src/main.cpp" "$ENGINE_DIR/src/renderer_gles.cpp" "$ENGINE_DIR/src/ime_jni.cpp" "$ENGINE_DIR/src/audio_aaudio.cpp" "$POEM_DIR/shared/poem/protocol.cpp" "$POEM_DIR/shared/poem/perf.cpp" \
   "$WORK/glue.o" -I"$ENGINE_DIR/src" -I"$POEM_DIR/shared" -I"$GLUE" \
   -L"$LIBDIR" -lpoemapp -lEGL -lGLESv2 -laaudio -landroid -llog -u ANativeActivity_onCreate
 
