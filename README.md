@@ -139,6 +139,26 @@ The source-of-truth automation reference is [okf/concepts/automation/index.md](.
 Commands may use stable component IDs or unique semantic role/name/state
 selectors; successful selector commands report the resolved stable target ID.
 
+### Scenario runner
+
+For repeatable runs — perf measurement, rendering checks, end-to-end captures —
+`cmd/poemdrive` replays a scene file against the automation surface and gates the
+timings against budgets and a saved baseline. Scene files live in `scenes/`:
+
+```bash
+go run ./cmd/poemdrive scenes/gallery-tabs.json          # Windows gallery
+go run ./cmd/poemdrive -teardown scenes/android-preferences.json  # Android, cold machine
+```
+
+A scene's `launch` block self-provisions its target: on Android it boots the AVD
+if none is attached, builds and installs the APK, sets the inspection property,
+and forwards the port; on Windows it builds and starts the host and foregrounds
+the window. So a single command runs from a cold machine, and `-teardown` stops
+only what that run started (a borrowed emulator or already-open app is left
+running). Nothing about any app is compiled in — the scene supplies the base URL
+and steps — so one binary drives Windows, MAPPS, and Android. Details in
+[Scenario replay](./okf/concepts/automation/perf-profiling.md).
+
 ### Android
 
 The automation layer is platform-neutral Go, so the same surface drives Android

@@ -1,5 +1,9 @@
 # OKF Bundle Update Log
 
+## 2026-07-23 (Make the scenario runner discoverable)
+
+- **Documentation**: `cmd/poemdrive` was documented in depth in the automation concepts but invisible from the two surfaces where an agent or human decides *how to test* — so both kept reconstructing ad-hoc `adb install`/`am start`/`curl` launch sequences, the exact fragile pattern the runner replaces. Added a self-contained pointer to each: a new **Automation Rule 4** in `AGENTS.md` ("drive whole runs with `cmd/poemdrive`, not ad-hoc scripts", with the anti-pattern named and the self-provisioning/`-teardown` behaviour summarised), and a **Scenario runner** subsection in `README.md`'s Automation area. Both link the canonical [Scenario replay](/concepts/automation/perf-profiling.md) reference rather than restating it, so there is one source of truth. Also fixed the automation concept index, which described `perf-profiling.md` as only "`/perf/*` endpoints" and so hid the whole scenario-runner reference living in that file. No `SKILL.md` was added: this workspace's discovery surfaces are `AGENTS.md` (agents) and `README.md` (humans) with detail in `okf/`, and a fourth surface would reintroduce the drift the shared-checker work spent the day removing. **Modified Concepts:** [automation/index.md](/concepts/automation/index.md) (the perf-profiling entry now names `cmd/poemdrive`).
+
 ## 2026-07-23 (Scene-owned ports and scoped teardown)
 
 - **Feature**: `forward_port` now follows the port in `base_url`, and `inspection_port_property` carries the same number to the device — forwarding alone is not enough, since the app binds whatever port it was told and a tunnel onto a different one lands on nothing. The Android scene moved to 47832 so it and the gallery scene (47831) run against one machine at once; verified by driving both back to back with the gallery still up.
