@@ -257,7 +257,17 @@ which measurably perturbs the timings — on the Android preferences scene it
 moved `native.present` max from 6.5 ms to 2.0 ms. A scenario with capture steps
 refuses to run without `-capture-dir` rather than skipping them silently.
 
-Four behaviours are deliberate and worth keeping:
+**Steps are paced**, by default to 16 ms — one 60 Hz frame. Driving flat out
+submits frames faster than the compositor retires them, so the renderer blocks
+on swapchain back-pressure and the measurement becomes queue saturation rather
+than framework cost. On the gallery scene that difference is
+`native.present` p95 **5.39 ms unpaced against 0.79 ms paced**, and `go.total`
+p95 5.07 ms against 1.04 ms — the back-pressure reaches back across the
+boundary and stalls the Go writer too. Budgets are per-frame numbers, so a
+scene that measures them must produce frames at a sustainable cadence. Set
+`pace_ms: 0` deliberately to measure throughput under saturation instead.
+
+Five behaviours are deliberate and worth keeping:
 
 - **Warmup runs before the reset**, so first-paint costs and lazily built
   caches never enter the sample.

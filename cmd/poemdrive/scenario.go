@@ -34,6 +34,15 @@ type Scenario struct {
 	// work continues past the interaction that triggered it.
 	SettleMS int `json:"settle_ms,omitempty"`
 
+	// PaceMS is the minimum interval between steps. Driving flat out submits
+	// frames faster than the compositor retires them, so the renderer blocks on
+	// swapchain back-pressure and the per-frame cost measures queue saturation
+	// rather than framework work. Budgets are per-frame numbers, so a scene
+	// that measures them has to produce frames at a sustainable cadence.
+	// Defaults to 16 ms, one 60 Hz frame. Set 0 deliberately to measure
+	// throughput under saturation instead.
+	PaceMS *int `json:"pace_ms,omitempty"`
+
 	// Launch, when set, brings the app up before driving it: booting a device,
 	// installing, starting, and forwarding the port. Without it the scenario
 	// assumes something else already did that.
@@ -193,6 +202,10 @@ func LoadScenario(path string) (*Scenario, error) {
 	}
 	if scenario.RegressionFloorMS <= 0 {
 		scenario.RegressionFloorMS = 0.5
+	}
+	if scenario.PaceMS == nil {
+		pace := 16
+		scenario.PaceMS = &pace
 	}
 	if err := scenario.Validate(); err != nil {
 		return nil, err

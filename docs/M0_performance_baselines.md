@@ -125,6 +125,22 @@ polling load that reconstruction required; `poemdrive` numbers are not
 comparable to them and a fresh baseline should be captured with the tool before
 gating on it.
 
+### Pacing decides what is being measured
+
+An unpaced driver submits frames faster than the compositor retires them, and
+the renderer then blocks on swapchain back-pressure. The gallery scene measures
+`native.present` p95 at **5.39 ms unpaced and 0.79 ms paced** to one 60 Hz
+frame; `go.total` p95 moves 5.07 → 1.04 ms over the same change, because the
+back-pressure propagates across the boundary and stalls the Go writer as well.
+
+The unpaced figure is not wrong, it answers a different question — throughput
+under saturation, not per-frame cost. The plan's budgets are per-frame numbers,
+so scenes that gate on them pace by default (`pace_ms`, 16 ms).
+
+This also explains why the earlier polling-based measurements above looked
+*better* on the native channel than the first `poemdrive` runs: PowerShell's
+per-request overhead was accidentally pacing them.
+
 ### The floor matters more than the tolerance
 
 Two consecutive `poemdrive` runs of an **unchanged** gallery binary drifted

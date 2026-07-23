@@ -1,0 +1,72 @@
+{
+  "scenario": "gallery-tabs",
+  "captured": "2026-07-23T11:22:47Z",
+  "frames": 480,
+  "metrics": {
+    "go.build_pages": {
+      "count": 480,
+      "mean_ms": 0.022327291666666662,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "p99_ms": 0.6294,
+      "max_ms": 0.7922
+    },
+    "go.go_work": {
+      "count": 480,
+      "mean_ms": 0.20856666666666648,
+      "p50_ms": 0,
+      "p95_ms": 0.7297,
+      "p99_ms": 0.7784,
+      "max_ms": 1.1024
+    },
+    "go.render_pipeline": {
+      "count": 480,
+      "mean_ms": 0.05292395833333332,
+      "p50_ms": 0,
+      "p95_ms": 0.5081,
+      "p99_ms": 0.7151,
+      "max_ms": 0.7713
+    },
+    "go.serialize": {
+      "count": 480,
+      "mean_ms": 0.1333154166666667,
+      "p50_ms": 0,
+      "p95_ms": 0.7158,
+      "p99_ms": 0.7703,
+      "max_ms": 0.7885
+    },
+    "go.total": {
+      "count": 480,
+      "mean_ms": 0.628625625,
+      "p50_ms": 0.665,
+      "p95_ms": 1.1472,
+      "p99_ms": 1.3194,
+      "max_ms": 1.928
+    },
+    "go.write": {
+      "count": 480,
+      "mean_ms": 0.11028895833333331,
+      "p50_ms": 0,
+      "p95_ms": 0.7362,
+      "p99_ms": 0.7898,
+      "max_ms": 0.8285
+    },
+    "native.decode_frame": {
+      "count": 480,
+      "mean_ms": 0.010375624999999994,
+      "p50_ms": 0.0091,
+      "p95_ms": 0.019,
+      "p99_ms": 0.0236,
+      "max_ms": 0.0361
+    },
+    "native.present": {
+      "count": 481,
+      "mean_ms": 0.5807771309771311,
+      "p50_ms": 0.5377,
+      "p95_ms": 0.9115,
+      "p99_ms": 1.0679,
+      "max_ms": 1.4413
+    }
+  },
+  "native_available": true
+}

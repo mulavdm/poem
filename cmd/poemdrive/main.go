@@ -263,7 +263,9 @@ func (d *driver) run() (Measurement, error) {
 	// every cycle for a full readback and PNG encode — perturbing the very
 	// timings the run exists to measure.
 	lastCycle := d.scenario.Iterations - len(d.scenario.Steps)
+	pace := time.Duration(*d.scenario.PaceMS) * time.Millisecond
 	for i := 0; i < d.scenario.Iterations; i++ {
+		stepStart := time.Now()
 		step := d.scenario.Steps[i%len(d.scenario.Steps)]
 		if step.Action == actionCapture && i < lastCycle {
 			continue
@@ -273,6 +275,9 @@ func (d *driver) run() (Measurement, error) {
 		}
 		if d.verbose && (i+1)%100 == 0 {
 			fmt.Fprintf(os.Stderr, "  %d/%d\n", i+1, d.scenario.Iterations)
+		}
+		if remaining := pace - time.Since(stepStart); remaining > 0 {
+			time.Sleep(remaining)
 		}
 	}
 	if d.scenario.SettleMS > 0 {
