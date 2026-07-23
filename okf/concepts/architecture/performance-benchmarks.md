@@ -30,6 +30,32 @@ sample: every measurement is per-interaction.
   - `BenchmarkPaint` (Full 60FPS UI Redraw): ~1.1 ms (exceeds the <10ms standard by nearly 10x)
   - `BenchmarkDrawRoundedRect` (Alpha-blended SDF panels): ~1.4 ms
 
+## Pinned scenes
+
+Benchmarks measure functions; scenes measure the app. The repeatable
+interactions live in `scenes/` as scenario files replayed by `cmd/poemdrive`
+(see [Automation Perf Profiling](/concepts/automation/perf-profiling.md)):
+
+- `scenes/gallery-tabs.json` — cycles the gallery's four tabs, each click a
+  full page rebuild. The reference scene for the Go-side budgets, and cheap
+  enough to run often.
+- `scenes/mapps-camera.json` — drives the MAPPS map camera through a **balanced**
+  zoom cycle that returns to its starting zoom. The balance is the point:
+  earlier measurements of this scene differed by ~50% between runs because
+  relative zoom clicks were unbalanced, so each run drifted to a different zoom
+  depth and covered different geometry. A scene that does not return to its
+  starting state is not a fixture.
+
+The scenario files are validated by `cmd/poemdrive`'s test suite, so a typo in
+a fixture fails the build rather than silently producing a gate that measures
+the wrong thing.
+
+`scenes/mapps-camera.json` deliberately carries **no budgets**. Its recorded
+baseline is 15–24x over the migration plan's Go-side budget today, before any
+migration work; gating it on the absolute target would fail every run for a
+pre-existing condition. Use `-baseline` there and let the absolute targets stay
+a separate goal. See `docs/M0_performance_baselines.md`.
+
 ## See also
 - [Zero-GC Rendering](/concepts/architecture/zero-gc-rendering.md)
 - [Automation Perf Profiling](/concepts/automation/perf-profiling.md)

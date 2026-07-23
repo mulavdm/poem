@@ -1,0 +1,276 @@
+// Command poemdrive replays a scenario against a running POEM application
+// through its automation surface, then gates the resulting frame timings
+// against explicit budgets and a recorded baseline.
+//
+// It works against any host that exposes the surface — the Windows gallery,
+// MAPPS, or an Android device reached through `adb forward` — because the
+// scenario file supplies the base URL and the interactions, and nothing about
+// the app is compiled in.
+//
+// Why a file rather than a script: the scene becomes a fixture. A gate that
+// cannot replay the exact interaction it measured is comparing two different
+// things and reporting the difference as a regression. See
+// docs/M0_performance_baselines.md, which recorded MAPPS runs varying by ~50%
+// precisely because the interaction was not pinned.
+//
+// Usage:
+//
+//	poemdrive [flags] scenes/gallery-tabs.json
+//
+// Exit codes: 0 all gates passed, 1 a gate failed, 2 the run could not complete.
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/mulavdm/poem/pkg/render"
+)
+
+type driver struct {
+	scenario *Scenario
+	client   *http.Client
+	verbose  bool
+}
+
+func (d *driver) url(path string) string {
+	return strings.TrimRight(d.scenario.BaseURL, "/") + path
+}
+
+func (d *driver) post(path string, body any) error {
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequest(http.MethodPost, d.url(path), reader)
+	if err != nil {
+		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("POST %s: %s", path, resp.Status)
+	}
+	return nil
+}
+
+func (d *driver) getJSON(path string, dst any) error {
+	resp, err := d.client.Get(d.url(path))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("GET %s: %s", path, resp.Status)
+	}
+	return json.Unmarshal(raw, dst)
+}
+
+// waitReady blocks until the automation surface answers. An app under a
+// debugger or a cold Android start can take several seconds, and failing
+// instantly would make the tool useless in exactly those cases.
+func (d *driver) waitReady(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		var state map[string]any
+		if err := d.getJSON("/state", &state); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return fmt.Errorf("automation surface at %s never answered: %w", d.scenario.BaseURL, lastErr)
+}
+
+func (d *driver) step(s Step) error {
+	switch s.Action {
+	case actionClick:
+		return d.post("/click", map[string]string{"command": "click", "id": s.ID})
+	case actionFocus:
+		return d.post("/focus", map[string]string{"command": "focus", "id": s.ID})
+	case actionSetText:
+		return d.post("/set-text", map[string]string{"command": "set-text", "id": s.ID, "value": s.Value})
+	case actionPressKey:
+		return d.post("/press-key", map[string]string{"command": "press-key", "key": s.Key})
+	case actionWait:
+		time.Sleep(time.Duration(s.MS) * time.Millisecond)
+		return nil
+	}
+	return fmt.Errorf("unknown action %q", s.Action)
+}
+
+// run executes warmup, resets the counters, then replays the step list.
+// Resetting after warmup is what keeps first-paint and lazily built caches out
+// of the sample.
+func (d *driver) run() (Measurement, error) {
+	for i := 0; i < d.scenario.Warmup; i++ {
+		if err := d.step(d.scenario.Steps[i%len(d.scenario.Steps)]); err != nil {
+			return Measurement{}, fmt.Errorf("warmup: %w", err)
+		}
+	}
+	if err := d.post("/perf/reset", nil); err != nil {
+		return Measurement{}, fmt.Errorf("reset: %w", err)
+	}
+
+	for i := 0; i < d.scenario.Iterations; i++ {
+		if err := d.step(d.scenario.Steps[i%len(d.scenario.Steps)]); err != nil {
+			return Measurement{}, fmt.Errorf("step %d: %w", i, err)
+		}
+		if d.verbose && (i+1)%100 == 0 {
+			fmt.Fprintf(os.Stderr, "  %d/%d\n", i+1, d.scenario.Iterations)
+		}
+	}
+	if d.scenario.SettleMS > 0 {
+		time.Sleep(time.Duration(d.scenario.SettleMS) * time.Millisecond)
+	}
+
+	var perf render.PerfState
+	if err := d.getJSON("/perf/state", &perf); err != nil {
+		return Measurement{}, fmt.Errorf("perf/state: %w", err)
+	}
+
+	// A host without a native debug channel (web, test drivers) is a normal
+	// case, not an error — but it is recorded, so a budget naming a native
+	// metric fails loudly instead of passing on absent data.
+	var native render.NativePerfState
+	nativeOK := d.getJSON("/perf/native", &native) == nil
+
+	measurement := collect(perf, native, nativeOK)
+	measurement.Scenario = d.scenario.Name
+	measurement.Captured = time.Now().UTC().Format(time.RFC3339)
+	if measurement.Frames == 0 {
+		return measurement, fmt.Errorf("no frames were recorded; the steps may not have changed anything")
+	}
+	return measurement, nil
+}
+
+func printTable(m Measurement, scenario *Scenario) {
+	fmt.Printf("%s — %d frames sampled\n", m.Scenario, m.Frames)
+	if !m.NativeAvailable {
+		fmt.Println("  (host exposes no native debug channel; native.* metrics unavailable)")
+	}
+	names := make([]string, 0, len(m.Metrics))
+	for name := range m.Metrics {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	fmt.Printf("  %-22s %7s %8s %8s %8s %8s\n", "metric", "mean", "p50", "p95", "p99", "max")
+	for _, name := range names {
+		s := m.Metrics[name]
+		marker := ""
+		if budget, ok := scenario.Budgets[name+".p95"]; ok && s.P95 > budget {
+			marker = "  <- over p95 budget"
+		}
+		fmt.Printf("  %-22s %7.3f %8.3f %8.3f %8.3f %8.3f%s\n",
+			name, s.Mean, s.P50, s.P95, s.P99, s.Max, marker)
+	}
+}
+
+func main() {
+	baselinePath := flag.String("baseline", "", "compare against this recorded baseline and fail on regression")
+	savePath := flag.String("save-baseline", "", "write this run's measurement as a baseline")
+	asJSON := flag.Bool("json", false, "emit the measurement as JSON instead of a table")
+	verbose := flag.Bool("v", false, "report progress while driving")
+	timeout := flag.Duration("ready-timeout", 30*time.Second, "how long to wait for the automation surface")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "usage: poemdrive [flags] <scenario.json>\n\n"+
+			"Replays a scenario against a running POEM app and gates its frame timings.\n\nFlags:\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	if flag.NArg() != 1 {
+		flag.Usage()
+		os.Exit(2)
+	}
+
+	scenario, err := LoadScenario(flag.Arg(0))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "poemdrive:", err)
+		os.Exit(2)
+	}
+
+	d := &driver{scenario: scenario, client: &http.Client{Timeout: 30 * time.Second}, verbose: *verbose}
+	if err := d.waitReady(*timeout); err != nil {
+		fmt.Fprintln(os.Stderr, "poemdrive:", err)
+		os.Exit(2)
+	}
+
+	measurement, err := d.run()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "poemdrive:", err)
+		os.Exit(2)
+	}
+
+	if *savePath != "" {
+		encoded, _ := json.MarshalIndent(measurement, "", "  ")
+		if err := os.WriteFile(*savePath, append(encoded, '\n'), 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "poemdrive:", err)
+			os.Exit(2)
+		}
+	}
+
+	failures := CheckBudgets(measurement, scenario.Budgets)
+	if *baselinePath != "" {
+		raw, err := os.ReadFile(*baselinePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "poemdrive:", err)
+			os.Exit(2)
+		}
+		var baseline Measurement
+		if err := json.Unmarshal(raw, &baseline); err != nil {
+			fmt.Fprintf(os.Stderr, "poemdrive: %s: %v\n", *baselinePath, err)
+			os.Exit(2)
+		}
+		failures = append(failures, CheckRegression(measurement, baseline, scenario.RegressionTolerancePct, scenario.RegressionFloorMS)...)
+	}
+
+	if *asJSON {
+		payload := struct {
+			Measurement
+			Failures []Failure `json:"failures,omitempty"`
+		}{Measurement: measurement, Failures: failures}
+		encoded, _ := json.MarshalIndent(payload, "", "  ")
+		fmt.Println(string(encoded))
+	} else {
+		printTable(measurement, scenario)
+		if len(failures) == 0 {
+			fmt.Println("\nall gates passed")
+		} else {
+			fmt.Printf("\n%d gate failure(s):\n", len(failures))
+			for _, f := range failures {
+				fmt.Printf("  FAIL %s — %s\n", f.Key, f.Reason)
+			}
+		}
+	}
+
+	if len(failures) > 0 {
+		os.Exit(1)
+	}
+}

@@ -102,17 +102,41 @@ Go-side timings on Windows come back quantized to roughly 0.5 ms steps
 predates the percentile work and needs confirming before the Go-side gate is
 tightened; the native timings do not show the same quantization.
 
-## Scenes are not yet defined
+## Scenes — now defined
 
-`Plan.txt` refers to "the defined gallery and MAPPS scenes"; no such definition
-exists in the repo. The scenes used here are a reasonable starting point and
-should be pinned as fixtures in M2:
+`Plan.txt` referred to "the defined gallery and MAPPS scenes" when no such
+definition existed. **Closed.** They are fixtures in `scenes/`, replayed by
+`cmd/poemdrive`, and validated by that command's test suite so a typo in a
+fixture fails the build:
 
-- **Gallery:** cycle tabs `controls → inputs → navigation → feedback`, N
-  iterations, measuring every repaint. Deterministic and cheap.
-- **MAPPS:** needs a *fixed* camera path — a recorded sequence of camera states
-  replayed identically each run — rather than relative zoom clicks. Without
-  that, run-to-run variance swamps any regression the gate is meant to catch.
+- `scenes/gallery-tabs.json` — cycles `controls → inputs → navigation →
+  feedback`, 600 iterations after a 20-iteration warmup.
+- `scenes/mapps-camera.json` — a **balanced** zoom cycle returning to its
+  starting zoom, which is the fix for the ~50% run-to-run variance recorded
+  above: unbalanced relative zoom clicks left each run at a different depth
+  over different geometry. It carries no budgets deliberately (see below).
+
+Re-measuring the gallery scene through `poemdrive` gives materially lower
+numbers than the table above — `go.total` p95 ≈ 0.55 ms rather than 3.98 ms —
+because percentiles now come from the server-side ring instead of being
+reconstructed by polling `/perf/events` during the run. **The figures in this
+document remain the recorded pre-migration baseline**, but they include the
+polling load that reconstruction required; `poemdrive` numbers are not
+comparable to them and a fresh baseline should be captured with the tool before
+gating on it.
+
+### The floor matters more than the tolerance
+
+Two consecutive `poemdrive` runs of an **unchanged** gallery binary drifted
+19–35% at p95/p99. That is not instability in the app: Go-side timings on
+Windows quantize to roughly 0.5 ms (the caveat above), the gallery's p95 sits
+at ~0.55 ms, and a single-bucket move therefore reads as a large percentage.
+A regression must now clear an absolute floor (`regression_floor_ms`, default
+0.5) as well as the percentage, which makes consecutive runs pass while a
+doctored baseline representing a 4x regression still fails on six metrics.
+
+Gating a sub-millisecond metric on percentage alone produces a gate that fails
+on unchanged code, and such a gate gets switched off.
 
 ## Reproducing
 

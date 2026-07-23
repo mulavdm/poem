@@ -171,6 +171,46 @@ Invoke-RestMethod `
   -Body '{"maximize_window":true,"bring_to_foreground":true,"timeout_ms":8000,"poll_interval_ms":20,"condition":{"window_foreground":true,"window_not_minimized":true,"client_width_at_least":1400}}'
 ```
 
+## Scenario replay: `cmd/poemdrive`
+
+The endpoints above report *what a run cost*; they say nothing about whether
+two runs did the same work. `cmd/poemdrive` supplies that half. It replays a
+scenario file against a running app, then gates the timings against budgets and
+a recorded baseline.
+
+```bash
+go run ./cmd/poemdrive scenes/gallery-tabs.json
+go run ./cmd/poemdrive -save-baseline gallery.json scenes/gallery-tabs.json
+go run ./cmd/poemdrive -baseline gallery.json scenes/gallery-tabs.json
+```
+
+Nothing about any app is compiled in: the scenario supplies `base_url` and the
+step list, so the same binary drives the Windows gallery, MAPPS, or an Android
+device reached through `adb forward`. Steps are `click`, `focus`, `set-text`,
+`press-key`, and `wait`.
+
+Metrics arrive in one flat namespace: `go.<phase>` from `frames.percentiles`
+and `native.<phase>` from `/perf/native`, so a budget reads
+`go.total.p95` or `native.present.p95`. Percentiles are taken from the
+server-side ring rather than reconstructed by polling `/perf/events`, which is
+both exact and free of the polling load that would otherwise perturb what is
+being measured.
+
+Three behaviours are deliberate and worth keeping:
+
+- **Warmup runs before the reset**, so first-paint costs and lazily built
+  caches never enter the sample.
+- **A budget naming a metric the run did not produce fails.** Passing because
+  the measurement is absent is the worst outcome a gate can have, so a
+  `native.*` budget against a host with no native debug channel reports exactly
+  that rather than succeeding quietly.
+- **A regression must exceed both a percentage and an absolute floor**
+  (`regression_floor_ms`, default 0.5). Percentage alone is the wrong
+  instrument near the timer resolution: Go-side timings on Windows quantize to
+  roughly 0.5 ms, and two consecutive runs of an *unchanged* gallery binary
+  were measured drifting 19–35% at p95/p99 for that reason alone. A gate that
+  fails on an unchanged binary gets switched off.
+
 ## See also
 - [Performance Benchmarks](/concepts/architecture/performance-benchmarks.md) — engine-level pprof/benchmarks
 - [HTTP Endpoints](/concepts/automation/endpoints.md)

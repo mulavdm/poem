@@ -1,0 +1,24 @@
+{
+  "name": "mapps-camera",
+  "description": "Drives the MAPPS map camera through a fixed zoom cycle and returns to the starting zoom, so successive runs cover the same geometry. Requires MAPPS running with inspection enabled (scripts/build-desktop.ps1 -Run -Inspection) and its Docker stack up.",
+
+  "base_url": "http://127.0.0.1:47831",
+  "warmup": 8,
+  "iterations": 240,
+  "settle_ms": 500,
+
+  "//": "Four zoom-ins followed by four zoom-outs returns the camera to where it started. docs/M0_performance_baselines.md recorded two runs differing by ~50% precisely because relative zoom clicks were not balanced and each run drifted to a different zoom depth, covering different geometry densities.",
+  "steps": [
+    { "action": "click", "id": "trellis-root/content/0/1/0" },
+    { "action": "click", "id": "trellis-root/content/0/1/0" },
+    { "action": "click", "id": "trellis-root/content/0/1/0" },
+    { "action": "click", "id": "trellis-root/content/0/1/0" },
+    { "action": "click", "id": "trellis-root/content/0/1/1" },
+    { "action": "click", "id": "trellis-root/content/0/1/1" },
+    { "action": "click", "id": "trellis-root/content/0/1/1" },
+    { "action": "click", "id": "trellis-root/content/0/1/1" }
+  ],
+
+  "//budgets": "Deliberately absent. The recorded baseline is 15-24x over the plan's Go-side budget today, before any migration work. Gating this scene on the absolute target would fail every run for a pre-existing condition; use -baseline to catch regressions instead, and see docs/M0_performance_baselines.md.",
+  "regression_tolerance_pct": 20
+}

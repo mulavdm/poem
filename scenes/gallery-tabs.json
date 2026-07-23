@@ -1,0 +1,22 @@
+{
+  "name": "gallery-tabs",
+  "description": "Cycles the gallery's four tabs. Each click forces a full page rebuild, so this measures the ordinary widget path: build, layout, serialize, present. Deterministic, cheap, and the reference scene for the Go-side budgets.",
+
+  "base_url": "http://127.0.0.1:47831",
+  "warmup": 20,
+  "iterations": 600,
+
+  "steps": [
+    { "action": "click", "id": "gallery.tabs/controls" },
+    { "action": "click", "id": "gallery.tabs/inputs" },
+    { "action": "click", "id": "gallery.tabs/navigation" },
+    { "action": "click", "id": "gallery.tabs/feedback" }
+  ],
+
+  "budgets": {
+    "go.go_work.p95": 2.08,
+    "go.total.p95": 8.33,
+    "native.present.p95": 4.17
+  },
+  "regression_tolerance_pct": 15
+}
