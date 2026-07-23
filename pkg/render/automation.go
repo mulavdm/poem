@@ -374,6 +374,13 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
 			return
 		}
+		// The host reports why a capture could not be produced (an unsupported
+		// presenter, a lost surface); without this the caller sees only a
+		// generic encode failure for an empty buffer.
+		if resp.Error != "" {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: resp.Error})
+			return
+		}
 		pngBytes, err := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
 		if err != nil {
 			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
@@ -391,6 +398,13 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{CaptureFrame: true})
 		if err != nil {
 			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		// The host reports why a capture could not be produced (an unsupported
+		// presenter, a lost surface); without this the caller sees only a
+		// generic encode failure for an empty buffer.
+		if resp.Error != "" {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: resp.Error})
 			return
 		}
 		pngBytes, err := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
@@ -412,6 +426,13 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
 			return
 		}
+		// The host reports why a capture could not be produced (an unsupported
+		// presenter, a lost surface); without this the caller sees only a
+		// generic encode failure for an empty buffer.
+		if resp.Error != "" {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: resp.Error})
+			return
+		}
 		pngBytes, err := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
 		if err != nil {
 			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
@@ -429,6 +450,13 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{CaptureDesktopFrame: true})
 		if err != nil {
 			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		// The host reports why a capture could not be produced (an unsupported
+		// presenter, a lost surface); without this the caller sees only a
+		// generic encode failure for an empty buffer.
+		if resp.Error != "" {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: resp.Error})
 			return
 		}
 		pngBytes, err := encodeRGBAToPNG(resp.FrameRGBA, int(resp.FrameWidth), int(resp.FrameHeight))
@@ -528,7 +556,25 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 			return
 		}
 		globalPerfTracker.reset()
+		// Clear the host's rings in the same call: a caller scoping a
+		// measurement to one driven scene means both sides of the boundary,
+		// and leaving native samples behind would blend two scenes. Hosts
+		// without a native channel (web, test drivers) simply have nothing to
+		// clear, so a failure here is not an error.
+		_, _ = nativeDebugRequest(protocol.NativeDebugRequest{ResetPerf: true})
 		writeHTTPPerfJSON(w, http.StatusOK, globalPerfTracker.snapshot())
+	})
+	mux.HandleFunc("/perf/native", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{})
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		writeHTTPPerfJSON(w, http.StatusOK, nativePerfStateFromProtocol(resp))
 	})
 	mux.HandleFunc("/perf/measure-action", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -1635,6 +1681,42 @@ func encodeRGBAToPNG(pixels []byte, width, height int) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// NativePerfState reports the host's own frame timings, which the Go tracker
+// cannot see: everything in PerfState is measured on this side of the
+// boundary, so without this the native presentation cost is unmeasured.
+type NativePerfState struct {
+	Phases []NativePerfPhaseState `json:"phases"`
+}
+
+// NativePerfPhaseState is one timed native channel. "present" is geometry
+// compilation plus draw submission on the UI thread — the phase the migration
+// plan budgets separately from Go frame work.
+type NativePerfPhaseState struct {
+	Name   string  `json:"name"`
+	Count  uint32  `json:"count"`
+	MeanMS float64 `json:"mean_ms"`
+	P50MS  float64 `json:"p50_ms"`
+	P95MS  float64 `json:"p95_ms"`
+	P99MS  float64 `json:"p99_ms"`
+	MaxMS  float64 `json:"max_ms"`
+}
+
+func nativePerfStateFromProtocol(resp protocol.NativeDebugResponse) NativePerfState {
+	out := NativePerfState{Phases: make([]NativePerfPhaseState, 0, len(resp.PerfPhases))}
+	for _, phase := range resp.PerfPhases {
+		out.Phases = append(out.Phases, NativePerfPhaseState{
+			Name:   phase.Name,
+			Count:  phase.Count,
+			MeanMS: phase.MeanMS,
+			P50MS:  phase.P50MS,
+			P95MS:  phase.P95MS,
+			P99MS:  phase.P99MS,
+			MaxMS:  phase.MaxMS,
+		})
+	}
+	return out
 }
 
 func nativeAutomationStateFromProtocol(resp protocol.NativeDebugResponse) NativeAutomationState {

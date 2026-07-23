@@ -177,6 +177,7 @@ func TestNativeDebugRoundTrip(t *testing.T) {
 		ClampToWorkArea:       true,
 		BringToForeground:     true,
 		MaximizeWindow:        true,
+		ResetPerf:             true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -185,7 +186,7 @@ func TestNativeDebugRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !req.CaptureFrame || !req.CapturePresentedFrame || !req.CaptureDesktopFrame || !req.RestoreWindow || !req.ClampToWorkArea || !req.BringToForeground || !req.MaximizeWindow {
+	if !req.CaptureFrame || !req.CapturePresentedFrame || !req.CaptureDesktopFrame || !req.RestoreWindow || !req.ClampToWorkArea || !req.BringToForeground || !req.MaximizeWindow || !req.ResetPerf {
 		t.Fatalf("expected both native capture flags: %+v", req)
 	}
 
@@ -205,6 +206,10 @@ func TestNativeDebugRoundTrip(t *testing.T) {
 		FrameWidth:       2,
 		FrameHeight:      1,
 		FrameRGBA:        []byte{255, 0, 0, 255, 0, 255, 0, 255},
+		PerfPhases: []NativePerfPhase{
+			{Name: "apply_map_scene", Count: 5, MeanMS: 1.5, P50MS: 1.25, P95MS: 3, P99MS: 3.5, MaxMS: 4},
+			{Name: "present", Count: 120, MeanMS: 2.5, P50MS: 2, P95MS: 4.17, P99MS: 6, MaxMS: 9.5},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -215,6 +220,34 @@ func TestNativeDebugRoundTrip(t *testing.T) {
 	}
 	if resp.DPI != 144 || !resp.WindowVisible || !resp.WindowForeground || resp.ClientWidth != 900 || len(resp.FrameRGBA) != 8 {
 		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if len(resp.PerfPhases) != 2 {
+		t.Fatalf("expected 2 native perf phases, got %d", len(resp.PerfPhases))
+	}
+	// Phase order is part of the contract: the host sorts channels by name so
+	// a consumer can diff two snapshots positionally.
+	if resp.PerfPhases[0].Name != "apply_map_scene" || resp.PerfPhases[1].Name != "present" {
+		t.Fatalf("phase order not preserved: %+v", resp.PerfPhases)
+	}
+	present := resp.PerfPhases[1]
+	if present.Count != 120 || present.P95MS != 4.17 || present.MaxMS != 9.5 {
+		t.Fatalf("native perf phase lost precision: %+v", present)
+	}
+}
+
+// A malformed phase count must be rejected rather than drive a huge allocation.
+func TestNativeDebugResponseRejectsOversizedPhaseCount(t *testing.T) {
+	payload, err := EncodeNativeDebugResponse(NativeDebugResponse{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The phase count is the final uint32 of the body.
+	payload[len(payload)-4] = 0xFF
+	payload[len(payload)-3] = 0xFF
+	payload[len(payload)-2] = 0xFF
+	payload[len(payload)-1] = 0x7F
+	if _, err := DecodeNativeDebugResponse(payload); err == nil {
+		t.Fatal("expected an error for an oversized native perf phase count")
 	}
 }
 

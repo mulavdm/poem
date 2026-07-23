@@ -363,6 +363,7 @@ NativeDebugRequest DecodeNativeDebugRequest(const std::vector<std::uint8_t>& bod
     out.clampToWorkArea = r.Read<std::uint8_t>() != 0;
     out.bringToForeground = r.Read<std::uint8_t>() != 0;
     out.maximizeWindow = r.Read<std::uint8_t>() != 0;
+    out.resetPerf = r.Read<std::uint8_t>() != 0;
     return out;
 }
 
@@ -422,6 +423,16 @@ std::vector<std::uint8_t> EncodeNativeDebugResponse(const NativeDebugResponse& r
     w.Write<std::int32_t>(response.frameWidth);
     w.Write<std::int32_t>(response.frameHeight);
     w.WriteBytes(response.frameRgba);
+    w.Write<std::uint32_t>(static_cast<std::uint32_t>(response.perfPhases.size()));
+    for (const auto& phase : response.perfPhases) {
+        w.WriteString(phase.name);
+        w.Write<std::uint32_t>(phase.count);
+        w.Write<double>(phase.meanMS);
+        w.Write<double>(phase.p50MS);
+        w.Write<double>(phase.p95MS);
+        w.Write<double>(phase.p99MS);
+        w.Write<double>(phase.maxMS);
+    }
     return w.Finish(MessageType::NativeDebugResponse);
 }
 

@@ -357,6 +357,7 @@ func EncodeNativeDebugRequest(msg NativeDebugRequest) ([]byte, error) {
 	writeBool(&body, msg.ClampToWorkArea)
 	writeBool(&body, msg.BringToForeground)
 	writeBool(&body, msg.MaximizeWindow)
+	writeBool(&body, msg.ResetPerf)
 	return wrapEnvelope(MessageNativeDebugRequest, body.Bytes()), nil
 }
 
@@ -397,6 +398,10 @@ func DecodeNativeDebugRequest(payload []byte) (NativeDebugRequest, error) {
 	if err != nil {
 		return NativeDebugRequest{}, err
 	}
+	resetPerf, err := readBool(r)
+	if err != nil {
+		return NativeDebugRequest{}, err
+	}
 	return NativeDebugRequest{
 		CaptureFrame:          captureFrame,
 		CapturePresentedFrame: capturePresentedFrame,
@@ -405,6 +410,7 @@ func DecodeNativeDebugRequest(payload []byte) (NativeDebugRequest, error) {
 		ClampToWorkArea:       clampToWorkArea,
 		BringToForeground:     bringToForeground,
 		MaximizeWindow:        maximizeWindow,
+		ResetPerf:             resetPerf,
 	}, nil
 }
 
@@ -430,6 +436,16 @@ func EncodeNativeDebugResponse(msg NativeDebugResponse) ([]byte, error) {
 	writeInt32(&body, msg.FrameWidth)
 	writeInt32(&body, msg.FrameHeight)
 	writeBytes(&body, msg.FrameRGBA)
+	writeUint32(&body, uint32(len(msg.PerfPhases)))
+	for _, phase := range msg.PerfPhases {
+		writeString(&body, phase.Name)
+		writeUint32(&body, phase.Count)
+		writeFloat64(&body, phase.MeanMS)
+		writeFloat64(&body, phase.P50MS)
+		writeFloat64(&body, phase.P95MS)
+		writeFloat64(&body, phase.P99MS)
+		writeFloat64(&body, phase.MaxMS)
+	}
 	return wrapEnvelope(MessageNativeDebugResponse, body.Bytes()), nil
 }
 
@@ -502,6 +518,41 @@ func DecodeNativeDebugResponse(payload []byte) (NativeDebugResponse, error) {
 	}
 	if out.FrameRGBA, err = readBytes(r); err != nil {
 		return NativeDebugResponse{}, err
+	}
+	phaseCount, err := readUint32(r)
+	if err != nil {
+		return NativeDebugResponse{}, err
+	}
+	// One phase per timed native channel; the host currently reports three.
+	// The bound keeps a malformed count from provoking a huge allocation.
+	const maxPerfPhases = 64
+	if phaseCount > maxPerfPhases {
+		return NativeDebugResponse{}, fmt.Errorf("native perf phase count %d exceeds limit %d", phaseCount, maxPerfPhases)
+	}
+	for i := uint32(0); i < phaseCount; i++ {
+		var phase NativePerfPhase
+		if phase.Name, err = readString(r); err != nil {
+			return NativeDebugResponse{}, err
+		}
+		if phase.Count, err = readUint32(r); err != nil {
+			return NativeDebugResponse{}, err
+		}
+		if phase.MeanMS, err = readFloat64(r); err != nil {
+			return NativeDebugResponse{}, err
+		}
+		if phase.P50MS, err = readFloat64(r); err != nil {
+			return NativeDebugResponse{}, err
+		}
+		if phase.P95MS, err = readFloat64(r); err != nil {
+			return NativeDebugResponse{}, err
+		}
+		if phase.P99MS, err = readFloat64(r); err != nil {
+			return NativeDebugResponse{}, err
+		}
+		if phase.MaxMS, err = readFloat64(r); err != nil {
+			return NativeDebugResponse{}, err
+		}
+		out.PerfPhases = append(out.PerfPhases, phase)
 	}
 	return out, nil
 }

@@ -271,6 +271,21 @@ struct NativeDebugRequest {
     bool clampToWorkArea{};
     bool bringToForeground{};
     bool maximizeWindow{};
+    // Clears the native timing rings after this response is built, so a
+    // caller can scope a measurement to one driven scene.
+    bool resetPerf{};
+};
+
+// NativePerfPhase mirrors poem::perf::PhaseStats on the wire. One entry per
+// timed native channel (frame presentation, protocol decode, map-scene apply).
+struct NativePerfPhase {
+    std::string name;
+    std::uint32_t count{};
+    double meanMS{};
+    double p50MS{};
+    double p95MS{};
+    double p99MS{};
+    double maxMS{};
 };
 
 struct NativeDebugResponse {
@@ -301,6 +316,8 @@ struct NativeDebugResponse {
     std::int32_t frameWidth{};
     std::int32_t frameHeight{};
     std::vector<std::uint8_t> frameRgba;
+
+    std::vector<NativePerfPhase> perfPhases;
 };
 
 struct NativeDialogRequest {

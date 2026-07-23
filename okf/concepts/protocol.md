@@ -3,7 +3,7 @@ type: Concept
 title: Native Presenter Protocol
 description: The repo-owned binary wire protocol shared by the Go engine and native in-process presenters.
 tags: [protocol, transport, windows, android]
-timestamp: 2026-07-22T00:00:00Z
+timestamp: 2026-07-23T00:00:00Z
 ---
 # Native Presenter Protocol
 
@@ -25,6 +25,23 @@ crossed in-memory pipes. Protocol v3 preserves every existing event number and a
 pinch gestures carrying phase (begin/update/end/cancel), centroid, two-axis incremental delta,
 and incremental scale. The engine can therefore render gestures locally without adding
 platform-specific concepts to application nodes.
+
+## Native timing on the debug channel
+
+The `NativeDebugRequest`/`NativeDebugResponse` pair (message types 201/202) grew
+inside v4 by the same append rule. The request appends a `resetPerf` flag; the
+response appends a count-prefixed list of native timing phases, each carrying a
+name, sample count, mean, p50, p95, p99, and max in milliseconds.
+
+This exists because nothing in the C++ hosts timed frame CPU work — every
+figure the Go tracker reports is measured on the Go side of the boundary, so the
+native presentation cost was unmeasured. The host currently reports `present`
+(geometry compilation plus draw submission on the UI thread), `decode_frame`,
+`decode_map_scene`, and `apply_map_scene`. Percentiles use the same nearest-rank
+definition and the same 4096-sample window as the Go tracker, so a native p95
+and a Go p95 are comparable. The decoder bounds the phase count so a malformed
+response cannot drive a large allocation. Consumed via `GET /perf/native` — see
+[Performance & Latency Profiling](/concepts/automation/perf-profiling.md).
 
 Protocol changes are cross-language changes: update both the Go and C++ implementations together and add or update round-trip tests in the same change.
 

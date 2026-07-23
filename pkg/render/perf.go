@@ -2,11 +2,18 @@ package render
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
 
 const maxPerfEvents = 256
+
+// maxPerfSamples bounds the raw per-frame sample ring that percentiles are
+// computed from. The event ring above is a human-readable trace capped at 256
+// and shared with automation/event-batch entries, so it wraps after roughly
+// 128 driven interactions — far too few, and too lossy, to compute a p99 from.
+const maxPerfSamples = 4096
 
 type PerfEvent struct {
 	Kind       string  `json:"kind"`
@@ -14,6 +21,45 @@ type PerfEvent struct {
 	Timestamp  string  `json:"timestamp"`
 	DurationMS float64 `json:"duration_ms"`
 	Details    string  `json:"details,omitempty"`
+
+	// Structured phase splits for frame events. Details carries the same
+	// numbers as %.2f-formatted text for humans, which quantizes them to
+	// 0.01 ms; these are the full-precision values consumers should read.
+	BuildPagesMS     float64 `json:"build_pages_ms,omitempty"`
+	RenderPipelineMS float64 `json:"render_pipeline_ms,omitempty"`
+	SerializeMS      float64 `json:"serialize_ms,omitempty"`
+	WriteMS          float64 `json:"write_ms,omitempty"`
+	CommandCount     int     `json:"command_count,omitempty"`
+}
+
+// PerfPhaseStats summarizes one timed phase over the retained sample window.
+type PerfPhaseStats struct {
+	MeanMS float64 `json:"mean_ms"`
+	P50MS  float64 `json:"p50_ms"`
+	P95MS  float64 `json:"p95_ms"`
+	P99MS  float64 `json:"p99_ms"`
+	MaxMS  float64 `json:"max_ms"`
+}
+
+// PerfFramePercentiles reports distribution rather than the running averages
+// PerfFrameStats carries. Percentile gates cannot be evaluated from a mean.
+type PerfFramePercentiles struct {
+	SampleCount int `json:"sample_count"`
+	// SampleWindow is the retained-ring capacity; SampleCount saturates here.
+	SampleWindow int `json:"sample_window"`
+
+	Total          PerfPhaseStats `json:"total"`
+	BuildPages     PerfPhaseStats `json:"build_pages"`
+	RenderPipeline PerfPhaseStats `json:"render_pipeline"`
+	Serialize      PerfPhaseStats `json:"serialize"`
+	Write          PerfPhaseStats `json:"write"`
+	// GoWork is build+render+serialize, the split the migration plan budgets
+	// separately from transport write time.
+	GoWork PerfPhaseStats `json:"go_work"`
+}
+
+type perfFrameSample struct {
+	total, build, render, serialize, write float64
 }
 
 type PerfFrameStats struct {
@@ -29,6 +75,8 @@ type PerfFrameStats struct {
 	AvgRenderPipelineMS  float64 `json:"avg_render_pipeline_ms"`
 	AvgSerializeMS       float64 `json:"avg_serialize_ms"`
 	AvgWriteMS           float64 `json:"avg_write_ms"`
+
+	Percentiles PerfFramePercentiles `json:"percentiles"`
 }
 
 type PerfEventBatchStats struct {
@@ -88,7 +136,8 @@ type perfTracker struct {
 	maxActionMS    float64
 	lastActionName string
 
-	events []PerfEvent
+	events       []PerfEvent
+	frameSamples []perfFrameSample
 }
 
 var globalPerfTracker = &perfTracker{}
@@ -126,6 +175,7 @@ func (p *perfTracker) reset() {
 	p.lastActionName = ""
 
 	p.events = nil
+	p.frameSamples = nil
 }
 
 func (p *perfTracker) recordFrame(buildPages, renderPipeline, serialize, write, total time.Duration, commandCount int) {
@@ -146,12 +196,27 @@ func (p *perfTracker) recordFrame(buildPages, renderPipeline, serialize, write, 
 	if p.lastFrameTotalMS > p.maxFrameTotalMS {
 		p.maxFrameTotalMS = p.lastFrameTotalMS
 	}
+	p.frameSamples = append(p.frameSamples, perfFrameSample{
+		total:     p.lastFrameTotalMS,
+		build:     p.lastBuildPagesMS,
+		render:    p.lastRenderMS,
+		serialize: p.lastSerializeMS,
+		write:     p.lastWriteMS,
+	})
+	if len(p.frameSamples) > maxPerfSamples {
+		p.frameSamples = p.frameSamples[len(p.frameSamples)-maxPerfSamples:]
+	}
 	p.appendEventLocked(PerfEvent{
-		Kind:       "frame",
-		Name:       "repaint",
-		Timestamp:  time.Now().Format(time.RFC3339Nano),
-		DurationMS: p.lastFrameTotalMS,
-		Details:    fmt.Sprintf("commands=%d build=%.2f render=%.2f serialize=%.2f write=%.2f", commandCount, p.lastBuildPagesMS, p.lastRenderMS, p.lastSerializeMS, p.lastWriteMS),
+		Kind:             "frame",
+		Name:             "repaint",
+		Timestamp:        time.Now().Format(time.RFC3339Nano),
+		DurationMS:       p.lastFrameTotalMS,
+		Details:          fmt.Sprintf("commands=%d build=%.2f render=%.2f serialize=%.2f write=%.2f", commandCount, p.lastBuildPagesMS, p.lastRenderMS, p.lastSerializeMS, p.lastWriteMS),
+		BuildPagesMS:     p.lastBuildPagesMS,
+		RenderPipelineMS: p.lastRenderMS,
+		SerializeMS:      p.lastSerializeMS,
+		WriteMS:          p.lastWriteMS,
+		CommandCount:     commandCount,
 	})
 }
 
@@ -236,7 +301,58 @@ func (p *perfTracker) snapshot() PerfState {
 	state.Frames.AvgSerializeMS = average(p.frameSerializeMS, p.frameCount)
 	state.Frames.AvgWriteMS = average(p.frameWriteMS, p.frameCount)
 	state.EventBatches.AvgBatchMS = average(p.batchTotalMS, p.batchCount)
+	state.Frames.Percentiles = framePercentilesLocked(p.frameSamples)
 	return state
+}
+
+// framePercentilesLocked summarizes the retained sample ring. Each phase is
+// extracted into its own slice and sorted independently: a frame that is p95
+// for serialization is not necessarily p95 for layout, so per-phase ranks must
+// not be read off a single ordering.
+func framePercentilesLocked(samples []perfFrameSample) PerfFramePercentiles {
+	out := PerfFramePercentiles{SampleCount: len(samples), SampleWindow: maxPerfSamples}
+	if len(samples) == 0 {
+		return out
+	}
+	phase := func(pick func(perfFrameSample) float64) PerfPhaseStats {
+		values := make([]float64, 0, len(samples))
+		sum := 0.0
+		for _, s := range samples {
+			v := pick(s)
+			values = append(values, v)
+			sum += v
+		}
+		sort.Float64s(values)
+		return PerfPhaseStats{
+			MeanMS: sum / float64(len(values)),
+			P50MS:  percentileSorted(values, 50),
+			P95MS:  percentileSorted(values, 95),
+			P99MS:  percentileSorted(values, 99),
+			MaxMS:  values[len(values)-1],
+		}
+	}
+	out.Total = phase(func(s perfFrameSample) float64 { return s.total })
+	out.BuildPages = phase(func(s perfFrameSample) float64 { return s.build })
+	out.RenderPipeline = phase(func(s perfFrameSample) float64 { return s.render })
+	out.Serialize = phase(func(s perfFrameSample) float64 { return s.serialize })
+	out.Write = phase(func(s perfFrameSample) float64 { return s.write })
+	out.GoWork = phase(func(s perfFrameSample) float64 { return s.build + s.render + s.serialize })
+	return out
+}
+
+// percentileSorted returns the nearest-rank percentile of an ascending slice.
+func percentileSorted(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := int(p/100*float64(len(sorted)-1) + 0.5)
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
 }
 
 func (p *perfTracker) appendEventLocked(event PerfEvent) {

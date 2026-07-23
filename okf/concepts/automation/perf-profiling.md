@@ -3,7 +3,7 @@ type: Concept
 title: Performance & Latency Profiling
 description: The perf endpoints for rolling frame timings and condition-based action measurement.
 tags: [automation, performance, profiling, latency]
-timestamp: 2026-07-10T00:00:00Z
+timestamp: 2026-07-23T00:00:00Z
 ---
 # Performance And Latency Profiling
 
@@ -14,24 +14,63 @@ POEM's shared automation layer includes lightweight timing hooks intended for do
 Returns JSON with:
 
 - `frames` — rolling frame timings for rebuild/render/serialize/write and total frame cost
+- `frames.percentiles` — the distribution over a retained raw-sample window
 - `event_batches` — timings for native input batches processed from the presenter
 - `automation` — timings for HTTP automation commands handled inside POEM
 - `events` — a capped recent event stream for quick inspection
 
-Important interpretation notes:
+### `frames.percentiles`
 
-- frame timings are measured inside POEM's Go render loop
-- event-batch timings only reflect native presenter input batches
-- direct HTTP automation actions like `POST /click` do not go through the native event queue, so they can update UI state without increasing `event_batches.batch_count`
-- sub-millisecond values are preserved, so very fast actions may legitimately appear as fractions like `0.18`
+The `avg_*`/`max_*` fields alongside it are running aggregates and **cannot
+answer a percentile budget**. `percentiles` reports `mean_ms`/`p50_ms`/`p95_ms`/
+`p99_ms`/`max_ms` for `total`, `build_pages`, `render_pipeline`, `serialize`,
+`write`, and `go_work` (build+render+serialize, the split budgeted separately
+from transport write time).
+
+- ranks are nearest-rank over the retained window; `sample_count` saturates at
+  `sample_window` (4096 frames), oldest evicted first
+- each phase is ranked on its own ordering — a frame that is p95 for
+  serialization need not be p95 for layout
+- this window is independent of `events`, which is capped at 256 entries shared
+  with automation and event-batch entries and therefore wraps after roughly 128
+  driven interactions
 
 ## `GET /perf/events`
 
-Returns the recent perf event log.
+Returns the recent perf event log. Frame entries carry the phase split twice:
+`details` is `%.2f`-formatted text for humans and quantizes to 0.01 ms, while
+`build_pages_ms`, `render_pipeline_ms`, `serialize_ms`, `write_ms`, and
+`command_count` are the full-precision values consumers should read.
+
+## `GET /perf/native`
+
+Returns the **host's own** frame timings, which nothing in `/perf/state` can
+see: every figure there is measured on the Go side of the boundary. One entry
+per timed native channel, sorted by name so two snapshots can be diffed
+positionally:
+
+- `present` — geometry compilation plus draw submission on the UI thread. This
+  is the native framework CPU work, excluding GPU execution.
+- `decode_frame` — protocol decode of a `RenderFrame` on the transport thread
+- `decode_map_scene` / `apply_map_scene` — map-scene decode and retention
+
+Each carries `count`, `mean_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`, using
+the same nearest-rank definition and the same 4096-sample window size as the Go
+tracker, so a native p95 and a Go p95 mean the same thing.
+
+The recorder itself lives in `shared/poem/perf.{h,cpp}`, so the D3D11 and GLES
+presenters report the same channel names under the same percentile definition —
+a p95 that meant one thing on Windows and another on Android would make the
+comparison worthless. Both hosts implement it; the web backend and test drivers
+return an error.
 
 ## `POST /perf/reset`
 
-Clears accumulated perf counters and event history.
+Clears accumulated perf counters, the event history, and the retained sample
+window. It also asks the host to clear its native rings in the same call, so a
+measurement scoped to one driven scene does not blend with native samples from
+the previous one. Hosts with no native channel have nothing to clear and this
+is not treated as an error.
 
 ## `POST /perf/measure-action`
 

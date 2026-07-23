@@ -12,6 +12,7 @@ add_executable(poem_windows_host WIN32
   src/audio.cpp
   src/renderer_d3d11.cpp
   src/accessibility.cpp
+  ../shared/poem/perf.cpp
 )
 
 # ../shared holds platform-neutral C++ used by every host (see shared/poem).
@@ -28,6 +29,12 @@ if(BUILD_TESTING)
   target_include_directories(poem_windows_host_contract_test PRIVATE src)
   target_compile_definitions(poem_windows_host_contract_test PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
   add_test(NAME poem_windows_host_contract COMMAND poem_windows_host_contract_test)
+
+  # Native timing: pure computation over a sample ring, so it runs anywhere and
+  # pins the percentile ranks against the Go tracker's matching definition.
+  add_executable(poem_perf_test tests/perf_test.cpp ../shared/poem/perf.cpp)
+  target_include_directories(poem_perf_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
+  add_test(NAME poem_perf COMMAND poem_perf_test)
 
   # Shared map maths: no GPU, window or platform SDK, so it runs anywhere the
   # host builds and pins the projection/lighting every presenter shares.

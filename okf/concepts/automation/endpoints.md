@@ -48,7 +48,7 @@ See [Inspect Flow](/concepts/automation/inspect-flow.md) for full request/respon
 
 ## Performance endpoints
 
-See [Perf Profiling](/concepts/automation/perf-profiling.md) for `/perf/state`, `/perf/events`, `/perf/reset`, `/perf/measure-action`, and `/perf/measure-native-action`.
+See [Perf Profiling](/concepts/automation/perf-profiling.md) for `/perf/state`, `/perf/events`, `/perf/native`, `/perf/reset`, `/perf/measure-action`, and `/perf/measure-native-action`.
 
 ## PowerShell examples
 

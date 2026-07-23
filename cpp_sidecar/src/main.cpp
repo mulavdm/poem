@@ -1,6 +1,7 @@
 #include "audio.h"
 #include "accessibility.h"
 #include "native_app.h"
+#include "poem/perf.h"
 #include "poem/protocol.h"
 #include "renderer_d3d11.h"
 
@@ -241,6 +242,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (app) {
             std::lock_guard<std::mutex> lock(app->frameMutex);
             if (app->hasFrame) {
+                // "present" is the native framework CPU work the migration
+                // plan budgets at 4.17 ms p95: geometry compilation plus draw
+                // submission on the UI thread, excluding GPU execution.
+                poem::perf::ScopedTimer timer("present");
                 app->renderer.Render(app->latestFrame);
             }
             ValidateRect(hwnd, nullptr);
@@ -670,6 +675,23 @@ poem::protocol::NativeDebugResponse BuildNativeDebugResponse(AppState& app, cons
 
     ApplyNativeWindowControl(app.hwnd, request);
 
+    // Attach native timings before any early return, so a perf query is never
+    // lost to an unrelated window-state failure below.
+    for (const auto& phase : poem::perf::Global().Snapshot()) {
+        poem::protocol::NativePerfPhase wire;
+        wire.name = phase.name;
+        wire.count = phase.count;
+        wire.meanMS = phase.meanMS;
+        wire.p50MS = phase.p50MS;
+        wire.p95MS = phase.p95MS;
+        wire.p99MS = phase.p99MS;
+        wire.maxMS = phase.maxMS;
+        response.perfPhases.push_back(std::move(wire));
+    }
+    if (request.resetPerf) {
+        poem::perf::Global().Reset();
+    }
+
     RECT windowRect{};
     RECT clientRect{};
     if (!GetWindowRect(app.hwnd, &windowRect) || !GetClientRect(app.hwnd, &clientRect)) {
@@ -820,7 +842,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                 auto payload = app.native.ReadMessage();
                 auto env = poem::protocol::DecodeEnvelope(payload);
                 if (env.type == poem::protocol::MessageType::RenderFrame) {
-                    auto frame = poem::protocol::DecodeRenderFrame(env.body);
+                    poem::protocol::RenderFrame frame;
+                    {
+                        poem::perf::ScopedTimer timer("decode_frame");
+                        frame = poem::protocol::DecodeRenderFrame(env.body);
+                    }
                     {
                         std::lock_guard<std::mutex> lock(app.frameMutex);
                         app.cursorType = frame.cursor;
@@ -829,8 +855,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     }
                     if (app.hwnd) PostMessageW(app.hwnd, WM_POEM_FRAME, 0, 0);
                 } else if (env.type == poem::protocol::MessageType::MapSceneDelta) {
-                    auto scene = poem::protocol::DecodeMapSceneDelta(env.body);
+                    poem::protocol::MapSceneDelta scene;
                     {
+                        poem::perf::ScopedTimer timer("decode_map_scene");
+                        scene = poem::protocol::DecodeMapSceneDelta(env.body);
+                    }
+                    {
+                        poem::perf::ScopedTimer timer("apply_map_scene");
                         std::lock_guard<std::mutex> lock(app.frameMutex);
                         app.renderer.ApplyMapScene(scene);
                     }

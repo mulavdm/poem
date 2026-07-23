@@ -297,6 +297,21 @@ type NativeDebugRequest struct {
 	ClampToWorkArea       bool
 	BringToForeground     bool
 	MaximizeWindow        bool
+	// ResetPerf clears the host's native timing rings after the response is
+	// built, so a caller can scope a measurement to one driven scene.
+	ResetPerf bool
+}
+
+// NativePerfPhase is one timed native channel (frame presentation, protocol
+// decode, map-scene apply) summarized over the host's retained sample window.
+type NativePerfPhase struct {
+	Name   string  `json:"name"`
+	Count  uint32  `json:"count"`
+	MeanMS float64 `json:"mean_ms"`
+	P50MS  float64 `json:"p50_ms"`
+	P95MS  float64 `json:"p95_ms"`
+	P99MS  float64 `json:"p99_ms"`
+	MaxMS  float64 `json:"max_ms"`
 }
 
 type NativeDebugResponse struct {
@@ -327,6 +342,8 @@ type NativeDebugResponse struct {
 	FrameWidth  int32
 	FrameHeight int32
 	FrameRGBA   []byte
+
+	PerfPhases []NativePerfPhase
 }
 
 type NativeDialogRequest struct {
