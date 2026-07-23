@@ -3,6 +3,20 @@
   "description": "Cycles the gallery's four tabs. Each click forces a full page rebuild, so this measures the ordinary widget path: build, layout, serialize, present. Deterministic, cheap, and the reference scene for the Go-side budgets.",
 
   "base_url": "http://127.0.0.1:47831",
+
+  "launch": {
+    "platform": "windows",
+    "exe": "dist/portable/POEMGallery.exe",
+    "build": {
+      "script": "windows_host/build.ps1",
+      "args": ["-ProjectDirectory", ".", "-GoPackage", "./cmd/gallery",
+               "-Identity", "POEM.Gallery", "-DisplayName", "POEM Gallery",
+               "-Version", "0.7.0.0", "-OutputDirectory", "./dist"]
+    },
+    "//": "Capture returns a blank image while the window has never been presented, which reads as a rendering failure rather than the window-state problem it is.",
+    "prepare_window": true
+  },
+
   "warmup": 20,
   "iterations": 600,
 
@@ -10,7 +24,8 @@
     { "action": "click", "id": "gallery.tabs/controls" },
     { "action": "click", "id": "gallery.tabs/inputs" },
     { "action": "click", "id": "gallery.tabs/navigation" },
-    { "action": "click", "id": "gallery.tabs/feedback" }
+    { "action": "click", "id": "gallery.tabs/feedback" },
+    { "action": "capture", "name": "feedback", "source": "native" }
   ],
 
   "budgets": {

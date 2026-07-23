@@ -19,6 +19,14 @@ The host presents D3D11 through **DXGI flip-discard**, not the legacy blit/disca
 
 Line segments are emitted as a quad **rotated onto the segment**, with four explicit corners, matching the Go reference rasterizer and the GLES presenter. The obvious-looking alternative of offsetting the endpoints along the segment normal and handing them to the axis-aligned `AppendQuad` collapses to zero area whenever the offset endpoints share an X or a Y — that is, for every horizontal and vertical line, which is most of them. Under that bug the datepicker's calendar icon drew nothing at all and chart gridlines were invisible, while diagonals rendered as two overlapping axis-aligned boxes shaded by an SDF rect that did not coincide with the emitted geometry. Because `shadeShape`'s rounded-rect SDF is axis-aligned and cannot describe a rotated segment, the shading rect is padded past the quad's bounds so every rasterized fragment shades solid and the geometry alone defines the line; the cost is hard rather than SDF-antialiased edges.
 
+`RendererD3D11::Present` is deliberately **separate** from `Render`, so the
+`present` timing channel covers geometry compilation and draw submission only.
+`Present` hands the backbuffer to DWM and its cost depends on compositor state,
+which is not framework CPU work. The GLES presenter already excluded its
+`eglSwapBuffers`, so including this one meant the two platforms' `present`
+channels were never measuring the same thing — defeating the reason the
+recorder is shared at all.
+
 The host records its own frame timings through `shared/poem/perf.{h,cpp}`, reported over the native debug channel and read with `GET /perf/native`. The timed channels are `present` (geometry compilation plus draw submission on the UI thread, excluding GPU execution), `decode_frame`, `decode_map_scene`, and `apply_map_scene`. Before this the host was entirely untimed — every performance figure POEM produced was measured on the Go side of the boundary, so the native cost of a frame was unknown. The recorder is shared with the Android presenter deliberately: identical channel names and one percentile definition are what make a cross-platform comparison mean anything. See [Performance & Latency Profiling](/concepts/automation/perf-profiling.md).
 
 `windows_host/build.ps1` produces a portable EXE plus DLL folder/ZIP and a packaged Win32 full-trust MSIX. Signing is optional and externally configured. Development certificate creation and certificate trust installation are separate commands so package construction never silently changes trust stores.

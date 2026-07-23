@@ -21,6 +21,9 @@ class RendererD3D11 {
     void Resize(int width, int height);
     void ApplyMapScene(const protocol::MapSceneDelta& scene);
     void Render(const protocol::RenderFrame& frame);
+    // Separate from Render so the "present" timer excludes compositor cost;
+    // see the definition for why.
+    void Present();
     bool CaptureBackbufferRGBA(std::vector<std::uint8_t>& rgba, int& width, int& height);
     int BackbufferWidth() const { return width_; }
     int BackbufferHeight() const { return height_; }

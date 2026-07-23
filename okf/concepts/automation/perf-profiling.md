@@ -204,6 +204,19 @@ an Android run one command from a cold machine:
 }
 ```
 
+Windows scenarios use the same block with `platform: "windows"`, an `exe`, an
+optional PowerShell `build`, and `prepare_window` to foreground the window
+before capturing. Readiness there means a **populated component tree**, not
+merely that `/state` answers: a freshly launched app serves `/state` before its
+first frame exists. Foregrounding round-trips through the native debug channel
+and the surface can stop answering while that is in flight, so readiness is
+re-established afterwards rather than assumed.
+
+Before driving, every component id a scenario names is checked against the live
+tree. A wrong id — or the right id against the *wrong app*, which happens when a
+stale `adb forward` still owns the port — otherwise surfaces only as a
+`400 Bad Request` from the middle of a warmup.
+
 With that block the tool boots the AVD when no device is attached, builds the
 APK if it is missing (or `-build` forces it), installs, sets the inspection
 property, restarts the activity, and forwards the port — then drives. Use
@@ -230,6 +243,11 @@ with both numbers and pixels:
 ```json
 { "action": "capture", "name": "checked", "source": "native" }
 ```
+
+A capture waits for the engine's frame counter to advance before reading back,
+because a click returns when the engine *accepts* it, not when the resulting
+frame has been presented — an immediate readback captures the previous frame.
+Waiting on the counter is exact where a fixed sleep is a guess.
 
 `source` selects `native` (the presenter's own backbuffer, on either platform),
 `go` (the engine-side reference rasterization), or `window`. Captures fire only

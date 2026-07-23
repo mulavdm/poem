@@ -16,9 +16,26 @@ import (
 // port forwarded" is left to whoever runs it, which is exactly the manual
 // preamble a scenario exists to remove.
 type Launch struct {
-	// Platform is currently "android". Windows apps are launched by their own
-	// packaging script today; the field exists so that can move here later.
+	// Platform is "android" or "windows".
 	Platform string `json:"platform"`
+
+	// Exe is the Windows executable to start, relative to the repository root.
+	Exe  string            `json:"exe,omitempty"`
+	Args []string          `json:"args,omitempty"`
+	Env  map[string]string `json:"env,omitempty"`
+
+	// ReuseRunning drives an instance that already answers on base_url rather
+	// than starting a second one. Defaults true on Windows: starting a rival
+	// process that loses the race for the inspection port is worse than
+	// driving the one already there, and killing the user's window uninvited
+	// is worse still.
+	ReuseRunning *bool `json:"reuse_running,omitempty"`
+
+	// PrepareWindow foregrounds and restores the window once the surface
+	// answers. Capture on Windows returns a blank image while the window has
+	// never been presented, which reads as a rendering failure rather than as
+	// the window-state problem it is.
+	PrepareWindow bool `json:"prepare_window,omitempty"`
 
 	// AVD is started when no device is attached. Ignored if one already is,
 	// so a physical device or a running emulator wins.
@@ -46,30 +63,49 @@ type Launch struct {
 	BootTimeoutSeconds int `json:"boot_timeout_seconds,omitempty"`
 }
 
-// BuildAPK mirrors android_engine/build_apk.sh's positional arguments.
+// BuildAPK describes how to produce the artifact before installing it. The
+// Android fields mirror build_apk.sh's positional arguments; Windows uses Args
+// verbatim against a PowerShell script.
 type BuildAPK struct {
-	Script string `json:"script"`
-	AppDir string `json:"app_dir"`
-	Label  string `json:"label"`
-	ABI    string `json:"abi,omitempty"`
+	Script string   `json:"script"`
+	Args   []string `json:"args,omitempty"`
+	AppDir string   `json:"app_dir,omitempty"`
+	Label  string   `json:"label,omitempty"`
+	ABI    string   `json:"abi,omitempty"`
 }
 
 func (l *Launch) validate() error {
-	if l.Platform != "android" {
-		return fmt.Errorf("launch.platform %q is not supported; want android", l.Platform)
-	}
-	if l.Package == "" {
-		return fmt.Errorf("launch needs a package")
-	}
-	if l.Build != nil {
-		if l.Build.Script == "" || l.Build.AppDir == "" || l.Build.Label == "" {
-			return fmt.Errorf("launch.build needs script, app_dir and label")
+	switch l.Platform {
+	case "android":
+		if l.Package == "" {
+			return fmt.Errorf("launch needs a package")
 		}
-		if l.APK == "" {
-			return fmt.Errorf("launch.build needs launch.apk as its output path")
+		if l.Build != nil {
+			if l.Build.Script == "" || l.Build.AppDir == "" || l.Build.Label == "" {
+				return fmt.Errorf("launch.build needs script, app_dir and label")
+			}
+			if l.APK == "" {
+				return fmt.Errorf("launch.build needs launch.apk as its output path")
+			}
 		}
+	case "windows":
+		if l.Exe == "" {
+			return fmt.Errorf("launch needs an exe")
+		}
+		if l.Build != nil && l.Build.Script == "" {
+			return fmt.Errorf("launch.build needs a script")
+		}
+	default:
+		return fmt.Errorf("launch.platform %q is not supported; want android or windows", l.Platform)
 	}
 	return nil
+}
+
+func (l *Launch) reuseRunning() bool {
+	if l.ReuseRunning != nil {
+		return *l.ReuseRunning
+	}
+	return l.Platform == "windows"
 }
 
 // sdkTool resolves an Android SDK executable without requiring it on PATH,
@@ -107,6 +143,9 @@ type launcher struct {
 	adb     string
 	repoDir string
 	verbose bool
+	// surfaceUp records whether the inspection port already answered before
+	// this run started anything.
+	surfaceUp bool
 }
 
 func (x *launcher) run(name string, args ...string) (string, error) {
@@ -220,8 +259,78 @@ func (x *launcher) buildAPK() error {
 	return nil
 }
 
+// buildWindows runs a PowerShell packaging script.
+func (x *launcher) buildWindows() error {
+	b := x.launch.Build
+	shell, err := exec.LookPath("pwsh")
+	if err != nil {
+		shell, err = exec.LookPath("powershell")
+		if err != nil {
+			return fmt.Errorf("launch.build needs pwsh or powershell on PATH: %w", err)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "  building %s\n", filepath.Base(b.Script))
+	// -ExecutionPolicy Bypass applies to this child process only; it does not
+	// change any machine or user policy. Without it a default Windows install
+	// refuses to run the repository's own packaging script.
+	args := append([]string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", filepath.FromSlash(b.Script)}, b.Args...)
+	cmd := exec.Command(shell, args...)
+	cmd.Dir = x.repoDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s failed: %w\n%s", b.Script, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// prepareWindows starts the desktop app unless one is already answering.
+func (x *launcher) prepareWindows(forceBuild bool, surfaceUp bool) error {
+	if surfaceUp && x.launch.reuseRunning() {
+		fmt.Fprintln(os.Stderr, "  reusing the instance already on the inspection port")
+		return nil
+	}
+	if surfaceUp {
+		return fmt.Errorf("something is already serving the inspection port; stop it or set reuse_running")
+	}
+
+	exePath := filepath.Join(x.repoDir, filepath.FromSlash(x.launch.Exe))
+	// Absolute, because Windows resolves a relative executable path against the
+	// calling process's working directory rather than cmd.Dir.
+	if abs, err := filepath.Abs(exePath); err == nil {
+		exePath = abs
+	}
+	if _, err := os.Stat(exePath); err != nil || forceBuild {
+		if x.launch.Build == nil {
+			return fmt.Errorf("%s is missing and launch.build is not configured", x.launch.Exe)
+		}
+		if err := x.buildWindows(); err != nil {
+			return err
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "  launching %s\n", filepath.Base(exePath))
+	cmd := exec.Command(exePath, x.launch.Args...)
+	cmd.Dir = filepath.Dir(exePath)
+	if len(x.launch.Env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range x.launch.Env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("starting %s: %w", x.launch.Exe, err)
+	}
+	// The app outlives this run, as an emulator does, so the next scenario
+	// starts against a warm process.
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
 // Prepare brings the device and app to the state the scenario assumes.
 func (x *launcher) Prepare(forceBuild bool) error {
+	if x.launch.Platform == "windows" {
+		return x.prepareWindows(forceBuild, x.surfaceUp)
+	}
 	if err := x.ensureDevice(); err != nil {
 		return err
 	}
@@ -284,9 +393,13 @@ func newLauncher(l *Launch, repoDir string, verbose bool) (*launcher, error) {
 	if err := l.validate(); err != nil {
 		return nil, err
 	}
-	adb, err := sdkTool("platform-tools", "adb")
-	if err != nil {
-		return nil, err
+	x := &launcher{launch: l, repoDir: repoDir, verbose: verbose}
+	if l.Platform == "android" {
+		adb, err := sdkTool("platform-tools", "adb")
+		if err != nil {
+			return nil, err
+		}
+		x.adb = adb
 	}
-	return &launcher{launch: l, adb: adb, repoDir: repoDir, verbose: verbose}, nil
+	return x, nil
 }

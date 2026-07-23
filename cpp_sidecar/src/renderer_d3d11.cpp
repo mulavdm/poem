@@ -1860,6 +1860,18 @@ void RendererD3D11::Render(const protocol::RenderFrame& frame) {
         context_->Draw(range.count, range.start);
     }
 
+}
+
+// Present is deliberately separate from Render so the "present" timing channel
+// measures geometry compilation and draw submission only. Present() hands the
+// backbuffer to DWM and its cost depends on compositor state — an occluded
+// window returns almost immediately while a visible one participates in
+// composition, which measured as a tenfold difference in "CPU work" for an
+// unchanged frame. The GLES presenter already excluded its eglSwapBuffers, so
+// including this one meant the two platforms' channels were never comparable,
+// defeating the reason the recorder is shared.
+void RendererD3D11::Present() {
+    if (!swapchain_) return;
     const char* vsyncEnv = std::getenv("POEM_VSYNC");
     const UINT syncInterval = (vsyncEnv != nullptr && std::strcmp(vsyncEnv, "1") == 0) ? 1 : 0;
     swapchain_->Present(syncInterval, 0);

@@ -99,15 +99,24 @@ func (d *driver) waitReady(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		var state map[string]any
-		if err := d.getJSON("/state", &state); err == nil {
+		// Answering /state is not enough: a freshly launched app serves it
+		// before the first frame exists, and the component tree is empty until
+		// then. Readiness means "there is something to drive".
+		var tree struct {
+			Flat []struct {
+				ID string `json:"id"`
+			} `json:"flat"`
+		}
+		if err := d.getJSON("/components", &tree); err != nil {
+			lastErr = err
+		} else if len(tree.Flat) > 0 {
 			return nil
 		} else {
-			lastErr = err
+			lastErr = fmt.Errorf("component tree is still empty")
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	return fmt.Errorf("automation surface at %s never answered: %w", d.scenario.BaseURL, lastErr)
+	return fmt.Errorf("automation surface at %s never became ready: %w", d.scenario.BaseURL, lastErr)
 }
 
 func (d *driver) step(s Step) error {
@@ -139,6 +148,13 @@ func (d *driver) capture(s Step) error {
 	if source == "" {
 		source = "native"
 	}
+	// A click returns as soon as the engine accepts it, not when the resulting
+	// frame has been presented, so an immediate readback grabs the previous
+	// frame. Waiting for the frame counter to advance is exact where a fixed
+	// sleep is a guess.
+	if err := d.awaitNewFrame(600 * time.Millisecond); err != nil && d.verbose {
+		fmt.Fprintln(os.Stderr, "  capture:", err)
+	}
 	resp, err := d.client.Get(d.url(captureSources[source]))
 	if err != nil {
 		return err
@@ -162,6 +178,67 @@ func (d *driver) capture(s Step) error {
 		fmt.Fprintf(os.Stderr, "  captured %s (%d bytes)\n", path, len(body))
 	}
 	return nil
+}
+
+// verifyTargets checks that every component a step names actually exists
+// before anything is driven. Without it a wrong id — or, worse, the right id
+// against the wrong app, which happens when a stale `adb forward` still owns
+// the port — surfaces only as `400 Bad Request` from the middle of a warmup.
+func (d *driver) verifyTargets() error {
+	var tree struct {
+		Flat []struct {
+			ID string `json:"id"`
+		} `json:"flat"`
+	}
+	if err := d.getJSON("/components", &tree); err != nil {
+		return fmt.Errorf("reading the component tree: %w", err)
+	}
+	present := make(map[string]bool, len(tree.Flat))
+	for _, node := range tree.Flat {
+		present[node.ID] = true
+	}
+
+	var missing []string
+	seen := map[string]bool{}
+	for _, step := range d.scenario.Steps {
+		if step.ID == "" || seen[step.ID] || present[step.ID] {
+			continue
+		}
+		seen[step.ID] = true
+		missing = append(missing, step.ID)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("the app at %s does not have %v.\n"+
+		"  Either the ids are wrong, or this is a different app than the scenario expects —\n"+
+		"  a stale `adb forward` or another instance can leave something else on the port.\n"+
+		"  GET %s/components lists what is actually there",
+		d.scenario.BaseURL, missing, d.scenario.BaseURL)
+}
+
+// awaitNewFrame blocks until the engine reports having rendered another frame,
+// so a capture shows the state the preceding steps produced.
+func (d *driver) awaitNewFrame(timeout time.Duration) error {
+	frameCount := func() (uint64, error) {
+		var perf render.PerfState
+		if err := d.getJSON("/perf/state", &perf); err != nil {
+			return 0, err
+		}
+		return perf.Frames.FrameCount, nil
+	}
+	start, err := frameCount()
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+		if now, err := frameCount(); err == nil && now > start {
+			return nil
+		}
+	}
+	return fmt.Errorf("no new frame within %s; the capture may show the previous one", timeout)
 }
 
 // run executes warmup, resets the counters, then replays the step list.
@@ -284,12 +361,16 @@ func main() {
 		}
 	}
 
+	probe := &driver{scenario: scenario, client: &http.Client{Timeout: 3 * time.Second}}
+	surfaceUp := probe.waitReady(time.Second) == nil
+
 	if scenario.Launch != nil && !*noLaunch {
 		l, err := newLauncher(scenario.Launch, *repoDir, *verbose)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "poemdrive:", err)
 			os.Exit(2)
 		}
+		l.surfaceUp = surfaceUp
 		fmt.Fprintf(os.Stderr, "preparing %s target\n", scenario.Launch.Platform)
 		if err := l.Prepare(*forceBuild); err != nil {
 			fmt.Fprintln(os.Stderr, "poemdrive: launch:", err)
@@ -304,6 +385,26 @@ func main() {
 		captureDir: *captureDir,
 	}
 	if err := d.waitReady(*timeout); err != nil {
+		fmt.Fprintln(os.Stderr, "poemdrive:", err)
+		os.Exit(2)
+	}
+
+	// Windows capture returns a blank image while the window has never been
+	// presented — a window-state problem that reads as a rendering failure.
+	if scenario.Launch != nil && scenario.Launch.PrepareWindow && !*noLaunch {
+		if err := d.post("/prepare-window", nil); err != nil && *verbose {
+			fmt.Fprintln(os.Stderr, "  prepare-window:", err)
+		}
+		// Foregrounding round-trips through the native debug channel and the
+		// surface can stop answering while that is in flight, so readiness is
+		// re-established rather than assumed.
+		if err := d.waitReady(*timeout); err != nil {
+			fmt.Fprintln(os.Stderr, "poemdrive: after prepare-window:", err)
+			os.Exit(2)
+		}
+	}
+
+	if err := d.verifyTargets(); err != nil {
 		fmt.Fprintln(os.Stderr, "poemdrive:", err)
 		os.Exit(2)
 	}

@@ -244,9 +244,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (app->hasFrame) {
                 // "present" is the native framework CPU work the migration
                 // plan budgets at 4.17 ms p95: geometry compilation plus draw
-                // submission on the UI thread, excluding GPU execution.
-                poem::perf::ScopedTimer timer("present");
-                app->renderer.Render(app->latestFrame);
+                // submission on the UI thread, excluding GPU execution and
+                // excluding the swapchain Present below, which blocks on the
+                // compositor rather than measuring framework work. The GLES
+                // presenter draws the same line around eglSwapBuffers.
+                {
+                    poem::perf::ScopedTimer timer("present");
+                    app->renderer.Render(app->latestFrame);
+                }
+                app->renderer.Present();
             }
             ValidateRect(hwnd, nullptr);
             return 0;
