@@ -17,5 +17,5 @@ The scaffold serves these files at `/components/static/`. The CSS defines stable
 
 ## Relationships
 
-- Widget behavior follows [Vanilla Class-Based JS](/frontend/vanilla-class-based-js.md).
+- Widget behavior follows [Vanilla Class-Based JS](/concepts/web/vanilla-class-based-js.md).
 - The public API is described in [Public Component API](/concepts/web/public-component-api.md).

@@ -1,0 +1,13 @@
+# Bundle policy for okfcheck, stricter than the OKF v0.1 specification.
+# Keeping it here rather than in a check script means every caller — CI, a
+# local run, an agent — enforces the same rules from the same implementation.
+
+# AGENTS.md requires the full frontmatter set, not just the spec's `type`.
+require: type, title, description, tags, timestamp
+
+# AGENTS.md requires bundle-absolute cross-links so a concept survives being
+# moved between subdirectories.
+absolute-links: true
+
+# Every finding fails. This bundle is clean and should stay that way.
+strict: true

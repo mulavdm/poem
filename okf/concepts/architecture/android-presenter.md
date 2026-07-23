@@ -21,6 +21,13 @@ framing are identical to Windows' in-memory host transport. Call batching
 matters: a cgo crossing is expensive, so the presenter reads whole framed messages on a
 dedicated transport thread and writes one `EventBatch` per frame, never chatting per command.
 
+A **zero-length read terminates the transport**, exactly as a negative one does. `PoemHostRead`
+returning 0 means the engine closed its end; treating that as "nothing yet, try again" spins
+the transport thread at 100% instead of shutting it down, because the condition never clears.
+The Windows host's `NativeApp::ReadExact` rejects `count <= 0` for the same reason, and the
+two must agree — the framing is shared, so a disagreement about what end-of-stream looks like
+is a disagreement about the protocol.
+
 `pkg/mobile` also redirects fds 1/2 into logcat (`poem-go` tag): stderr is a black hole
 inside an APK, and without the redirect Go panics and the engine's own progress prints are
 invisible.

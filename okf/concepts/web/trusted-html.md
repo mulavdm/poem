@@ -15,5 +15,5 @@ Where practical, components provide escaped text alternatives such as `Card.Body
 
 ## Relationships
 
-- [Public Component API](/components/public-component-api.md)
-- [Downstream Consumption](/components/downstream-consumption.md)
+- [Public Component API](/concepts/web/public-component-api.md)
+- [Downstream Consumption](/concepts/web/downstream-consumption.md)

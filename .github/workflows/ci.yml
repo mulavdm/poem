@@ -22,6 +22,15 @@ jobs:
       - run: go test -race ./...
       - run: go vet ./...
       - run: go mod verify
+      # The OKF reference folder is gitignored, so a clean checkout lacks it.
+      # Cloning it is cheaper and more honest than keeping a second copy of the
+      # conformance rules in this repository; the bundle's own policy lives in
+      # okf/.okfcheck.
+      - name: Validate OKF bundle
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/mulavdm/OpenKnowledgeFormat.git
+          ./scripts/check-okf.ps1
       - uses: msys2/setup-msys2@v2
         with:
           update: false

@@ -15,5 +15,5 @@ Widgets retain a meaningful non-JavaScript baseline: disclosures use native `det
 
 ## Relationships
 
-- [Vanilla Class-Based JS](/frontend/vanilla-class-based-js.md)
+- [Vanilla Class-Based JS](/concepts/web/vanilla-class-based-js.md)
 - [Public Component API](/concepts/web/public-component-api.md)
