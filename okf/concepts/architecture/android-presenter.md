@@ -85,11 +85,27 @@ same translation unit the D3D11 host compiles, so a p95 means the same thing on
 both. `/native-state` reports the surface as the window (there is no separate
 window rect) and density where Windows reports DPI.
 
-Frame capture is **not** implemented: `glReadPixels` needs the GL context
-current on the render thread and cannot be served from the transport thread.
-The request returns the presenter's own error rather than a blank image, which
-would read as a rendering failure. Use `adb shell screencap` for presented
-pixels.
+Frame capture **is** implemented, by queueing rather than refusing. The request
+arrives on the transport thread, but `glReadPixels` needs the GL context, which
+is current only on the render thread — so the transport thread queues the
+request and waits on a condition variable, and `DrawFrame` serves it. The
+readback happens **before** `eglSwapBuffers`, because the default
+`EGL_BUFFER_DESTROYED` swap behaviour leaves the back buffer undefined
+afterwards, and GL's bottom-up rows are flipped to the top-down RGBA the D3D11
+host produces, so callers cannot tell the platforms apart.
+
+The wait is bounded (3s): a paused or surfaceless presenter draws no frames, and
+the transport thread must not block forever. Timeouts and GL errors report
+themselves rather than returning a blank image that would read as a rendering
+failure. `captureFrame` and `capturePresentedFrame` are the same readback here —
+the surface *is* the window. `captureDesktopFrame` remains unavailable: it needs
+MediaProjection and a user consent dialog, which an automated scenario cannot
+answer.
+
+The earlier design refused capture and directed callers to `adb shell
+screencap`. That pushed the work out of band into every caller, could not be
+driven by a scenario, and captured the *screen* rather than this presenter's own
+output.
 
 The automation surface itself is Go-side and platform-neutral, so enabling it is
 a configuration matter rather than presenter work — see

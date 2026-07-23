@@ -59,6 +59,11 @@ type Step struct {
 	Value  string `json:"value,omitempty"`
 	Key    string `json:"key,omitempty"`
 	MS     int    `json:"ms,omitempty"`
+
+	// Capture only. Name becomes the PNG filename; Source selects which image
+	// the host should produce.
+	Name   string `json:"name,omitempty"`
+	Source string `json:"source,omitempty"`
 }
 
 const (
@@ -67,7 +72,18 @@ const (
 	actionSetText  = "set-text"
 	actionPressKey = "press-key"
 	actionWait     = "wait"
+	actionCapture  = "capture"
 )
+
+// captureSources maps a scenario's source name to the automation endpoint that
+// produces it. "native" is the host's own backbuffer — the pixels the presenter
+// actually drew, on Windows and Android alike. "go" is the engine-side
+// reference rasterization, which is what the two are compared against.
+var captureSources = map[string]string{
+	"native": "/native-frame",
+	"go":     "/frame",
+	"window": "/window-frame",
+}
 
 // Validate rejects a scenario before any app is driven. A scene that fails
 // halfway through leaves the app in an unknown state and the numbers
@@ -103,6 +119,15 @@ func (s *Scenario) Validate() error {
 			if step.MS <= 0 {
 				return fmt.Errorf("step %d (wait) needs a positive ms", i)
 			}
+		case actionCapture:
+			if step.Name == "" {
+				return fmt.Errorf("step %d (capture) needs a name; it becomes the PNG filename", i)
+			}
+			if step.Source != "" {
+				if _, ok := captureSources[step.Source]; !ok {
+					return fmt.Errorf("step %d (capture) has unknown source %q; want native, go or window", i, step.Source)
+				}
+			}
 		case "":
 			return fmt.Errorf("step %d has no action", i)
 		default:
@@ -130,6 +155,18 @@ func splitBudgetKey(key string) (metric, statistic string, err error) {
 		return metric, statistic, nil
 	}
 	return "", "", fmt.Errorf("unknown statistic %q; want mean, p50, p95, p99 or max", statistic)
+}
+
+// HasCaptures reports whether any step writes an image, so the caller can
+// refuse to run a capturing scenario without somewhere to put the output
+// rather than discovering it mid-run or, worse, skipping silently.
+func (s *Scenario) HasCaptures() bool {
+	for _, step := range s.Steps {
+		if step.Action == actionCapture {
+			return true
+		}
+	}
+	return false
 }
 
 func LoadScenario(path string) (*Scenario, error) {

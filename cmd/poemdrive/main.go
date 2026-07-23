@@ -28,6 +28,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -36,9 +37,11 @@ import (
 )
 
 type driver struct {
-	scenario *Scenario
-	client   *http.Client
-	verbose  bool
+	scenario   *Scenario
+	client     *http.Client
+	verbose    bool
+	captureDir string
+	captures   int
 }
 
 func (d *driver) url(path string) string {
@@ -120,8 +123,45 @@ func (d *driver) step(s Step) error {
 	case actionWait:
 		time.Sleep(time.Duration(s.MS) * time.Millisecond)
 		return nil
+	case actionCapture:
+		return d.capture(s)
 	}
 	return fmt.Errorf("unknown action %q", s.Action)
+}
+
+// capture asks the host for an image and writes it beside the others. The
+// endpoint returns PNG bytes already encoded, and every host that can capture
+// answers the same request — that is the point of routing it through the
+// automation surface rather than making each caller reach for a
+// platform-specific tool.
+func (d *driver) capture(s Step) error {
+	source := s.Source
+	if source == "" {
+		source = "native"
+	}
+	resp, err := d.client.Get(d.url(captureSources[source]))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 400 {
+		// The host explains why it could not capture; surfacing that verbatim
+		// beats writing a blank image that reads as a rendering failure.
+		return fmt.Errorf("capture %q from %s: %s: %s", s.Name, source, resp.Status, strings.TrimSpace(string(body)))
+	}
+	path := filepath.Join(d.captureDir, fmt.Sprintf("%s-%s.png", d.scenario.Name, s.Name))
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		return err
+	}
+	d.captures++
+	if d.verbose {
+		fmt.Fprintf(os.Stderr, "  captured %s (%d bytes)\n", path, len(body))
+	}
+	return nil
 }
 
 // run executes warmup, resets the counters, then replays the step list.
@@ -129,7 +169,11 @@ func (d *driver) step(s Step) error {
 // of the sample.
 func (d *driver) run() (Measurement, error) {
 	for i := 0; i < d.scenario.Warmup; i++ {
-		if err := d.step(d.scenario.Steps[i%len(d.scenario.Steps)]); err != nil {
+		step := d.scenario.Steps[i%len(d.scenario.Steps)]
+		if step.Action == actionCapture {
+			continue // warmup images are noise; capture only the measured pass
+		}
+		if err := d.step(step); err != nil {
 			return Measurement{}, fmt.Errorf("warmup: %w", err)
 		}
 	}
@@ -137,8 +181,17 @@ func (d *driver) run() (Measurement, error) {
 		return Measurement{}, fmt.Errorf("reset: %w", err)
 	}
 
+	// Captures fire only on the final pass through the step list. Repeating
+	// them every cycle would rewrite the same filenames and, worse, charge
+	// every cycle for a full readback and PNG encode — perturbing the very
+	// timings the run exists to measure.
+	lastCycle := d.scenario.Iterations - len(d.scenario.Steps)
 	for i := 0; i < d.scenario.Iterations; i++ {
-		if err := d.step(d.scenario.Steps[i%len(d.scenario.Steps)]); err != nil {
+		step := d.scenario.Steps[i%len(d.scenario.Steps)]
+		if step.Action == actionCapture && i < lastCycle {
+			continue
+		}
+		if err := d.step(step); err != nil {
 			return Measurement{}, fmt.Errorf("step %d: %w", i, err)
 		}
 		if d.verbose && (i+1)%100 == 0 {
@@ -197,6 +250,7 @@ func main() {
 	savePath := flag.String("save-baseline", "", "write this run's measurement as a baseline")
 	asJSON := flag.Bool("json", false, "emit the measurement as JSON instead of a table")
 	verbose := flag.Bool("v", false, "report progress while driving")
+	captureDir := flag.String("capture-dir", "", "directory for images written by capture steps")
 	timeout := flag.Duration("ready-timeout", 30*time.Second, "how long to wait for the automation surface")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: poemdrive [flags] <scenario.json>\n\n"+
@@ -216,7 +270,23 @@ func main() {
 		os.Exit(2)
 	}
 
-	d := &driver{scenario: scenario, client: &http.Client{Timeout: 30 * time.Second}, verbose: *verbose}
+	if scenario.HasCaptures() && *captureDir == "" {
+		fmt.Fprintf(os.Stderr, "poemdrive: %s has capture steps; pass -capture-dir\n", scenario.Name)
+		os.Exit(2)
+	}
+	if *captureDir != "" {
+		if err := os.MkdirAll(*captureDir, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, "poemdrive:", err)
+			os.Exit(2)
+		}
+	}
+
+	d := &driver{
+		scenario:   scenario,
+		client:     &http.Client{Timeout: 30 * time.Second},
+		verbose:    *verbose,
+		captureDir: *captureDir,
+	}
 	if err := d.waitReady(*timeout); err != nil {
 		fmt.Fprintln(os.Stderr, "poemdrive:", err)
 		os.Exit(2)
@@ -260,6 +330,9 @@ func main() {
 		fmt.Println(string(encoded))
 	} else {
 		printTable(measurement, scenario)
+		if d.captures > 0 {
+			fmt.Printf("\n%d image(s) written to %s\n", d.captures, d.captureDir)
+		}
 		if len(failures) == 0 {
 			fmt.Println("\nall gates passed")
 		} else {

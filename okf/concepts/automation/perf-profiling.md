@@ -196,7 +196,22 @@ server-side ring rather than reconstructed by polling `/perf/events`, which is
 both exact and free of the polling load that would otherwise perturb what is
 being measured.
 
-Three behaviours are deliberate and worth keeping:
+A `capture` step writes an image through the same surface, so a scenario ends
+with both numbers and pixels:
+
+```json
+{ "action": "capture", "name": "checked", "source": "native" }
+```
+
+`source` selects `native` (the presenter's own backbuffer, on either platform),
+`go` (the engine-side reference rasterization), or `window`. Captures fire only
+on the **final** pass through the step list: repeating them every cycle would
+rewrite the same filenames and charge every cycle for a readback and PNG encode,
+which measurably perturbs the timings — on the Android preferences scene it
+moved `native.present` max from 6.5 ms to 2.0 ms. A scenario with capture steps
+refuses to run without `-capture-dir` rather than skipping them silently.
+
+Four behaviours are deliberate and worth keeping:
 
 - **Warmup runs before the reset**, so first-paint costs and lazily built
   caches never enter the sample.

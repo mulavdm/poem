@@ -40,15 +40,23 @@ well as Windows**. Both presenters now implement the native debug channel
 | `/perf/state`, `/perf/events`, `/perf/reset` | yes | yes |
 | `/native-state` | yes | yes |
 | `/perf/native` | yes | yes |
-| `/native-frame`, `/self-frame`, `/window-frame`, `/desktop-frame` | yes | no |
+| `/native-frame`, `/self-frame`, `/window-frame` | yes | yes |
+| `/desktop-frame` | yes | no (needs MediaProjection consent) |
 | `/prepare-window` | yes | no-op (no window manager) |
 
-Capture is unimplemented on Android because `glReadPixels` needs the GL context
-current on the render thread and cannot be served from the transport thread.
-The request returns 500 carrying the presenter's own explanation rather than a
-blank image, which would read as a rendering failure. For real presented pixels
-use `adb shell screencap`; the Go `/frame` rasterizer is the reference image,
-not the GLES output.
+Capture works on both platforms and returns the same top-down RGBA, so a caller
+does not branch on the host. Android serves it by queueing the request from the
+transport thread to the render thread, where the GL context is current; see
+[Android Presenter](/concepts/architecture/android-presenter.md) for the
+mechanism and its bounded wait. `/native-frame`, `/self-frame`, and
+`/window-frame` are the same readback there, because the surface is the window.
+Only `/desktop-frame` is unavailable, needing MediaProjection consent that an
+automated scenario cannot answer.
+
+Uniformity is the point. The alternative — refusing capture and telling callers
+to run `adb shell screencap` — put the work out of band in every caller, could
+not be driven by a scenario, and captured the screen rather than the
+presenter's own output.
 
 On Android `/native-state` reports the surface as the window — there is no
 separate window rect — and density where Windows reports DPI.

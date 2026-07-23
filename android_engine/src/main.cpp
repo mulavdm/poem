@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -113,6 +114,22 @@ struct Host {
 
     std::mutex writeMutex;
     std::atomic<bool> transportRunning{false};
+
+    // Frame capture crosses threads by necessity: the request arrives on the
+    // transport thread, but glReadPixels needs the GL context, which is
+    // current only on the render thread. The request is queued here, DrawFrame
+    // fulfils it, and the requester waits. Refusing instead would push the
+    // work onto every caller as an out-of-band `adb shell screencap`, which no
+    // scenario can drive and which captures the screen rather than this
+    // presenter's own output.
+    std::mutex captureMutex;
+    std::condition_variable captureReady;
+    bool captureRequested = false;
+    bool captureDone = false;
+    std::vector<std::uint8_t> captureRGBA;
+    std::int32_t captureWidth = 0;
+    std::int32_t captureHeight = 0;
+    std::string captureError;
 };
 
 Host g_host;
@@ -249,16 +266,40 @@ void TransportLoop() {
                 break;
             }
             case poem::protocol::MessageType::NativeDebugRequest: {
-                // Answers /native-state and /perf/native. Capture is not
-                // implemented here: glReadPixels needs the GL context current
-                // on the render thread, so it cannot be served from this
-                // transport thread. Use `adb shell screencap` for presented
-                // pixels; the request reports the gap rather than returning a
-                // blank image that would read as a rendering failure.
+                // Answers /native-state, /perf/native, and frame capture.
+                // Capture is queued to the render thread and awaited here,
+                // because glReadPixels needs the GL context, which is current
+                // only there.
                 const auto request = poem::protocol::DecodeNativeDebugRequest(envelope.body);
                 poem::protocol::NativeDebugResponse response;
-                if (request.captureFrame || request.capturePresentedFrame || request.captureDesktopFrame) {
-                    response.error = "native frame capture is not implemented on the Android presenter";
+                if (request.captureDesktopFrame) {
+                    // There is no compositor readback available to an ordinary
+                    // app; that needs MediaProjection and a user consent
+                    // dialog, which an automated scenario cannot answer.
+                    response.error = "desktop capture requires MediaProjection consent and is unavailable to this presenter";
+                } else if (request.captureFrame || request.capturePresentedFrame) {
+                    // The surface is the window here, so backbuffer and
+                    // presented capture are the same readback.
+                    std::unique_lock<std::mutex> lock(g_host.captureMutex);
+                    g_host.captureRGBA.clear();
+                    g_host.captureError.clear();
+                    g_host.captureDone = false;
+                    g_host.captureRequested = true;
+                    // A paused or surfaceless presenter draws no frames, so the
+                    // wait must be bounded: report the timeout rather than
+                    // blocking the transport thread indefinitely.
+                    const bool served = g_host.captureReady.wait_for(
+                        lock, std::chrono::seconds(3), [] { return g_host.captureDone; });
+                    g_host.captureRequested = false;
+                    if (!served) {
+                        response.error = "frame capture timed out; the presenter may be paused or have no surface";
+                    } else if (!g_host.captureError.empty()) {
+                        response.error = g_host.captureError;
+                    } else {
+                        response.frameRgba = std::move(g_host.captureRGBA);
+                        response.frameWidth = g_host.captureWidth;
+                        response.frameHeight = g_host.captureHeight;
+                    }
                 }
                 for (const auto& phase : poem::perf::Global().Snapshot()) {
                     poem::protocol::NativePerfPhase wire;
@@ -481,6 +522,57 @@ void CheckSurfaceSize(Host* host) {
     QueueEvent(resize);
 }
 
+// ServePendingCapture fulfils a queued capture on the render thread, where the
+// GL context is current. Called from DrawFrame with the frame drawn and the
+// back buffer still intact.
+void ServePendingCapture(Host* host) {
+    {
+        std::lock_guard<std::mutex> lock(host->captureMutex);
+        if (!host->captureRequested || host->captureDone) return;
+    }
+
+    const std::int32_t w = host->width;
+    const std::int32_t h = host->height;
+    std::vector<std::uint8_t> pixels;
+    std::string error;
+
+    if (w <= 0 || h <= 0) {
+        error = "surface has no size yet";
+    } else {
+        pixels.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4);
+        while (glGetError() != GL_NO_ERROR) {
+        } // drain, so the check below reports only this call's failure
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        if (const GLenum err = glGetError(); err != GL_NO_ERROR) {
+            error = "glReadPixels failed (0x" + std::to_string(err) + ")";
+            pixels.clear();
+        } else {
+            // GL returns rows bottom-up; the protocol's RGBA is top-down, as
+            // the D3D11 host produces. Flipping here keeps one convention on
+            // the wire so callers cannot tell the platforms apart.
+            const std::size_t stride = static_cast<std::size_t>(w) * 4;
+            std::vector<std::uint8_t> row(stride);
+            for (std::int32_t y = 0; y < h / 2; ++y) {
+                std::uint8_t* top = pixels.data() + static_cast<std::size_t>(y) * stride;
+                std::uint8_t* bottom = pixels.data() + static_cast<std::size_t>(h - 1 - y) * stride;
+                std::memcpy(row.data(), top, stride);
+                std::memcpy(top, bottom, stride);
+                std::memcpy(bottom, row.data(), stride);
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(host->captureMutex);
+        host->captureRGBA = std::move(pixels);
+        host->captureWidth = error.empty() ? w : 0;
+        host->captureHeight = error.empty() ? h : 0;
+        host->captureError = std::move(error);
+        host->captureDone = true;
+    }
+    host->captureReady.notify_all();
+}
+
 void DrawFrame(Host* host) {
     if (host->display == EGL_NO_DISPLAY) return;
     CheckSurfaceSize(host);
@@ -500,6 +592,9 @@ void DrawFrame(Host* host) {
         poem::perf::ScopedTimer timer("present");
         host->renderer.Render(*frame);
     }
+    // Must read before the swap: with EGL_BUFFER_DESTROYED (the default swap
+    // behaviour) the back buffer's contents are undefined afterwards.
+    ServePendingCapture(host);
     if (!eglSwapBuffers(host->display, host->surface)) {
         // EGL_BAD_SURFACE etc. — the surface died under us (seen during
         // aggressive lifecycle churn); tear down and wait for INIT_WINDOW.
