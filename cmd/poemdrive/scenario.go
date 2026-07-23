@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -188,6 +190,19 @@ func (s *Scenario) HasCaptures() bool {
 	return false
 }
 
+// portFromURL extracts the TCP port a scenario's base_url targets.
+func portFromURL(raw string) (int, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return 0, err
+	}
+	port := parsed.Port()
+	if port == "" {
+		return 0, fmt.Errorf("no port in %q", raw)
+	}
+	return strconv.Atoi(port)
+}
+
 func LoadScenario(path string) (*Scenario, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -202,6 +217,13 @@ func LoadScenario(path string) (*Scenario, error) {
 	}
 	if scenario.RegressionFloorMS <= 0 {
 		scenario.RegressionFloorMS = 0.5
+	}
+	// The forward follows base_url unless overridden, so a scene changes port
+	// in one place and two scenes can target one device without colliding.
+	if scenario.Launch != nil && scenario.Launch.Platform == "android" && scenario.Launch.ForwardPort == 0 {
+		if port, err := portFromURL(scenario.BaseURL); err == nil {
+			scenario.Launch.ForwardPort = port
+		}
 	}
 	if scenario.PaceMS == nil {
 		pace := 16

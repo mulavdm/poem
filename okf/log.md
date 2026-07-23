@@ -1,5 +1,12 @@
 # OKF Bundle Update Log
 
+## 2026-07-23 (Scene-owned ports and scoped teardown)
+
+- **Feature**: `forward_port` now follows the port in `base_url`, and `inspection_port_property` carries the same number to the device — forwarding alone is not enough, since the app binds whatever port it was told and a tunnel onto a different one lands on nothing. The Android scene moved to 47832 so it and the gallery scene (47831) run against one machine at once; verified by driving both back to back with the gallery still up.
+- **Feature**: `-teardown` stops what the run started and only that. Omit it while chaining scenarios to keep the app or device warm, pass it on the last. The launcher records the emulator only if it booted it, the app only if it started it, the forward only if it added it. Verified both ways: a run that borrowed an already-booted emulator left it running, and a run that booted its own shut it down. Teardown also covers the failure paths, since `os.Exit` skips deferred calls and a scenario that dies half way must not strand an emulator.
+- **Outstanding**: `POST /prepare-window` **intermittently wedges the whole automation surface** — after it, `/components` stops answering and does not recover within 30s, so the run aborts; an immediate retry succeeds. It is not the tool: `/components` is a Go-side endpoint, so the engine loop appears to block awaiting a native debug response that never arrives. Worth chasing, because it makes any capture-bearing Windows scenario flaky.
+- **Modified Concepts:** [perf-profiling.md](/concepts/automation/perf-profiling.md) (scene-owned ports, the port property, and the teardown ownership rule).
+
 ## 2026-07-23 (Pacing decides what the perf numbers mean)
 
 - **Feature**: scenario steps are paced, defaulting to 16 ms. See the resolved entry below — the finding came from a user observing that the scenario "scrolled through tabs hundreds of times within a second or two", which is not an interaction rate any budget was written for. **Modified Concepts:** [perf-profiling.md](/concepts/automation/perf-profiling.md) (pacing and the measured unpaced/paced comparison).

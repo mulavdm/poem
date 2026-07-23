@@ -52,8 +52,15 @@ type Launch struct {
 	Build *BuildAPK `json:"build,omitempty"`
 
 	// ForwardPort maps the device's inspection port to the same port on the
-	// host, which is what makes base_url reachable.
+	// host, which is what makes base_url reachable. Defaults to the port in
+	// base_url, so a scene changes ports in one place and two scenes can run
+	// against one device without colliding.
 	ForwardPort int `json:"forward_port,omitempty"`
+
+	// InspectionPortProperty carries the port to the device. Forwarding alone
+	// is not enough: the app binds whatever port it was told, so the property
+	// and the forward must agree or the tunnel lands on nothing.
+	InspectionPortProperty string `json:"inspection_port_property,omitempty"`
 
 	// InspectionProperty is the system property that opts the app into its
 	// control surface. NativeActivity has no command line, so a property is
@@ -146,6 +153,15 @@ type launcher struct {
 	// surfaceUp records whether the inspection port already answered before
 	// this run started anything.
 	surfaceUp bool
+
+	// Teardown only undoes what this run did. A developer's long-running
+	// emulator or an app they already had open must survive a scenario that
+	// merely borrowed them, so each of these is set solely when this process
+	// is the one that caused it.
+	bootedAVD     bool
+	startedApp    bool
+	forwardedPort int
+	startedExe    *exec.Cmd
 }
 
 func (x *launcher) run(name string, args ...string) (string, error) {
@@ -202,6 +218,9 @@ func (x *launcher) ensureDevice() error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "  booting AVD %s\n", x.launch.AVD)
+	// Recorded before the attempt, not after success: a boot that half-starts
+	// still leaves an emulator process this run is responsible for.
+	x.bootedAVD = true
 	cmd := exec.Command(emulator, "-avd", x.launch.AVD, "-no-boot-anim")
 	cmd.Dir = x.repoDir
 	if err := cmd.Start(); err != nil {
@@ -320,6 +339,7 @@ func (x *launcher) prepareWindows(forceBuild bool, surfaceUp bool) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting %s: %w", x.launch.Exe, err)
 	}
+	x.startedExe = cmd
 	// The app outlives this run, as an emulator does, so the next scenario
 	// starts against a warm process.
 	go func() { _ = cmd.Wait() }()
@@ -362,6 +382,11 @@ func (x *launcher) Prepare(forceBuild bool) error {
 			return err
 		}
 	}
+	if prop := x.launch.InspectionPortProperty; prop != "" && x.launch.ForwardPort > 0 {
+		if _, err := x.run(x.adb, "shell", "setprop", prop, fmt.Sprint(x.launch.ForwardPort)); err != nil {
+			return err
+		}
+	}
 
 	if _, err := x.run(x.adb, "shell", "am", "force-stop", x.launch.Package); err != nil {
 		return err
@@ -375,16 +400,47 @@ func (x *launcher) Prepare(forceBuild bool) error {
 		return err
 	}
 
+	x.startedApp = true
+
 	if port := x.launch.ForwardPort; port > 0 {
 		spec := fmt.Sprintf("tcp:%d", port)
 		if _, err := x.run(x.adb, "forward", spec, spec); err != nil {
 			return err
 		}
+		x.forwardedPort = port
 		if x.verbose {
 			fmt.Fprintf(os.Stderr, "  forwarded %s\n", spec)
 		}
 	}
 	return nil
+}
+
+// Teardown stops what this run started and nothing else, so a chain of
+// scenarios can share one device or window and only the last one pays to bring
+// it down. A developer's long-running emulator, or an app they already had
+// open, must survive a scenario that merely borrowed it — which is why every
+// field consulted here is set solely when this process caused the thing.
+func (x *launcher) Teardown() {
+	if x.startedExe != nil && x.startedExe.Process != nil {
+		fmt.Fprintf(os.Stderr, "  stopping %s\n", filepath.Base(x.launch.Exe))
+		_ = x.startedExe.Process.Kill()
+	}
+	if x.launch.Platform != "android" {
+		return
+	}
+	if x.startedApp {
+		fmt.Fprintf(os.Stderr, "  stopping %s\n", x.launch.Package)
+		_, _ = x.run(x.adb, "shell", "am", "force-stop", x.launch.Package)
+	}
+	if x.forwardedPort > 0 {
+		// Left in place, a stale forward keeps answering on the port and the
+		// next scenario silently drives the wrong app.
+		_, _ = x.run(x.adb, "forward", "--remove", fmt.Sprintf("tcp:%d", x.forwardedPort))
+	}
+	if x.bootedAVD {
+		fmt.Fprintln(os.Stderr, "  shutting down the AVD this run booted")
+		_, _ = x.run(x.adb, "emu", "kill")
+	}
 }
 
 // newLauncher resolves the tools a launch needs. repoDir anchors the relative

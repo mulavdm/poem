@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -191,5 +192,36 @@ func TestRegressionFloorSuppressesTimerNoise(t *testing.T) {
 	failures := CheckRegression(real, baseline, 15, 0.5)
 	if len(failures) != 2 {
 		t.Errorf("a 2 ms regression should still fail on p95 and p99, got %+v", failures)
+	}
+}
+
+func TestForwardPortFollowsBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "s.json")
+	body := `{"name":"s","base_url":"http://127.0.0.1:47999","iterations":1,
+	  "launch":{"platform":"android","package":"com.example","avd":"x"},
+	  "steps":[{"action":"click","id":"a"}]}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scenario, err := LoadScenario(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two scenes on one device must not collide, so the forward follows the
+	// port the scene already declared rather than a second hard-coded copy.
+	if scenario.Launch.ForwardPort != 47999 {
+		t.Errorf("ForwardPort = %d, want 47999", scenario.Launch.ForwardPort)
+	}
+}
+
+func TestTeardownOnlyStopsWhatItStarted(t *testing.T) {
+	// Nothing was started, so teardown must be a no-op rather than killing a
+	// device or app the developer already had running.
+	borrowed := &launcher{launch: &Launch{Platform: "android", Package: "com.example"}}
+	borrowed.Teardown() // must not panic, and has no adb path to call
+
+	if borrowed.bootedAVD || borrowed.startedApp || borrowed.forwardedPort != 0 {
+		t.Error("a launcher that started nothing should record nothing to tear down")
 	}
 }

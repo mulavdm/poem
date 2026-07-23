@@ -2,7 +2,8 @@
   "name": "android-preferences",
   "description": "Drives the preferences example on an Android device or emulator and captures the presenter's own pixels. Self-provisioning: the launch block boots an AVD if no device is attached, installs, enables inspection, starts the activity and forwards the port, so this is one command from a cold machine.",
 
-  "base_url": "http://127.0.0.1:47831",
+  "//port": "A distinct port from gallery-tabs so both scenes can target one machine without the forward colliding. forward_port follows this automatically; inspection_port_property carries the same number to the device, since the app binds whatever it is told and a forward onto a different port lands on nothing.",
+  "base_url": "http://127.0.0.1:47832",
 
   "launch": {
     "platform": "android",
@@ -16,9 +17,9 @@
       "label": "Preferences",
       "abi": "x86_64"
     },
-    "forward_port": 47831,
     "//": "NativeActivity has no command line, so the opt-in gate is a system property read by pkg/mobile at package init. It must be set before the process starts, which is why the launch order is setprop, force-stop, then am start.",
-    "inspection_property": "debug.poem.inspection"
+    "inspection_property": "debug.poem.inspection",
+    "inspection_port_property": "debug.poem.inspection.port"
   },
 
   "warmup": 4,

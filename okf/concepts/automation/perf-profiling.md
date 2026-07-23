@@ -212,6 +212,24 @@ first frame exists. Foregrounding round-trips through the native debug channel
 and the surface can stop answering while that is in flight, so readiness is
 re-established afterwards rather than assumed.
 
+**Each scene owns a port.** `forward_port` follows the port in `base_url`, and
+`inspection_port_property` carries the same number to the device — forwarding
+alone is not enough, because the app binds whatever port it was told and a
+tunnel onto a different one lands on nothing. Two scenes on distinct ports run
+against one machine simultaneously; `scenes/gallery-tabs.json` uses 47831 and
+`scenes/android-preferences.json` 47832.
+
+**`-teardown` stops what the run started, and only that.** Omit it while
+chaining scenarios so the app or device stays warm, and pass it on the last one.
+A launcher records the emulator only if it booted it, the app only if it started
+it, and the forward only if it added it — so a scenario that borrowed a
+developer's long-running emulator leaves it running, while one that booted its
+own shuts it down. Teardown also runs on the failure paths, because a scenario
+that dies half way must not strand an emulator; `os.Exit` skips deferred calls,
+so the failure exits route through a helper that tears down first. Removing the
+forward matters as much as stopping the app: left in place, a stale forward
+keeps answering on the port and the next scenario silently drives the wrong app.
+
 Before driving, every component id a scenario names is checked against the live
 tree. A wrong id — or the right id against the *wrong app*, which happens when a
 stale `adb forward` still owns the port — otherwise surfaces only as a

@@ -335,6 +335,7 @@ func main() {
 	captureDir := flag.String("capture-dir", "", "directory for images written by capture steps")
 	noLaunch := flag.Bool("no-launch", false, "skip the scenario's launch block; drive whatever is already running")
 	forceBuild := flag.Bool("build", false, "rebuild the app before installing it")
+	teardown := flag.Bool("teardown", false, "stop what this run started when it finishes; omit to leave the app or device up for the next scenario")
 	repoDir := flag.String("repo", ".", "repository root that the scenario's relative paths resolve against")
 	timeout := flag.Duration("ready-timeout", 30*time.Second, "how long to wait for the automation surface")
 	flag.Usage = func() {
@@ -369,6 +370,7 @@ func main() {
 	probe := &driver{scenario: scenario, client: &http.Client{Timeout: 3 * time.Second}}
 	surfaceUp := probe.waitReady(time.Second) == nil
 
+	var launched *launcher
 	if scenario.Launch != nil && !*noLaunch {
 		l, err := newLauncher(scenario.Launch, *repoDir, *verbose)
 		if err != nil {
@@ -380,6 +382,13 @@ func main() {
 		if err := l.Prepare(*forceBuild); err != nil {
 			fmt.Fprintln(os.Stderr, "poemdrive: launch:", err)
 			os.Exit(2)
+		}
+		launched = l
+		// Teardown runs on every exit path after this point, including the
+		// failure paths: a scenario that dies half way must not strand an
+		// emulator it booted.
+		if *teardown {
+			defer launched.Teardown()
 		}
 	}
 
@@ -411,13 +420,13 @@ func main() {
 
 	if err := d.verifyTargets(); err != nil {
 		fmt.Fprintln(os.Stderr, "poemdrive:", err)
-		os.Exit(2)
+		fail(launched, *teardown, 2)
 	}
 
 	measurement, err := d.run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "poemdrive:", err)
-		os.Exit(2)
+		fail(launched, *teardown, 2)
 	}
 
 	if *savePath != "" {
@@ -466,6 +475,17 @@ func main() {
 	}
 
 	if len(failures) > 0 {
-		os.Exit(1)
+		fail(launched, *teardown, 1)
 	}
+	// The success path returns normally, so the deferred teardown runs. Calling
+	// it here as well would tear down twice.
+}
+
+// fail exits with code after tearing down, because os.Exit skips deferred
+// calls and a scenario that dies must not strand an emulator it booted.
+func fail(l *launcher, teardown bool, code int) {
+	if teardown && l != nil {
+		l.Teardown()
+	}
+	os.Exit(code)
 }
