@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -454,15 +455,30 @@ func runEngine(config AppConfig, manager *theme.Manager, preferenceUpdates <-cha
 
 			motionAllowed := !globalState.RenderContext().ReducedMotion
 			shouldRepaint := globalState.NeedsRepaint || (motionAllowed && globalState.ParticlesEnabled) || globalState.IsTransitioning
+			// The presenter pipe is a synchronous io.Pipe: a Write blocks until
+			// the host drains it. The host drains it on the same thread that
+			// runs window operations for a NativeDebugRequest (foreground
+			// activation, restore), so while /prepare-window is in flight that
+			// thread is not reading. Writing the frame here, under stateMutex,
+			// would then block with the lock held and wedge every stateMutex
+			// reader — /components and /state stop answering until the window
+			// op returns. So the frame is serialized into a buffer under the
+			// lock and flushed after it is released; the write can still block,
+			// but no longer behind the lock.
+			var outbound bytes.Buffer
 			if shouldRepaint {
-				atlasChanged := triggerRepaintFrame(pipeConnGoToSidecar, painter)
+				atlasChanged := triggerRepaintFrame(&outbound, painter)
 				globalState.NeedsRepaint = atlasChanged
 			}
-			updateImeVisibility(pipeConnGoToSidecar)
+			updateImeVisibility(&outbound)
 			if imeShown {
 				ensureFocusedVisible()
 			}
 			stateMutex.Unlock()
+
+			if outbound.Len() > 0 {
+				flushBufferedFrames(pipeConnGoToSidecar, outbound.Bytes())
+			}
 		}
 	}()
 
@@ -658,6 +674,22 @@ func writeMessage(conn io.Writer, payload []byte) error {
 	copy(buf[4:], payload)
 	_, err := conn.Write(buf)
 	return err
+}
+
+// flushBufferedFrames writes a run of already-framed messages to the presenter
+// pipe in one operation. The bytes were produced by writeMessage into a buffer
+// (each already length-prefixed), so they are handed to the pipe verbatim.
+//
+// The single Write is held under pipeWriteMutex so a concurrent native-debug
+// response cannot interleave itself between the frames — the reader decodes one
+// length-prefixed message at a time, and a spliced write would corrupt the
+// stream. This is the only place the repaint loop touches the real pipe, and it
+// runs after stateMutex is released, so a blocked presenter no longer stalls
+// state readers such as /components.
+func flushBufferedFrames(conn io.Writer, framed []byte) {
+	pipeWriteMutex.Lock()
+	defer pipeWriteMutex.Unlock()
+	_, _ = conn.Write(framed)
 }
 
 // SubmitMapScene sends one retained vector-scene generation to the active

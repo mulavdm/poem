@@ -27,6 +27,20 @@ which is not framework CPU work. The GLES presenter already excluded its
 channels were never measuring the same thing — defeating the reason the
 recorder is shared at all.
 
+The engine serializes each frame under `stateMutex` but **releases the lock
+before writing it to the presenter pipe**. The pipe is a synchronous `io.Pipe`,
+so a write blocks until the host drains it, and the host drains it on the same
+reader thread that services a `NativeDebugRequest` — foreground activation,
+restore, and other window operations for `/prepare-window` run there. While such
+an operation is in flight that thread is not reading, so a frame write issued
+under `stateMutex` would block with the lock held and stall every state reader:
+`/components` and `/state` would stop answering until the window operation
+returned. The repaint loop therefore builds the frame into a buffer under the
+lock and flushes it afterward; the flush can still block, but no longer behind
+`stateMutex`. This is the Go-side sibling of the C++ reader's "post, never send"
+rule (`main.cpp`), which avoids the same class of transport deadlock from the
+other direction.
+
 The host records its own frame timings through `shared/poem/perf.{h,cpp}`, reported over the native debug channel and read with `GET /perf/native`. The timed channels are `present` (geometry compilation plus draw submission on the UI thread, excluding GPU execution), `decode_frame`, `decode_map_scene`, and `apply_map_scene`. Before this the host was entirely untimed — every performance figure POEM produced was measured on the Go side of the boundary, so the native cost of a frame was unknown. The recorder is shared with the Android presenter deliberately: identical channel names and one percentile definition are what make a cross-platform comparison mean anything. See [Performance & Latency Profiling](/concepts/automation/perf-profiling.md).
 
 `windows_host/build.ps1` produces a portable EXE plus DLL folder/ZIP and a packaged Win32 full-trust MSIX. Signing is optional and externally configured. Development certificate creation and certificate trust installation are separate commands so package construction never silently changes trust stores.
