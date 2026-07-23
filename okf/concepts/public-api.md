@@ -3,7 +3,7 @@ type: Concept
 title: Public API Surface
 description: The stable contract downstream apps consume from pkg/render.
 tags: [public-api, contract, pkg-render]
-timestamp: 2026-07-10T00:00:00Z
+timestamp: 2026-07-23T00:00:00Z
 ---
 # Public API Surface
 
@@ -14,6 +14,37 @@ timestamp: 2026-07-10T00:00:00Z
 `App.Subscriptions` derives keyed multi-message sources. Revision changes cancel and supersede the prior generation, and late emissions are rejected under the same serialized reducer lock used for commands. `App.Services` contains host capabilities that are attached only to command/subscription contexts; `ServicesFromContext` exposes location, speech, haptics, notifications, wake, preferences, and secure storage without serializing their implementations or secrets.
 
 `pkg/cartography` provides the shared bounded MVT, camera/tile-cover, typed-style, deterministic scene-buffer, concave polygon/hole/multipolygon tessellation, stable application-overlay, picking, and pinned pure-Go OpenType-shaping core. Polygon rings are normalized and bounded before the pure-Go earcut path; emitted indices must cover exactly the exterior-minus-holes area or the malformed feature is discarded. `BuildLabelCandidates` evaluates bounded typed tile rules with semantic size, weight, filter, and priority, `PlaceLabels` performs deterministic camera-aware grid collision, and `AddLabelPlacements` rasterizes exact shaped glyph IDs into a bounded retained alpha atlas and geographic-anchor/screen-offset quads. Filtered POI categories travel in the existing vertex stride and resolve to distinct shared-shader silhouettes on D3D11 and GLES3. The native runtime uses the actual laid-out map viewport—not the enclosing window—for tile cover and collision, and both presenters cache atlas textures by content hash. Direct GPU reuse of vertex/index resources and the Go/WASM WebGL worker remain release gates.
+
+## Inspection and performance contracts
+
+`render.InspectionAutomationConfig(getenv func(string) string) (*AutomationConfig, error)`
+is the single opt-in gate for the control-capable automation surface. It returns
+nil unless `POEM_INSPECTION=1`, validates `POEM_INSPECTION_PORT` to 1..65535,
+always binds loopback, and sets `Verbose` so an enabled surface announces its
+bound address. `render.DefaultInspectionPort` is 47831. Hosts that cannot
+express a command line translate their own switch into this environment
+contract rather than inventing a per-platform one — Android reads the
+`debug.poem.inspection` system property in `pkg/mobile` and calls `os.Setenv`
+itself, because the Go runtime snapshots the environment at init.
+
+`PerfFrameStats.Percentiles` (`render.PerfFramePercentiles`) reports
+`render.PerfPhaseStats` (mean/p50/p95/p99/max) for `total`, `build_pages`,
+`render_pipeline`, `serialize`, `write`, and `go_work` over a retained
+4096-sample ring, independent of the 256-entry `PerfEvent` trace. The running
+`Avg*`/`Max*` fields remain, but cannot answer a percentile gate. Frame
+`PerfEvent`s additionally carry `BuildPagesMS`, `RenderPipelineMS`,
+`SerializeMS`, `WriteMS`, and `CommandCount` as full-precision values; the
+`Details` string carries the same numbers `%.2f`-formatted and is for humans.
+
+`render.NativePerfState`/`NativePerfPhaseState` expose the host's own timings,
+which nothing on the Go side can observe. On the wire these are
+`protocol.NativePerfPhase` on `NativeDebugResponse.PerfPhases`, with
+`NativeDebugRequest.ResetPerf` clearing the host rings — both appended inside
+protocol v4. `mobile.Logf` writes to logcat from application code, for
+bootstrap diagnostics emitted before the engine has usable stderr.
+
+Percentile ranks are nearest-rank and defined identically in Go and in
+`shared/poem/perf.{h,cpp}`, so a native p95 and a Go p95 are comparable.
 
 ## M8 startup and workspace contract
 

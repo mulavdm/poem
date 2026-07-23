@@ -3,7 +3,7 @@ type: Concept
 title: Single-Process Windows Host
 description: The versioned Go DLL ABI, secure native loader, in-memory transport, lifecycle, and packaging contract.
 tags: [windows, cgo, dll, d3d11, packaging, msix]
-timestamp: 2026-07-22T00:00:00Z
+timestamp: 2026-07-23T00:00:00Z
 ---
 # Single-Process Windows Host
 
@@ -16,6 +16,8 @@ The window host owns Win32, D3D11, UI Automation, IME, audio, DPI, dialogs, auto
 Closing the window sends the normal protocol close event, cancels the engine cooperatively, closes transport endpoints to release blocking reads, and waits for bounded Go cleanup. Startup failures are reported before or alongside window creation and cannot leave a presenter child or extracted file.
 
 The host presents D3D11 through **DXGI flip-discard**, not the legacy blit/discard swap model. Under blit/discard the presenter rendered a correct backbuffer but DWM kept showing a white redirection surface — a fully composed semantic tree and map that never reached the screen. Flip-discard hands the backbuffer directly to the compositor, which fixed that class of driver/compositor blank-window failure; default and maximized visible-capture gates confirm the real UI and map are on screen.
+
+The host records its own frame timings through `shared/poem/perf.{h,cpp}`, reported over the native debug channel and read with `GET /perf/native`. The timed channels are `present` (geometry compilation plus draw submission on the UI thread, excluding GPU execution), `decode_frame`, `decode_map_scene`, and `apply_map_scene`. Before this the host was entirely untimed — every performance figure POEM produced was measured on the Go side of the boundary, so the native cost of a frame was unknown. The recorder is shared with the Android presenter deliberately: identical channel names and one percentile definition are what make a cross-platform comparison mean anything. See [Performance & Latency Profiling](/concepts/automation/perf-profiling.md).
 
 `windows_host/build.ps1` produces a portable EXE plus DLL folder/ZIP and a packaged Win32 full-trust MSIX. Signing is optional and externally configured. Development certificate creation and certificate trust installation are separate commands so package construction never silently changes trust stores.
 

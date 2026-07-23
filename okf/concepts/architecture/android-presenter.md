@@ -3,7 +3,7 @@ type: concept
 title: Android Presenter
 description: How the C++/GLES2 android_engine presenter hosts the Go engine in one APK — the in-process transport, density model, and the startup contract.
 tags: [architecture, android, presenter, mobile, gles]
-timestamp: 2026-07-16T00:00:00Z
+timestamp: 2026-07-23T00:00:00Z
 ---
 # Android Presenter
 
@@ -29,8 +29,13 @@ invisible.
 
 The GLES2 renderer mirrors `cpp_sidecar`'s `RendererD3D11` command interpretation — SDF
 rounded rects, glyph quads from the Go-supplied atlas, scissor clipping, offset translation,
-shadow/glow companion quads — and compiles `cpp_sidecar/src/protocol.cpp` directly rather
+shadow/glow companion quads — and compiles `shared/poem/protocol.cpp` directly rather
 than forking the decoder. GLSL ES note: `half` is a reserved word.
+
+Line segments are emitted as a quad rotated onto the segment, matching the Go
+reference rasterizer and the D3D11 presenter. Filling the axis-aligned bounding
+box instead turned every diagonal — chart splines, spinner spokes, checkmarks —
+into a solid block.
 
 ## Density model
 
@@ -62,6 +67,31 @@ is ever produced (a black screen, found the hard way).
 clang, the C++ presenter, then aapt2 + zipalign + apksigner. The manifest template uses
 `NativeActivity` with `hasCode="false"` and a fullscreen theme (a status-bar overlay
 otherwise swallows taps near the top edge).
+
+## Inspection and native timing
+
+The presenter implements the native debug channel (protocol 201/202), so
+`/native-state` and `/perf/native` answer on Android as they do on Windows. It
+records the shared `poem::perf` channels — `present`, `decode_frame`,
+`decode_map_scene`, `apply_map_scene` — from `shared/poem/perf.{h,cpp}`, the
+same translation unit the D3D11 host compiles, so a p95 means the same thing on
+both. `/native-state` reports the surface as the window (there is no separate
+window rect) and density where Windows reports DPI.
+
+Frame capture is **not** implemented: `glReadPixels` needs the GL context
+current on the render thread and cannot be served from the transport thread.
+The request returns the presenter's own error rather than a blank image, which
+would read as a rendering failure. Use `adb shell screencap` for presented
+pixels.
+
+The automation surface itself is Go-side and platform-neutral, so enabling it is
+a configuration matter rather than presenter work — see
+[Automation Overview](/concepts/automation/overview.md). Because NativeActivity
+has no command line, the opt-in gate is the `debug.poem.inspection` system
+property, read by `pkg/mobile` at package init and translated into the shared
+`POEM_INSPECTION` environment contract. **That read must happen in Go**: the Go
+runtime snapshots the environment at init, so a `setenv()` from this host
+afterwards is never visible to `os.Getenv`.
 
 ## Known gaps
 

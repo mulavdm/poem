@@ -139,6 +139,40 @@ The source-of-truth automation reference is [okf/concepts/automation/index.md](.
 Commands may use stable component IDs or unique semantic role/name/state
 selectors; successful selector commands report the resolved stable target ID.
 
+### Android
+
+The automation layer is platform-neutral Go, so the same surface drives Android
+apps from the host machine over `adb forward`. Component snapshots, the
+interaction commands, `/frame`, `/native-state`, and the `/perf/*` endpoints all
+answer there; only PNG frame capture is Windows-only, because `glReadPixels`
+needs the GL context current on the render thread — use `adb shell screencap`
+for presented pixels on Android.
+
+Because `NativeActivity` has no command line, the opt-in gate is a system
+property. Apps read it with `render.InspectionAutomationConfig(os.Getenv)` and
+assign the result to `AppConfig.Automation`:
+
+```bash
+adb shell setprop debug.poem.inspection 1
+adb shell am force-stop <package>
+adb shell am start -n <package>/android.app.NativeActivity
+adb forward tcp:47831 tcp:47831
+```
+
+The surface can click, type, and read the component tree, so it stays off unless
+asked for and binds loopback only. On a device that still means any local
+process can reach it — enable it on development builds only.
+
+### Frame timings
+
+`GET /perf/state` reports Go frame percentiles (p50/p95/p99 per phase over a
+retained sample window, not just running averages), and `GET /perf/native`
+reports the host's own `present`, `decode_frame`, `decode_map_scene`, and
+`apply_map_scene` timings. Both presenters record those through the same
+`shared/poem/perf.{h,cpp}`, so a native p95 means the same thing on Windows and
+Android. `POST /perf/reset` clears both sides so a measurement can be scoped to
+one driven scene.
+
 Windows accessibility integration is exercised by `cpp_sidecar/test_uia.ps1`.
 It reads the platform-neutral semantic tree through UI Automation and verifies
 that standard control-pattern actions reach the Go component runtime and that
