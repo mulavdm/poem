@@ -251,6 +251,9 @@ func main() {
 	asJSON := flag.Bool("json", false, "emit the measurement as JSON instead of a table")
 	verbose := flag.Bool("v", false, "report progress while driving")
 	captureDir := flag.String("capture-dir", "", "directory for images written by capture steps")
+	noLaunch := flag.Bool("no-launch", false, "skip the scenario's launch block; drive whatever is already running")
+	forceBuild := flag.Bool("build", false, "rebuild the app before installing it")
+	repoDir := flag.String("repo", ".", "repository root that the scenario's relative paths resolve against")
 	timeout := flag.Duration("ready-timeout", 30*time.Second, "how long to wait for the automation surface")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: poemdrive [flags] <scenario.json>\n\n"+
@@ -277,6 +280,19 @@ func main() {
 	if *captureDir != "" {
 		if err := os.MkdirAll(*captureDir, 0o755); err != nil {
 			fmt.Fprintln(os.Stderr, "poemdrive:", err)
+			os.Exit(2)
+		}
+	}
+
+	if scenario.Launch != nil && !*noLaunch {
+		l, err := newLauncher(scenario.Launch, *repoDir, *verbose)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "poemdrive:", err)
+			os.Exit(2)
+		}
+		fmt.Fprintf(os.Stderr, "preparing %s target\n", scenario.Launch.Platform)
+		if err := l.Prepare(*forceBuild); err != nil {
+			fmt.Fprintln(os.Stderr, "poemdrive: launch:", err)
 			os.Exit(2)
 		}
 	}

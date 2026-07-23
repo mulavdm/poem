@@ -186,8 +186,36 @@ go run ./cmd/poemdrive -baseline gallery.json scenes/gallery-tabs.json
 
 Nothing about any app is compiled in: the scenario supplies `base_url` and the
 step list, so the same binary drives the Windows gallery, MAPPS, or an Android
-device reached through `adb forward`. Steps are `click`, `focus`, `set-text`,
-`press-key`, and `wait`.
+device. Steps are `click`, `focus`, `set-text`, `press-key`, `wait`, and
+`capture`.
+
+A scenario may also declare **how to bring its target up**, which is what makes
+an Android run one command from a cold machine:
+
+```json
+"launch": {
+  "platform": "android",
+  "avd": "Medium_Phone",
+  "package": "com.poem.prefs",
+  "apk": "android_engine/prefs.apk",
+  "build": { "script": "android_engine/build_apk.sh", "app_dir": "../examples/preferences/android", "label": "Preferences" },
+  "forward_port": 47831,
+  "inspection_property": "debug.poem.inspection"
+}
+```
+
+With that block the tool boots the AVD when no device is attached, builds the
+APK if it is missing (or `-build` forces it), installs, sets the inspection
+property, restarts the activity, and forwards the port — then drives. Use
+`-no-launch` to drive something already running. A device that is already
+attached always wins, so a physical phone is never displaced by an emulator.
+
+Two details are load-bearing and were found by getting them wrong: the property
+must be set **before** the process starts, since `pkg/mobile` reads it at
+package init, hence setprop → force-stop → start; and `build_apk.sh` resolves
+its app-directory argument against the working directory, so the tool runs it
+from the script's own folder as its documented usage does rather than from the
+repository root.
 
 Metrics arrive in one flat namespace: `go.<phase>` from `frames.percentiles`
 and `native.<phase>` from `/perf/native`, so a budget reads

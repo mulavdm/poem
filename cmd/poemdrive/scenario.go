@@ -34,6 +34,11 @@ type Scenario struct {
 	// work continues past the interaction that triggered it.
 	SettleMS int `json:"settle_ms,omitempty"`
 
+	// Launch, when set, brings the app up before driving it: booting a device,
+	// installing, starting, and forwarding the port. Without it the scenario
+	// assumes something else already did that.
+	Launch *Launch `json:"launch,omitempty"`
+
 	Steps []Step `json:"steps"`
 
 	// Budgets maps `metric.statistic` to a millisecond ceiling, for example
@@ -132,6 +137,11 @@ func (s *Scenario) Validate() error {
 			return fmt.Errorf("step %d has no action", i)
 		default:
 			return fmt.Errorf("step %d has unknown action %q", i, step.Action)
+		}
+	}
+	if s.Launch != nil {
+		if err := s.Launch.validate(); err != nil {
+			return fmt.Errorf("scenario %q launch: %w", s.Name, err)
 		}
 	}
 	for key := range s.Budgets {

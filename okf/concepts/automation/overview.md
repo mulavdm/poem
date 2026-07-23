@@ -76,7 +76,18 @@ adb forward tcp:47831 tcp:47831
 ```
 
 The property is read once at process start, so relaunch the activity after
-setting it. `debug.poem.inspection.port` overrides the port. The surface can
+setting it — which is why the order above is setprop, force-stop, then start.
+
+Those commands are the manual form. A scenario driven by `cmd/poemdrive`
+declares a `launch` block instead and the tool performs all of it: it boots the
+configured AVD when no device is attached, builds and installs the APK, sets
+the property, restarts the activity, and forwards the port. That turns an
+Android run into one command from a cold machine rather than a preamble a human
+has to remember, and a preamble nobody can forget is the difference between a
+scenario that is a fixture and one that is a suggestion. See
+[Performance And Latency Profiling](/concepts/automation/perf-profiling.md).
+
+`debug.poem.inspection.port` overrides the port. The surface can
 click, type, and read the component tree, so it stays off unless asked for and
 binds loopback only — on a device that still means any local process can reach
 it, so enable it on development builds only.

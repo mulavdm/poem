@@ -1,13 +1,31 @@
 {
   "name": "android-preferences",
-  "description": "Drives the preferences example on an Android device or emulator and captures the presenter's own pixels. Requires the APK installed with inspection enabled and the port forwarded: adb shell setprop debug.poem.inspection 1, then adb forward tcp:47831 tcp:47831.",
+  "description": "Drives the preferences example on an Android device or emulator and captures the presenter's own pixels. Self-provisioning: the launch block boots an AVD if no device is attached, installs, enables inspection, starts the activity and forwards the port, so this is one command from a cold machine.",
 
   "base_url": "http://127.0.0.1:47831",
+
+  "launch": {
+    "platform": "android",
+    "avd": "Medium_Phone",
+    "package": "com.poem.prefs",
+    "activity": "android.app.NativeActivity",
+    "apk": "android_engine/prefs.apk",
+    "build": {
+      "script": "android_engine/build_apk.sh",
+      "app_dir": "../examples/preferences/android",
+      "label": "Preferences",
+      "abi": "x86_64"
+    },
+    "forward_port": 47831,
+    "//": "NativeActivity has no command line, so the opt-in gate is a system property read by pkg/mobile at package init. It must be set before the process starts, which is why the launch order is setprop, force-stop, then am start.",
+    "inspection_property": "debug.poem.inspection"
+  },
+
   "warmup": 4,
   "iterations": 60,
   "settle_ms": 250,
 
-  "//": "Toggling the checkbox exercises the DrawLine path: a checked box draws its tick as two diagonal segments, which is exactly the case the GLES presenter used to fill as a solid block. The captures make that visible rather than inferred.",
+  "//": "Toggling the checkbox exercises the DrawLine path: a checked box draws its tick as two diagonal segments, exactly the case the GLES presenter used to fill as a solid block. The captures make that visible rather than inferred.",
   "steps": [
     { "action": "click", "id": "trellis-root/id-preferences-form/0" },
     { "action": "capture", "name": "checked", "source": "native" },
