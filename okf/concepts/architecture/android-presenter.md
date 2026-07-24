@@ -3,7 +3,7 @@ type: concept
 title: Android Presenter
 description: How the C++/GLES2 android_engine presenter hosts the Go engine in one APK — the in-process transport, density model, and the startup contract.
 tags: [architecture, android, presenter, mobile, gles]
-timestamp: 2026-07-23T00:00:00Z
+timestamp: 2026-07-24T00:00:00Z
 ---
 # Android Presenter
 
@@ -58,7 +58,15 @@ Single-finger vertical movement emits phased pan gestures, including inertial up
 final commit. Two active pointers emit a true centroid/delta/incremental-scale pinch stream. The
 engine routes these to the deepest compatible component, so an `ImageViewport` consumes local
 map gestures and an outer `ScrollView` remains the fallback elsewhere. Horizontal one-pointer
-drags retain the mouse path for sliders and existing controls.
+drags retain the mouse path for sliders and existing controls. Gesture routing carries each
+container's pointer-coordinate transform: a viewport inside scrolled content is hit in visible
+screen space and receives the corresponding content-space point, with its stable ID captured
+from gesture begin through end.
+
+Hardware mouse input bypasses the touch-slop classifier. Android `ACTION_SCROLL` becomes a
+screen-positioned wheel event, while primary, secondary, and tertiary buttons retain their
+identity. This is what makes wheel zoom and secondary-drag map bearing/tilt behave the same in
+the Android presenter as in the Windows host.
 
 ## Startup contract
 
@@ -74,6 +82,10 @@ is ever produced (a black screen, found the hard way).
 clang, the C++ presenter, then aapt2 + zipalign + apksigner. The manifest template uses
 `NativeActivity` with `hasCode="false"` and a fullscreen theme (a status-bar overlay
 otherwise swallows taps near the top edge).
+
+On Windows the script runs under Git Bash, not WSL Bash. It resolves the native Windows
+Go installation to a `/c/...` executable path before invoking `go build`, keeping the
+Windows Go and Android SDK/NDK toolchains in one environment.
 
 ## Inspection and native timing
 

@@ -3,7 +3,7 @@ type: Concept
 title: Performance & Latency Profiling
 description: The perf endpoints for rolling frame timings and condition-based action measurement.
 tags: [automation, performance, profiling, latency]
-timestamp: 2026-07-23T00:00:00Z
+timestamp: 2026-07-24T00:00:00Z
 ---
 # Performance And Latency Profiling
 
@@ -186,8 +186,19 @@ go run ./cmd/poemdrive -baseline gallery.json scenes/gallery-tabs.json
 
 Nothing about any app is compiled in: the scenario supplies `base_url` and the
 step list, so the same binary drives the Windows gallery, MAPPS, or an Android
-device. Steps are `click`, `focus`, `set-text`, `press-key`, `wait`, and
-`capture`.
+device. General steps are `click`, `focus`, `set-text`, `press-key`, `wait`,
+and `capture`. Canvas scenarios additionally use `wheel`, `pan`, `pinch`, and
+`pointer-drag`; these synthesize screen-space protocol events instead of
+calling component methods directly, so the run exercises real overlay and
+scroll-container routing. `assert-value` checks a component's semantic value
+after an action. Targets that legitimately appear only after an earlier step
+set `"dynamic": true`: they skip the initial fail-fast scan but are still
+validated by the step itself with the automation server's detailed error.
+Gesture steps accept an explicit `phase`, allowing begin, update, and end to be
+separate HTTP requests with intervening frames. Scenarios should use that form
+when validating retained controls: a single request containing every phase can
+hide interaction state that was incorrectly stored only on a component instance
+and lost by the next `BuildPages` rebuild.
 
 A scenario may also declare **how to bring its target up**, which is what makes
 an Android run one command from a cold machine:
@@ -241,12 +252,15 @@ property, restarts the activity, and forwards the port — then drives. Use
 `-no-launch` to drive something already running. A device that is already
 attached always wins, so a physical phone is never displaced by an emulator.
 
-Two details are load-bearing and were found by getting them wrong: the property
+Three details are load-bearing and were found by getting them wrong: the property
 must be set **before** the process starts, since `pkg/mobile` reads it at
 package init, hence setprop → force-stop → start; and `build_apk.sh` resolves
 its app-directory argument against the working directory, so the tool runs it
 from the script's own folder as its documented usage does rather than from the
-repository root.
+repository root. On Windows, `poemdrive` also selects Git for Windows' Bash
+explicitly. A generic `exec.LookPath("bash")` can resolve WSL's
+`C:\Windows\System32\bash.exe`; that environment cannot directly use the
+Windows Go and Android SDK/NDK tools exposed to the build as `/c/...` paths.
 
 Metrics arrive in one flat namespace: `go.<phase>` from `frames.percentiles`
 and `native.<phase>` from `/perf/native`, so a budget reads
@@ -262,10 +276,13 @@ with both numbers and pixels:
 { "action": "capture", "name": "checked", "source": "native" }
 ```
 
-A capture waits for the engine's frame counter to advance before reading back,
-because a click returns when the engine *accepts* it, not when the resulting
-frame has been presented — an immediate readback captures the previous frame.
-Waiting on the counter is exact where a fixed sleep is a guess.
+A state-changing step records the engine frame counter **before** it executes.
+A later capture waits until the counter exceeds that saved boundary (or returns
+immediately when it already has), because a click returns when the engine
+*accepts* it, not when the resulting frame has been presented. Starting the
+wait only when capture begins is too late: the desired frame may already have
+arrived and the tool then waits for a nonexistent extra frame. The saved
+pre-action boundary is exact where a fixed sleep is a guess.
 
 `source` selects `native` (the presenter's own backbuffer, on either platform),
 `go` (the engine-side reference rasterization), or `window`. Captures fire only

@@ -11,7 +11,8 @@
 # 30.0.15729638) at $ANDROID_SDK or %LOCALAPPDATA%/Android/Sdk, Go 1.26+, and
 # a debug keystore at ~/.android/debug.keystore. JAVA_HOME defaults to
 # Android Studio's JBR.
-set -euo pipefail
+set -e
+export PATH="/c/Program Files/Go/bin:/c/Go/bin:$PATH"
 
 APP_DIR="$1"
 PACKAGE_ID="$2"
@@ -19,7 +20,7 @@ APP_LABEL="$3"
 OUT_APK="$4"
 ABI="${5:-x86_64}"
 
-SDK="${ANDROID_SDK:-$LOCALAPPDATA/Android/Sdk}"
+SDK="${ANDROID_SDK:-${LOCALAPPDATA:-$HOME/AppData/Local}/Android/Sdk}"
 NDK="$SDK/ndk/30.0.15729638"
 BIN="$NDK/toolchains/llvm/prebuilt/windows-x86_64/bin"
 BT="$SDK/build-tools/36.1.0"
@@ -36,11 +37,33 @@ ENGINE_DIR="$(cd "$(dirname "$0")" && pwd)"
 POEM_DIR="$(cd "$ENGINE_DIR/.." && pwd)"
 WORK="$ENGINE_DIR/build/$PACKAGE_ID/$ABI"
 LIBDIR="$WORK/apkroot/lib/$ABI"
+rm -rf "$WORK/unaligned.apk" "$OUT_APK" "$LIBDIR"
 mkdir -p "$LIBDIR"
+if [ -x "/c/Program Files/Go/bin/go.exe" ]; then
+  GO_BIN="/c/Program Files/Go/bin/go.exe"
+  GODIR="/c/Program Files/Go/bin"
+elif command -v go >/dev/null 2>&1; then
+  GO_BIN="$(command -v go)"
+  GODIR="$(dirname "$GO_BIN")"
+else
+  GO_BIN="go"
+  GODIR=""
+fi
+if [ -n "$GODIR" ]; then
+  export PATH="$GODIR:$PATH"
+fi
+
+if [ -d "$ENGINE_DIR/$APP_DIR" ]; then
+  RESOLVED_APP_DIR="$ENGINE_DIR/$APP_DIR"
+elif [ -d "$POEM_DIR/$APP_DIR" ]; then
+  RESOLVED_APP_DIR="$POEM_DIR/$APP_DIR"
+else
+  RESOLVED_APP_DIR="$APP_DIR"
+fi
 
 echo "==> Go application ($GOARCH)"
-(cd "$APP_DIR" && CGO_ENABLED=1 GOOS=android GOARCH=$GOARCH CC="$CC" \
-  go build -buildmode=c-shared -o "$LIBDIR/libpoemapp.so" .)
+(cd "$RESOLVED_APP_DIR" && CGO_ENABLED=1 GOOS=android GOARCH=$GOARCH CC="$CC" \
+  "$GO_BIN" build -buildmode=c-shared -o "$LIBDIR/libpoemapp.so" .)
 
 echo "==> C++ presenter"
 "$CC" -c -fPIC -o "$WORK/glue.o" "$GLUE/android_native_app_glue.c" -I"$GLUE"
@@ -61,7 +84,9 @@ echo "==> Manifest + package"
 # (used to stage test data). Off by default; never set it for a release build.
 debug_attr=""
 [ -n "${DEBUGGABLE:-}" ] && debug_attr=' android:debuggable="true"'
+BUILD_VER="$(date +%s)"
 sed -e "s/__PACKAGE__/$PACKAGE_ID/" -e "s/__LABEL__/$APP_LABEL/" \
+  -e "s/android:versionCode=\"1\"/android:versionCode=\"$BUILD_VER\"/" \
   -e "s#<application #<application${debug_attr} #" \
   "$ENGINE_DIR/AndroidManifest.template.xml" > "$WORK/AndroidManifest.xml"
 "$BT/aapt2.exe" link -o "$WORK/unaligned.apk" --manifest "$WORK/AndroidManifest.xml" \

@@ -3,11 +3,30 @@ type: concept
 title: GPU Vector Map Rendering
 description: The cartography pipeline, the shared projection/lighting/shadow maths, and the GPU depth path that every presenter draws maps with.
 tags: [architecture, cartography, gpu, shaders, map, rendering]
-timestamp: 2026-07-22T00:00:00Z
+timestamp: 2026-07-24T00:00:00Z
 ---
 # GPU Vector Map Rendering
 
 POEM draws interactive vector maps itself, on the GPU, on every native target — there is no MapLibre, no web map library, and no per-backend copy of the map maths. `pkg/cartography` turns raw vector tiles into a retained scene; `shared/poem/*.h` holds the projection, lighting, fog and shadow maths **once**; and each presenter (D3D11, GLES3, and the WASM/WebGL2 bridge) contributes only its own entry points and buffer plumbing. This is the same "write the maths once, transcribe the irreducible dialect per backend" discipline the [cross-platform C++ framework TDD](/concepts/protocol.md) prescribes.
+
+## Camera interaction contract
+
+`MapViewportNode` is controlled by `MapCamera`: every committed interaction dispatches
+`OnCameraChange` with latitude, longitude, zoom, bearing, and pitch together. One finger or a
+primary-button drag pans; pinch or the mouse wheel zooms around the focal point; two-finger
+centroid movement or a secondary-button drag changes bearing horizontally and pitch vertically.
+The viewport publishes live updates while a gesture is active so the retained scene is rebuilt
+against the current camera rather than jumping only after release. Its `MinZoom`/`MaxZoom` and
+`MinPitch`/`MaxPitch` bounds are enforced before dispatch.
+
+Input routing is screen-space and gesture-captured. Containers transform the pointer into their
+children's coordinate space (notably `ScrollView`'s content offset), and the component selected
+at begin retains ownership until end/cancel. This prevents a visually scrolled map from losing
+pinch/pan to its page container or dropping the gesture when a contact crosses its edge.
+The viewport's in-progress interaction is also transient application state keyed by its stable
+semantic ID, rather than mutable fields on one component instance. `BuildPages` may replace that
+instance between input frames; the next instance must still be able to continue and finish the
+same drag or pinch.
 
 ## The cartography pipeline (`pkg/cartography`)
 

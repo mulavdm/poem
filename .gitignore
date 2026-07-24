@@ -56,5 +56,6 @@ OpenKnowledgeFormat/
 /engine.exe
 /poem_go.exe
 /build/
+/output/
 crash.log
 /cartography-wasm

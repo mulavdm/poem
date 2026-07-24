@@ -1,0 +1,46 @@
+{
+  "name": "android-gallery",
+  "description": "Drives the POEM component gallery on an Android device or emulator, cycling all 5 tabs (controls, inputs, navigation, feedback, viewports) and capturing native presentation frames.",
+
+  "base_url": "http://127.0.0.1:47833",
+
+  "launch": {
+    "platform": "android",
+    "avd": "Medium_Phone",
+    "package": "com.poem.gallery",
+    "activity": "android.app.NativeActivity",
+    "apk": "android_engine/gallery.apk",
+    "build": {
+      "script": "android_engine/build_apk.sh",
+      "app_dir": "../cmd/gallery",
+      "label": "Gallery",
+      "abi": "x86_64"
+    },
+    "inspection_property": "debug.poem.inspection",
+    "inspection_port_property": "debug.poem.inspection.port"
+  },
+
+  "warmup": 4,
+  "iterations": 45,
+  "settle_ms": 250,
+
+  "steps": [
+    { "action": "click", "id": "gallery.tabs/controls" },
+    { "action": "wait", "ms": 500 },
+    { "action": "capture", "name": "controls", "source": "native" },
+    { "action": "click", "id": "gallery.tabs/inputs" },
+    { "action": "wait", "ms": 500 },
+    { "action": "capture", "name": "inputs", "source": "native" },
+    { "action": "click", "id": "gallery.tabs/navigation" },
+    { "action": "wait", "ms": 500 },
+    { "action": "capture", "name": "navigation", "source": "native" },
+    { "action": "click", "id": "gallery.tabs/feedback" },
+    { "action": "wait", "ms": 500 },
+    { "action": "capture", "name": "feedback", "source": "native" },
+    { "action": "click", "id": "gallery.tabs/viewports" },
+    { "action": "wait", "ms": 500 },
+    { "action": "capture", "name": "viewports", "source": "native" }
+  ],
+
+  "regression_tolerance_pct": 25
+}

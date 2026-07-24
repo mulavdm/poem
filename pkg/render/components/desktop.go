@@ -91,7 +91,7 @@ func (b *Badge) Draw(p types.Painter, state *types.ApplicationState) {
 	}
 	label := fitButtonLabel(b.Text, b.Rect.Dx(), cw)
 	p.PushClip(b.Rect)
-	p.DrawText(label, b.Rect.Min.X+(b.Rect.Dx()-len([]rune(label))*cw)/2, b.Rect.Min.Y+b.Rect.Dy()/2+5, fg)
+	p.DrawText(label, b.Rect.Min.X+(b.Rect.Dx()-len([]rune(label))*cw)/2, b.Rect.Min.Y+b.Rect.Dy()/2+2, fg)
 	p.PopClip()
 }
 func (b *Badge) HitTest(image.Point) string                            { return "" }
@@ -142,16 +142,6 @@ func (t *Tabs) activeIndex(state *types.ApplicationState) int {
 	if state != nil && state.TransientState != nil {
 		if interaction, ok := renderstate.Load[tabsInteraction](state.TransientState, t.interactionKey()); ok {
 			activeID = interaction.ActiveID
-			// A controlled Tabs (OnChange set) does not own its selection — the
-			// application does. interaction.SelectedID snapshots what the
-			// application's selection was when the roving position was stored,
-			// so a difference means the application has moved the selection
-			// since (rather than the user roving), and it wins. Adopt it and
-			// resync the snapshot: without the resync, a later application
-			// change back to the previously snapshotted value would look
-			// unchanged and the stale roving position would shadow it. Storing
-			// on this read path mirrors how Accordion.interaction seeds its own
-			// default, and only ever touches transient UI state.
 			if t.OnChange != nil && interaction.SelectedID != t.SelectedID {
 				activeID = t.SelectedID
 				renderstate.StoreValue(state.TransientState, t.interactionKey(), tabsInteraction{ActiveID: t.SelectedID, SelectedID: t.SelectedID})
@@ -251,32 +241,43 @@ func (t *Tabs) Draw(p types.Painter, state *types.ApplicationState) {
 	th := activeTheme(state)
 	rects := t.itemRects(state)
 	active := t.activeIndex(state)
+
+	trackRadius := th.Radii.Medium
+	p.DrawRoundedRect(t.Rect, trackRadius, th.Colors.SurfaceSunken)
+
 	for i, item := range t.Items {
-		selected := item.ID == t.SelectedID
-		visual := buttonVisual(th, 0, state.HoveredID == t.CompID+"/"+item.ID, state.ActiveID == t.CompID+"/"+item.ID, item.Disabled, selected, nil)
-		visual.border = colorZero()
-		drawControlSurface(p, rects[i], visual, state.FocusedID == t.CompID && i == active)
+		selected := item.ID == t.SelectedID || i == active
+		itemBounds := rects[i]
+		insetBounds := image.Rect(itemBounds.Min.X+2, itemBounds.Min.Y+2, itemBounds.Max.X-2, itemBounds.Max.Y-2)
+
 		cw := state.FontCharWidth
 		if cw <= 0 {
 			cw = 8
 		}
-		p.DrawText(item.Label, rects[i].Min.X+(rects[i].Dx()-len([]rune(item.Label))*cw)/2, rects[i].Min.Y+rects[i].Dy()/2+5, visual.foreground)
+
 		if selected {
-			p.FillRect(image.Rect(rects[i].Min.X, rects[i].Max.Y-2, rects[i].Max.X, rects[i].Max.Y), th.Colors.Accent)
+			p.DrawRoundedRect(insetBounds, maxInt(4, trackRadius-2), th.Colors.Accent)
+			p.DrawText(item.Label, insetBounds.Min.X+(insetBounds.Dx()-len([]rune(item.Label))*cw)/2, insetBounds.Min.Y+insetBounds.Dy()/2+2, th.Colors.OnAccent)
+		} else {
+			textColor := th.Colors.TextMuted
+			if state != nil && state.HoveredID == t.CompID+"/"+item.ID {
+				textColor = th.Colors.Text
+			}
+			p.DrawText(item.Label, insetBounds.Min.X+(insetBounds.Dx()-len([]rune(item.Label))*cw)/2, insetBounds.Min.Y+insetBounds.Dy()/2+2, textColor)
 		}
 	}
 }
 func colorZero() (c color.RGBA) { return c }
 func (t *Tabs) HitTest(pt image.Point) string {
+	if !pt.In(t.Rect) {
+		return ""
+	}
 	for i, r := range t.itemRects(nil) {
 		if pt.In(r) && i < len(t.Items) {
 			return t.CompID + "/" + t.Items[i].ID
 		}
 	}
-	if pt.In(t.Rect) {
-		return t.CompID
-	}
-	return ""
+	return t.CompID
 }
 func (t *Tabs) OnKey(key uint32, _ rune, state *types.ApplicationState) bool {
 	if state == nil || state.FocusedID != t.CompID {
@@ -495,12 +496,12 @@ func (s *Select) Draw(p types.Painter, state *types.ApplicationState) {
 	open := s.overlayOpen(state)
 	visual := buttonVisual(th, 0, state.HoveredID == s.CompID, state.ActiveID == s.CompID, s.Disabled, open, nil)
 	drawControlSurface(p, s.Rect, visual, state.FocusedID == s.CompID && !s.Disabled)
-	p.DrawText(s.label(), s.Rect.Min.X+th.Spacing.MD, s.Rect.Min.Y+s.Rect.Dy()/2+5, visual.foreground)
+	p.DrawText(s.label(), s.Rect.Min.X+th.Spacing.MD, s.Rect.Min.Y+s.Rect.Dy()/2+2, visual.foreground)
 	indicator := "v"
 	if open {
 		indicator = "^"
 	}
-	p.DrawText(indicator, s.Rect.Max.X-th.Spacing.LG, s.Rect.Min.Y+s.Rect.Dy()/2+5, visual.foreground)
+	p.DrawText(indicator, s.Rect.Max.X-th.Spacing.LG, s.Rect.Min.Y+s.Rect.Dy()/2+2, visual.foreground)
 }
 func (s *Select) HitTest(pt image.Point) string {
 	if pt.In(s.Rect) {

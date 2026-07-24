@@ -148,6 +148,32 @@ func TestAutomationClickComponentInvokesButton(t *testing.T) {
 	}
 }
 
+func TestAutomationViewportInputUsesVisibleScrolledCoordinates(t *testing.T) {
+	var committed components.ImageTransform
+	view := &components.ImageViewport{
+		CompID: "map", Rect: image.Rect(0, 500, 400, 700), MinScale: 0.5, MaxScale: 8,
+		Transform: components.ImageTransform{Scale: 1},
+		OnChange:  func(transform components.ImageTransform, _ *types.ApplicationState) { committed = transform },
+	}
+	content := &FlexBox{CompID: "content", Rect: image.Rect(0, 100, 400, 900), Children: []Component{view}}
+	scroll := components.NewScrollView("scroll", content)
+	scroll.Rect = image.Rect(0, 100, 400, 500)
+	scroll.ContentH = 800
+	scroll.ScrollY, scroll.CurrentScrollY = 400, 400
+	globalState = &ApplicationState{
+		Pages: map[string][]Component{PageDashboard: {scroll}}, CurrentPage: PageDashboard,
+		ScrollPositions: map[string]int{"scroll": 400}, ScrollCurrent: map[string]float64{"scroll": 400},
+	}
+
+	resp := handleAutomationRequest(AutomationRequest{Command: "wheel", ID: "map", Delta: 120}, AutomationConfig{})
+	if !resp.OK {
+		t.Fatalf("wheel failed: %s", resp.Error)
+	}
+	if committed.Scale != 1.2 {
+		t.Fatalf("scrolled viewport scale = %v, want 1.2", committed.Scale)
+	}
+}
+
 func TestAutomationPressKeySupportsCollectionNavigation(t *testing.T) {
 	globalState = &ApplicationState{
 		Pages:           make(map[string][]Component),

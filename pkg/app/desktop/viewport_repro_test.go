@@ -68,3 +68,32 @@ func TestBuildPagesWithMapOverlayDoesNotPanic(t *testing.T) {
 		t.Logf("%dx%d -> map rect %v", wh[0], wh[1], mapRect)
 	}
 }
+
+func TestMapViewportPublishesZoomPanBearingAndPitch(t *testing.T) {
+	node := app.MapViewportNode{
+		Semantic: app.Semantic{ID: "map", Name: "Map", Enabled: true},
+		Source:   app.MapSource{ID: "source", ProviderID: "tiles", MinZoom: 0, MaxZoom: 18},
+		Camera:   app.MapCamera{Latitude: 52, Longitude: 5, Zoom: 10, Bearing: 20, Pitch: 25},
+		MinZoom:  0, MaxZoom: 18, MinPitch: 0, MaxPitch: 70,
+		OnCameraChange: app.Msg{Name: "map.camera"},
+	}
+	var dispatched app.Msg
+	component := build(node, "map", func(msg app.Msg) { dispatched = msg })
+	viewport, ok := component.(*render.ImageViewport)
+	if !ok {
+		t.Fatalf("map built as %T", component)
+	}
+	viewport.OnChange(render.ImageTransform{
+		Scale: 2, OffsetX: 0.1, OffsetY: -0.2, Bearing: 55, Pitch: 45,
+	}, &render.ApplicationState{})
+	camera, ok := dispatched.MapCamera()
+	if !ok {
+		t.Fatalf("invalid camera payload %q", dispatched.Payload)
+	}
+	if camera.Zoom != 11 || camera.Bearing != 55 || camera.Pitch != 45 {
+		t.Fatalf("camera pose = %+v", camera)
+	}
+	if camera.Longitude >= node.Camera.Longitude || camera.Latitude >= node.Camera.Latitude {
+		t.Fatalf("pan did not update map center: %+v", camera)
+	}
+}

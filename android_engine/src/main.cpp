@@ -78,6 +78,7 @@ struct Host {
     bool pinching = false;
     float pinchDistance = 0.0f;
     int pinchX = 0, pinchY = 0;
+    int mouseButton = 1;
 
     // Velocity samples for fling: recent (time, y) pairs from the live drag.
     static constexpr int kVelocitySamples = 4;
@@ -736,6 +737,65 @@ int32_t HandleInput(android_app* app, AInputEvent* event) {
         gesture.phase = phase;
         QueueEvent(gesture);
     };
+
+    // A hardware mouse (and the emulator's injected mouse) already carries
+    // unambiguous buttons and wheel axes. Do not pass it through the
+    // touch-slop classifier: that discarded ACTION_SCROLL completely and
+    // flattened secondary/middle buttons to primary, so map wheel zoom and
+    // right-drag camera pose worked on Windows but not Android.
+    const auto source = AInputEvent_getSource(event);
+    if ((source & AINPUT_SOURCE_MOUSE) == AINPUT_SOURCE_MOUSE) {
+        auto protocolButton = [](int buttons) {
+            if ((buttons & AMOTION_EVENT_BUTTON_SECONDARY) != 0) return 2;
+            if ((buttons & AMOTION_EVENT_BUTTON_TERTIARY) != 0) return 3;
+            return 1;
+        };
+        switch (action) {
+        case AMOTION_EVENT_ACTION_HOVER_MOVE:
+        case AMOTION_EVENT_ACTION_MOVE:
+            queueMove(x, y);
+            return 1;
+        case AMOTION_EVENT_ACTION_SCROLL: {
+            const float vertical = AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_VSCROLL, 0);
+            const int delta = static_cast<int>(std::lround(vertical * 120.0f));
+            if (delta != 0) {
+                poem::protocol::Event wheel;
+                wheel.type = poem::protocol::EventType::MouseWheel;
+                wheel.x = x;
+                wheel.y = y;
+                wheel.delta = delta;
+                QueueEvent(wheel);
+            }
+            return 1;
+        }
+        case AMOTION_EVENT_ACTION_DOWN:
+        case AMOTION_EVENT_ACTION_BUTTON_PRESS: {
+            queueMove(x, y);
+            const int buttons = AMotionEvent_getButtonState(event);
+            host->mouseButton = protocolButton(buttons);
+            poem::protocol::Event down;
+            down.type = poem::protocol::EventType::MouseDown;
+            down.x = x;
+            down.y = y;
+            down.button = host->mouseButton;
+            QueueEvent(down);
+            return 1;
+        }
+        case AMOTION_EVENT_ACTION_UP:
+        case AMOTION_EVENT_ACTION_BUTTON_RELEASE: {
+            poem::protocol::Event up;
+            up.type = poem::protocol::EventType::MouseUp;
+            up.x = x;
+            up.y = y;
+            up.button = host->mouseButton;
+            QueueEvent(up);
+            host->mouseButton = 1;
+            return 1;
+        }
+        default:
+            return 0;
+        }
+    }
 
     const auto pointerCount = AMotionEvent_getPointerCount(event);
     auto pinchMetrics = [event, host]() {

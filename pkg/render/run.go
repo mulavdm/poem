@@ -46,21 +46,81 @@ type EffectsConfig struct {
 	Glass, Particles, Audio bool
 }
 
-func pannableTargetsAt(root types.Component, point image.Point) []types.PannableComponent {
-	if root == nil {
+type routedInput struct {
+	component types.Component
+	point     image.Point
+}
+
+// inputRouteAt follows the same topmost child path as pointer hit-testing while
+// carrying each container's child-coordinate transform. In particular, a
+// ScrollView child is addressed in content space even though the incoming
+// event is in visible viewport space.
+func inputRouteAt(component types.Component, point image.Point, state *types.ApplicationState) []routedInput {
+	if component == nil || component.HitTest(point) == "" {
 		return nil
 	}
-	hitID := root.HitTest(point)
-	var targets []types.PannableComponent
-	root.Walk(func(component types.Component) {
-		// A canvas can geometrically sit behind an overlay. Only let it claim
-		// the pan when it owns the topmost hit target; otherwise event routing
-		// can fall back to an overlaid ScrollView.
-		if target, ok := component.(types.PannableComponent); ok && point.In(component.Bounds()) && component.ID() == hitID {
-			targets = append(targets, target)
+	route := []routedInput{{component: component, point: point}}
+	container, ok := component.(types.ChildComponent)
+	if !ok {
+		return route
+	}
+	childPoint := point
+	if transformer, ok := component.(types.PointerChildTransformer); ok {
+		childPoint = transformer.PointerForChild(point, state)
+	}
+	children := container.ChildComponents()
+	for index := len(children) - 1; index >= 0; index-- {
+		if childRoute := inputRouteAt(children[index], childPoint, state); len(childRoute) > 0 {
+			return append(route, childRoute...)
 		}
-	})
-	return targets
+	}
+	return route
+}
+
+func inputRouteToID(component types.Component, point image.Point, targetID string, state *types.ApplicationState) ([]routedInput, bool) {
+	if component == nil {
+		return nil, false
+	}
+	route := []routedInput{{component: component, point: point}}
+	if component.ID() == targetID {
+		return route, true
+	}
+	container, ok := component.(types.ChildComponent)
+	if !ok {
+		return nil, false
+	}
+	childPoint := point
+	if transformer, ok := component.(types.PointerChildTransformer); ok {
+		childPoint = transformer.PointerForChild(point, state)
+	}
+	for _, child := range container.ChildComponents() {
+		if childRoute, found := inputRouteToID(child, childPoint, targetID, state); found {
+			return append(route, childRoute...), true
+		}
+	}
+	return nil, false
+}
+
+func topmostInputRoute(point image.Point) []routedInput {
+	roots := interactionRoots()
+	for index := len(roots) - 1; index >= 0; index-- {
+		if route := inputRouteAt(roots[index], point, globalState); len(route) > 0 {
+			return route
+		}
+	}
+	return nil
+}
+
+func capturedInputRoute(point image.Point, targetID string) []routedInput {
+	if targetID == "" {
+		return nil
+	}
+	for _, root := range interactionRoots() {
+		if route, found := inputRouteToID(root, point, targetID, globalState); found {
+			return route
+		}
+	}
+	return nil
 }
 
 type TypographyConfig struct {
@@ -1233,6 +1293,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			globalState.ClickCount++
 			globalState.MouseX = int(ev.X)
 			globalState.MouseY = int(ev.Y)
+			globalState.MouseButton = int(ev.Button)
 
 			pt := image.Point{globalState.MouseX, globalState.MouseY}
 			initialTarget := libFindHoveredComponent(pt)
@@ -1276,6 +1337,9 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			mouseEvents++
 			globalState.MouseX = int(ev.X)
 			globalState.MouseY = int(ev.Y)
+			if ev.Button != 0 {
+				globalState.MouseButton = int(ev.Button)
+			}
 			pt := image.Point{globalState.MouseX, globalState.MouseY}
 
 			if globalState.ActiveID != "" {
@@ -1299,6 +1363,7 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 				}
 				globalState.ActiveID = ""
 			}
+			globalState.MouseButton = 0
 
 		case protocol.EventTypeMouseMove:
 			mouseEvents++
@@ -1361,21 +1426,17 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 		case protocol.EventTypeMouseWheel:
 			mouseEvents++
 			delta := int(ev.Delta)
-			pt := image.Point{globalState.MouseX, globalState.MouseY}
+			pt := image.Pt(int(ev.X), int(ev.Y))
+			if ev.X == 0 && ev.Y == 0 {
+				pt = image.Point{globalState.MouseX, globalState.MouseY}
+			}
+			globalState.MouseX, globalState.MouseY = pt.X, pt.Y
 
-			comps := interactionRoots()
-			for rootIndex := len(comps) - 1; rootIndex >= 0; rootIndex-- {
-				var targets []types.ScrollableComponent
-				comps[rootIndex].Walk(func(c types.Component) {
-					if sc, ok := c.(types.ScrollableComponent); ok && pt.In(c.Bounds()) {
-						targets = append(targets, sc)
-					}
-				})
-				for targetIndex := len(targets) - 1; targetIndex >= 0; targetIndex-- {
-					if targets[targetIndex].OnMouseWheel(pt, delta, globalState) {
-						targetIndex = -1
-						rootIndex = -1
-					}
+			route := topmostInputRoute(pt)
+			for index := len(route) - 1; index >= 0; index-- {
+				if target, ok := route[index].component.(types.ScrollableComponent); ok &&
+					target.OnMouseWheel(route[index].point, delta, globalState) {
+					break
 				}
 			}
 
@@ -1388,33 +1449,33 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			delta := image.Pt(int(ev.DeltaX), int(ev.DeltaY))
 			phase := types.GesturePhase(ev.Phase)
 			handled := false
-			comps := interactionRoots()
-			for rootIndex := len(comps) - 1; rootIndex >= 0 && !handled; rootIndex-- {
-				targets := pannableTargetsAt(comps[rootIndex], pt)
-				for targetIndex := len(targets) - 1; targetIndex >= 0; targetIndex-- {
-					if targets[targetIndex].OnPanGesture(pt, delta, phase, globalState) {
-						handled = true
-						break
+			route := topmostInputRoute(pt)
+			if phase != types.GestureBegin && globalState.GestureTargetID != "" {
+				route = capturedInputRoute(pt, globalState.GestureTargetID)
+			}
+			for index := len(route) - 1; index >= 0; index-- {
+				if target, ok := route[index].component.(types.PannableComponent); ok &&
+					target.OnPanGesture(route[index].point, delta, phase, globalState) {
+					handled = true
+					if phase == types.GestureBegin {
+						globalState.GestureTargetID = route[index].component.ID()
 					}
+					break
 				}
 			}
 			if !handled && phase == types.GestureUpdate && delta.Y != 0 {
 				// Preserve ordinary Android page scrolling when no two-axis
 				// gesture target consumes the event.
-				for rootIndex := len(comps) - 1; rootIndex >= 0 && !handled; rootIndex-- {
-					var targets []types.ScrollableComponent
-					comps[rootIndex].Walk(func(c types.Component) {
-						if target, ok := c.(types.ScrollableComponent); ok && pt.In(c.Bounds()) {
-							targets = append(targets, target)
-						}
-					})
-					for targetIndex := len(targets) - 1; targetIndex >= 0; targetIndex-- {
-						if targets[targetIndex].OnMouseWheel(pt, delta.Y*120/100, globalState) {
-							handled = true
-							break
-						}
+				for index := len(route) - 1; index >= 0; index-- {
+					if target, ok := route[index].component.(types.ScrollableComponent); ok &&
+						target.OnMouseWheel(route[index].point, delta.Y*120/100, globalState) {
+						handled = true
+						break
 					}
 				}
+			}
+			if phase == types.GestureEnd || phase == types.GestureCancel {
+				globalState.GestureTargetID = ""
 			}
 
 		case protocol.EventTypePinchGesture:
@@ -1425,21 +1486,21 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			pt := image.Pt(int(ev.X), int(ev.Y))
 			delta := image.Pt(int(ev.DeltaX), int(ev.DeltaY))
 			phase := types.GesturePhase(ev.Phase)
-			comps := interactionRoots()
-			handled := false
-			for rootIndex := len(comps) - 1; rootIndex >= 0 && !handled; rootIndex-- {
-				var targets []types.PinchableComponent
-				comps[rootIndex].Walk(func(c types.Component) {
-					if target, ok := c.(types.PinchableComponent); ok && pt.In(c.Bounds()) {
-						targets = append(targets, target)
+			route := topmostInputRoute(pt)
+			if phase != types.GestureBegin && globalState.GestureTargetID != "" {
+				route = capturedInputRoute(pt, globalState.GestureTargetID)
+			}
+			for index := len(route) - 1; index >= 0; index-- {
+				if target, ok := route[index].component.(types.PinchableComponent); ok &&
+					target.OnPinchGesture(route[index].point, delta, float64(ev.Scale), phase, globalState) {
+					if phase == types.GestureBegin {
+						globalState.GestureTargetID = route[index].component.ID()
 					}
-				})
-				for targetIndex := len(targets) - 1; targetIndex >= 0; targetIndex-- {
-					if targets[targetIndex].OnPinchGesture(pt, delta, float64(ev.Scale), phase, globalState) {
-						handled = true
-						break
-					}
+					break
 				}
+			}
+			if phase == types.GestureEnd || phase == types.GestureCancel {
+				globalState.GestureTargetID = ""
 			}
 
 		case protocol.EventTypeKeyDown:

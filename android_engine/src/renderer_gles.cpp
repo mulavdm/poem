@@ -122,8 +122,13 @@ void main() {
     float radius = min(vMisc.w, min(halfSize.x, halfSize.y));
     vec2 p = abs(vPixel - center) - (halfSize - vec2(radius));
     float dist = length(max(p, 0.0)) + min(max(p.x, p.y), 0.0) - radius;
-    float soft = max(vMisc.y, 1.0);
-    float alpha = 1.0 - smoothstep(-soft, soft * 0.5, dist);
+    float soft = vMisc.y;
+    float alpha;
+    if (soft > 0.0) {
+        alpha = 1.0 - smoothstep(-soft, soft, dist);
+    } else {
+        alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+    }
     gl_FragColor = vec4(vColor.rgb, vColor.a * alpha);
 }
 )";

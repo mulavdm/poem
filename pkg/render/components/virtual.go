@@ -421,8 +421,11 @@ func (t *DataTable) Draw(p types.Painter, state *types.ApplicationState) {
 		if row.ID == t.SelectedID {
 			p.FillRect(r, th.Colors.Selection)
 		} else if rowIndex%2 == 1 {
-			stripe := th.Colors.Surface
-			stripe.A = 110
+			// Resolve the zebra tone before it reaches the presenter. An
+			// alpha-only stripe is composited differently by native backends
+			// when a surrounding surface also carries effects, which made
+			// light Android tables alternate to near-black rows.
+			stripe := mix(th.Colors.SurfaceSunken, th.Colors.Surface, 96)
 			p.FillRect(r, stripe)
 		}
 		x = body.Min.X

@@ -225,7 +225,12 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 		// A map viewport fills its container and re-fills on every resize; the
 		// fallback's Max dimensions are the raster resolution, not a display cap,
 		// so they are deliberately not imposed on the interactive canvas here.
-		view := &render.ImageViewport{CompID: path, Alt: n.Semantic.Name, MinScale: 0.5, MaxScale: 8, Disabled: !n.Semantic.Enabled, MapViewportID: n.Semantic.ID}
+		view := &render.ImageViewport{
+			CompID: path, Alt: n.Semantic.Name, MinScale: 0.5, MaxScale: 8,
+			Disabled: !n.Semantic.Enabled, MapViewportID: n.Semantic.ID,
+			MapInteraction: true, MinPitch: n.MinPitch, MaxPitch: n.MaxPitch,
+			Transform: render.ImageTransform{Scale: 1, Bearing: n.Camera.Bearing, Pitch: n.Camera.Pitch},
+		}
 		if decoded, ok := decodeImageCached(n.Fallback.Encoded); ok {
 			view.ImageWidth, view.ImageHeight, view.Pixels = decoded.width, decoded.height, decoded.pixels
 		}
@@ -238,6 +243,8 @@ func build(node app.Node, path string, dispatch func(app.Msg)) render.Component 
 				world := math.Exp2(camera.Zoom)
 				next.Longitude = math.Max(-180, math.Min(180, camera.Longitude-transform.OffsetX*360/world))
 				next.Latitude = math.Max(-85.05112878, math.Min(85.05112878, camera.Latitude+transform.OffsetY*170/world))
+				next.Bearing = transform.Bearing
+				next.Pitch = math.Max(n.MinPitch, math.Min(n.MaxPitch, transform.Pitch))
 				dispatch(app.Msg{Name: msg.Name, Payload: app.MapCameraPayload(next)})
 			}
 		}

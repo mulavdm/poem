@@ -57,7 +57,7 @@ func (c *Checkbox) Draw(p types.Painter, state *types.ApplicationState) {
 		}
 	}
 	if c.Label != "" {
-		p.DrawText(c.Label, box.Max.X+t.Spacing.SM, c.Rect.Min.Y+c.Rect.Dy()/2+5, visual.foreground)
+		p.DrawText(c.Label, box.Max.X+t.Spacing.SM, c.Rect.Min.Y+c.Rect.Dy()/2+2, visual.foreground)
 	}
 	if state.HoveredID == c.CompID && !c.Disabled {
 		state.CursorID = state.HandCursor
@@ -174,7 +174,7 @@ func (s *Switch) Draw(p types.Painter, state *types.ApplicationState) {
 	knobRect := image.Rect(knobX, track.Min.Y+3, knobX+knob, track.Min.Y+3+knob)
 	p.DrawRoundedRect(knobRect, roundedRadius(knobRect, t.Radii.Pill), knobColor)
 	if s.Label != "" {
-		p.DrawText(s.Label, track.Max.X+t.Spacing.SM, s.Rect.Min.Y+s.Rect.Dy()/2+5, visual.foreground)
+		p.DrawText(s.Label, track.Max.X+t.Spacing.SM, s.Rect.Min.Y+s.Rect.Dy()/2+2, visual.foreground)
 	}
 	if state.HoveredID == s.CompID && !s.Disabled {
 		state.CursorID = state.HandCursor
@@ -275,7 +275,7 @@ func (r *Radio) Draw(p types.Painter, state *types.ApplicationState) {
 		p.DrawRoundedRect(image.Rect(circle.Min.X+inset, circle.Min.Y+inset, circle.Max.X-inset, circle.Max.Y-inset), t.Radii.Pill, t.Colors.Accent)
 	}
 	if r.Label != "" {
-		p.DrawText(r.Label, circle.Max.X+t.Spacing.SM, r.Rect.Min.Y+r.Rect.Dy()/2+5, visual.foreground)
+		p.DrawText(r.Label, circle.Max.X+t.Spacing.SM, r.Rect.Min.Y+r.Rect.Dy()/2+2, visual.foreground)
 	}
 	if state.HoveredID == r.CompID && !r.Disabled {
 		state.CursorID = state.HandCursor

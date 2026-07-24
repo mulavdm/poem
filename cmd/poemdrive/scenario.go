@@ -70,11 +70,21 @@ type Scenario struct {
 
 // Step is one interaction. Exactly one action per step.
 type Step struct {
-	Action string `json:"action"`
-	ID     string `json:"id,omitempty"`
-	Value  string `json:"value,omitempty"`
-	Key    string `json:"key,omitempty"`
-	MS     int    `json:"ms,omitempty"`
+	Action string  `json:"action"`
+	ID     string  `json:"id,omitempty"`
+	Value  string  `json:"value,omitempty"`
+	Key    string  `json:"key,omitempty"`
+	MS     int     `json:"ms,omitempty"`
+	Delta  int     `json:"delta,omitempty"`
+	DeltaX int     `json:"delta_x,omitempty"`
+	DeltaY int     `json:"delta_y,omitempty"`
+	Scale  float64 `json:"scale,omitempty"`
+	Button int     `json:"button,omitempty"`
+	Phase  string  `json:"phase,omitempty"`
+	// Dynamic marks a target that is expected to appear only after an earlier
+	// step changes the component tree. It is skipped by the initial fail-fast
+	// target scan and still validated by its action when that step executes.
+	Dynamic bool `json:"dynamic,omitempty"`
 
 	// Capture only. Name becomes the PNG filename; Source selects which image
 	// the host should produce.
@@ -83,12 +93,17 @@ type Step struct {
 }
 
 const (
-	actionClick    = "click"
-	actionFocus    = "focus"
-	actionSetText  = "set-text"
-	actionPressKey = "press-key"
-	actionWait     = "wait"
-	actionCapture  = "capture"
+	actionClick       = "click"
+	actionFocus       = "focus"
+	actionSetText     = "set-text"
+	actionPressKey    = "press-key"
+	actionWait        = "wait"
+	actionCapture     = "capture"
+	actionWheel       = "wheel"
+	actionPan         = "pan"
+	actionPinch       = "pinch"
+	actionDrag        = "pointer-drag"
+	actionAssertValue = "assert-value"
 )
 
 // captureSources maps a scenario's source name to the automation endpoint that
@@ -131,6 +146,25 @@ func (s *Scenario) Validate() error {
 			if step.Key == "" {
 				return fmt.Errorf("step %d (press-key) needs a key", i)
 			}
+		case actionWheel:
+			if step.ID == "" || step.Delta == 0 {
+				return fmt.Errorf("step %d (wheel) needs an id and non-zero delta", i)
+			}
+		case actionPan, actionDrag:
+			if step.ID == "" || (step.Phase == "" || step.Phase == "update") && step.DeltaX == 0 && step.DeltaY == 0 {
+				return fmt.Errorf("step %d (%s) needs an id and non-zero delta_x or delta_y", i, step.Action)
+			}
+			if step.Action == actionDrag && (step.Button < 0 || step.Button > 3) {
+				return fmt.Errorf("step %d (pointer-drag) button must be 1, 2, or 3", i)
+			}
+		case actionPinch:
+			if step.ID == "" || (step.Phase == "" || step.Phase == "update") && step.Scale <= 0 {
+				return fmt.Errorf("step %d (pinch) needs an id and positive scale", i)
+			}
+		case actionAssertValue:
+			if step.ID == "" || step.Value == "" {
+				return fmt.Errorf("step %d (assert-value) needs an id and value substring", i)
+			}
 		case actionWait:
 			if step.MS <= 0 {
 				return fmt.Errorf("step %d (wait) needs a positive ms", i)
@@ -148,6 +182,9 @@ func (s *Scenario) Validate() error {
 			return fmt.Errorf("step %d has no action", i)
 		default:
 			return fmt.Errorf("step %d has unknown action %q", i, step.Action)
+		}
+		if step.Phase != "" && step.Phase != "begin" && step.Phase != "update" && step.Phase != "end" && step.Phase != "cancel" {
+			return fmt.Errorf("step %d has unknown phase %q", i, step.Phase)
 		}
 	}
 	if s.Launch != nil {

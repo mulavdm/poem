@@ -86,6 +86,12 @@ type AutomationRequest struct {
 	Key      string              `json:"key,omitempty"`
 	Start    int                 `json:"start,omitempty"`
 	End      int                 `json:"end,omitempty"`
+	Delta    int                 `json:"delta,omitempty"`
+	DeltaX   int                 `json:"delta_x,omitempty"`
+	DeltaY   int                 `json:"delta_y,omitempty"`
+	Scale    float64             `json:"scale,omitempty"`
+	Button   int                 `json:"button,omitempty"`
+	Phase    string              `json:"phase,omitempty"`
 }
 
 // AutomationSelector addresses exactly one node in the platform-neutral
@@ -334,6 +340,18 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 	})
 	mux.HandleFunc("/press-key", func(w http.ResponseWriter, r *http.Request) {
 		writeAutomationHTTPCommand(w, r, cfg, "press-key")
+	})
+	mux.HandleFunc("/wheel", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "wheel")
+	})
+	mux.HandleFunc("/pan", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "pan")
+	})
+	mux.HandleFunc("/pinch", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "pinch")
+	})
+	mux.HandleFunc("/pointer-drag", func(w http.ResponseWriter, r *http.Request) {
+		writeAutomationHTTPCommand(w, r, cfg, "pointer-drag")
 	})
 	mux.HandleFunc("/capture-frame", func(w http.ResponseWriter, r *http.Request) {
 		writeAutomationHTTPCommand(w, r, cfg, "capture-frame")
@@ -1066,6 +1084,16 @@ func handleAutomationRequest(req AutomationRequest, cfg AutomationConfig) Automa
 		}
 		automationRepaint()
 		return baseAutomationResponse(nil, nil)
+	case "wheel", "pan", "pinch", "pointer-drag":
+		target, err := resolveAutomationTarget(req)
+		if err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		if err := automationViewportInput(target, req); err != nil {
+			return AutomationResponse{OK: false, Error: err.Error()}
+		}
+		automationRepaint()
+		return automationTargetResponse(target)
 	case "capture-frame":
 		targetPath := req.Path
 		if strings.TrimSpace(targetPath) == "" {
@@ -1461,6 +1489,136 @@ func automationClickComponent(id string) error {
 	_ = comp.OnMouseUp(pt, globalState)
 	globalState.ActiveID = ""
 	return nil
+}
+
+// automationViewportInput deliberately enters through the same screen-space
+// event path as a presenter. Calling a viewport method directly would make the
+// automation blind to routing bugs in scroll containers and overlays—the exact
+// class of framework defect these actions are intended to diagnose.
+func automationViewportInput(id string, req AutomationRequest) error {
+	point, err := automationInputPoint(id)
+	if err != nil {
+		return err
+	}
+	end := point.Add(image.Pt(req.DeltaX, req.DeltaY))
+	phase, phased, err := automationGesturePhase(req.Phase)
+	if err != nil {
+		return err
+	}
+	var eventsToSend []protocol.Event
+	switch strings.ToLower(strings.TrimSpace(req.Command)) {
+	case "wheel":
+		if req.Delta == 0 {
+			return fmt.Errorf("wheel needs a non-zero delta")
+		}
+		eventsToSend = []protocol.Event{{Type: protocol.EventTypeMouseWheel, X: int32(point.X), Y: int32(point.Y), Delta: int32(req.Delta)}}
+	case "pan":
+		if (!phased || phase == protocol.GesturePhaseUpdate) && req.DeltaX == 0 && req.DeltaY == 0 {
+			return fmt.Errorf("pan needs a non-zero delta_x or delta_y")
+		}
+		if phased {
+			eventsToSend = []protocol.Event{{Type: protocol.EventTypePanGesture, X: int32(end.X), Y: int32(end.Y),
+				DeltaX: int32(req.DeltaX), DeltaY: int32(req.DeltaY), Scale: 1, Phase: phase}}
+		} else {
+			eventsToSend = []protocol.Event{
+				{Type: protocol.EventTypePanGesture, X: int32(point.X), Y: int32(point.Y), Scale: 1, Phase: protocol.GesturePhaseBegin},
+				{Type: protocol.EventTypePanGesture, X: int32(end.X), Y: int32(end.Y), DeltaX: int32(req.DeltaX), DeltaY: int32(req.DeltaY), Scale: 1, Phase: protocol.GesturePhaseUpdate},
+				{Type: protocol.EventTypePanGesture, X: int32(end.X), Y: int32(end.Y), Scale: 1, Phase: protocol.GesturePhaseEnd},
+			}
+		}
+	case "pinch":
+		if req.Scale == 0 && phased && phase != protocol.GesturePhaseUpdate {
+			req.Scale = 1
+		}
+		if req.Scale <= 0 || math.IsNaN(req.Scale) || math.IsInf(req.Scale, 0) {
+			return fmt.Errorf("pinch needs a finite positive scale")
+		}
+		if phased {
+			eventsToSend = []protocol.Event{{Type: protocol.EventTypePinchGesture, X: int32(end.X), Y: int32(end.Y),
+				DeltaX: int32(req.DeltaX), DeltaY: int32(req.DeltaY), Scale: float32(req.Scale), Phase: phase}}
+		} else {
+			eventsToSend = []protocol.Event{
+				{Type: protocol.EventTypePinchGesture, X: int32(point.X), Y: int32(point.Y), Scale: 1, Phase: protocol.GesturePhaseBegin},
+				{Type: protocol.EventTypePinchGesture, X: int32(end.X), Y: int32(end.Y), DeltaX: int32(req.DeltaX), DeltaY: int32(req.DeltaY), Scale: float32(req.Scale), Phase: protocol.GesturePhaseUpdate},
+				{Type: protocol.EventTypePinchGesture, X: int32(end.X), Y: int32(end.Y), Scale: 1, Phase: protocol.GesturePhaseEnd},
+			}
+		}
+	case "pointer-drag":
+		button := req.Button
+		if button == 0 {
+			button = 1
+		}
+		if button < 1 || button > 3 {
+			return fmt.Errorf("pointer-drag button must be 1, 2, or 3")
+		}
+		if (!phased || phase == protocol.GesturePhaseUpdate) && req.DeltaX == 0 && req.DeltaY == 0 {
+			return fmt.Errorf("pointer-drag needs a non-zero delta_x or delta_y")
+		}
+		if phased {
+			switch phase {
+			case protocol.GesturePhaseBegin:
+				eventsToSend = []protocol.Event{
+					{Type: protocol.EventTypeMouseMove, X: int32(point.X), Y: int32(point.Y)},
+					{Type: protocol.EventTypeMouseDown, X: int32(point.X), Y: int32(point.Y), Button: int32(button)},
+				}
+			case protocol.GesturePhaseUpdate:
+				eventsToSend = []protocol.Event{{Type: protocol.EventTypeMouseMove, X: int32(end.X), Y: int32(end.Y)}}
+			case protocol.GesturePhaseEnd, protocol.GesturePhaseCancel:
+				eventsToSend = []protocol.Event{{Type: protocol.EventTypeMouseUp, X: int32(end.X), Y: int32(end.Y), Button: int32(button)}}
+			}
+		} else {
+			eventsToSend = []protocol.Event{
+				{Type: protocol.EventTypeMouseMove, X: int32(point.X), Y: int32(point.Y)},
+				{Type: protocol.EventTypeMouseDown, X: int32(point.X), Y: int32(point.Y), Button: int32(button)},
+				{Type: protocol.EventTypeMouseMove, X: int32(end.X), Y: int32(end.Y)},
+				{Type: protocol.EventTypeMouseUp, X: int32(end.X), Y: int32(end.Y), Button: int32(button)},
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported viewport input %q", req.Command)
+	}
+	processEventBatch(protocol.EventBatch{Events: eventsToSend}, io.Discard, nil)
+	return nil
+}
+
+func automationGesturePhase(raw string) (protocol.GesturePhase, bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return protocol.GesturePhaseBegin, false, nil
+	case "begin":
+		return protocol.GesturePhaseBegin, true, nil
+	case "update":
+		return protocol.GesturePhaseUpdate, true, nil
+	case "end":
+		return protocol.GesturePhaseEnd, true, nil
+	case "cancel":
+		return protocol.GesturePhaseCancel, true, nil
+	default:
+		return protocol.GesturePhaseCancel, false, fmt.Errorf("unknown gesture phase %q; want begin, update, end, or cancel", raw)
+	}
+}
+
+func automationInputPoint(id string) (image.Point, error) {
+	component := libFindComponent(id)
+	if component == nil {
+		return image.Point{}, fmt.Errorf("component %q not found", id)
+	}
+	node, ok := types.BuildSemanticsTree(globalState).Find(id)
+	if !ok || node.Bounds.Empty() || node.State.Offscreen {
+		return image.Point{}, fmt.Errorf("component %q is not visible in the current viewport", id)
+	}
+	point := image.Pt(node.Bounds.Min.X+node.Bounds.Dx()/2, node.Bounds.Min.Y+node.Bounds.Dy()/2)
+	route := topmostInputRoute(point)
+	for _, entry := range route {
+		if entry.component.ID() == id {
+			return point, nil
+		}
+	}
+	top := ""
+	if len(route) > 0 {
+		top = route[len(route)-1].component.ID()
+	}
+	return image.Point{}, fmt.Errorf("component %q is covered at %v (topmost target %q)", id, point, top)
 }
 
 func automationFocusComponent(id string) error {

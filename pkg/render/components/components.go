@@ -60,6 +60,13 @@ func (p *Panel) Draw(pnt types.Painter, state *types.ApplicationState) {
 		pnt.DrawRoundedRect(inner, maxInt(0, radius-1), background)
 		return
 	}
+	if themed(p.UseTheme, state) && p.Raised {
+		borderColor := activeTheme(state).Colors.Border
+		pnt.DrawRoundedRect(p.Rect, radius, borderColor)
+		inner := image.Rect(p.Rect.Min.X+1, p.Rect.Min.Y+1, p.Rect.Max.X-1, p.Rect.Max.Y-1)
+		pnt.DrawRoundedRect(inner, maxInt(0, radius-1), background)
+		return
+	}
 	pnt.DrawRoundedRect(p.Rect, radius, background)
 }
 func (p *Panel) SetBounds(r image.Rectangle) { p.Rect = r }

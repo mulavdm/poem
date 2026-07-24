@@ -98,7 +98,7 @@ As of 2026-07-16 the former sibling projects **Trellis** (the app layer) and **G
 |-- android_engine/        # Android presenter (EGL/GLES2) + no-Gradle APK build script
 |-- rust_engine/           # Legacy Windows presenter (OpenGL), reference only
 |-- examples/              # counter, preferences, settings — one App[S], three targets each
-|-- cmd/engine, cmd/gallery# Engine-layer demos (component API directly, desktop only)
+|-- cmd/engine, cmd/gallery# Engine-layer demos (gallery targets desktop and Android)
 |-- okf/                   # Living documentation bundle (start at okf/index.md)
 |-- schema/                # Legacy FlatBuffers schema (superseded by pkg/render/protocol)
 `-- TASK.md                # Tracked follow-up work (Android Phase 4, CI, docs)
@@ -148,6 +148,7 @@ timings against budgets and a saved baseline. Scene files live in `scenes/`:
 ```bash
 go run ./cmd/poemdrive scenes/gallery-tabs.json          # Windows gallery
 go run ./cmd/poemdrive -teardown scenes/android-preferences.json  # Android, cold machine
+go run ./cmd/poemdrive -build scenes/android-gallery.json # Rebuild and open Android gallery
 ```
 
 A scene's `launch` block self-provisions its target: on Android it boots the AVD
@@ -158,6 +159,10 @@ only what that run started (a borrowed emulator or already-open app is left
 running). Nothing about any app is compiled in — the scene supplies the base URL
 and steps — so one binary drives Windows, MAPPS, and Android. Details in
 [Scenario replay](./okf/concepts/automation/perf-profiling.md).
+
+On Windows, Android APK builds require Git for Windows. The scenario runner
+deliberately selects Git Bash instead of the unrelated WSL `bash.exe`, so the
+Windows Go and Android SDK/NDK toolchains remain reachable through `/c/...`.
 
 ### Android
 
@@ -253,6 +258,8 @@ Android APK (NDK clang + aapt2 + apksigner, no Gradle):
 ```bash
 android_engine/build_apk.sh examples/counter/android com.trellis.counter Counter counter.apk x86_64
 ```
+
+Run that command from Git Bash on Windows.
 
 ## Current Runtime Status
 

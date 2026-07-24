@@ -322,6 +322,20 @@ func (s *ScrollView) HitTest(pt image.Point) string {
 	return s.CompID
 }
 
+// PointerForChild maps a viewport-space pointer into the ScrollView's
+// content-space coordinates. Mouse propagation has always done this locally;
+// exposing the same transform lets the shared wheel/pan/pinch router avoid
+// comparing screen coordinates with scrolled child bounds.
+func (s *ScrollView) PointerForChild(pt image.Point, state *types.ApplicationState) image.Point {
+	offset := s.CurrentScrollY
+	if state != nil && state.ScrollCurrent != nil {
+		if current, ok := state.ScrollCurrent[s.CompID]; ok {
+			offset = int(math.Round(current))
+		}
+	}
+	return pt.Add(image.Pt(0, offset))
+}
+
 func (s *ScrollView) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
 	// Propagate key events
 	for _, child := range s.Children {

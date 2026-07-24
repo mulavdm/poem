@@ -57,16 +57,18 @@ type ApplicationState struct {
 	StartTime  time.Time
 
 	// Input State
-	MouseX      int
-	MouseY      int
-	HoveredID   string
-	FocusedID   string
-	ActiveID    string // ID of the component currently capturing the mouse (e.g., for dragging)
-	KeysPressed map[uint32]bool
-	CursorID    uintptr // Active dynamic cursor handle
-	ArrowCursor uintptr // System IDC_ARROW cursor
-	HandCursor  uintptr // System IDC_HAND cursor
-	IBeamCursor uintptr // System IDC_IBEAM cursor
+	MouseX          int
+	MouseY          int
+	MouseButton     int // 1 primary, 2 secondary, 3 middle; retained while a pointer drag is active.
+	HoveredID       string
+	FocusedID       string
+	ActiveID        string // ID of the component currently capturing the mouse (e.g., for dragging)
+	GestureTargetID string // Stable target captured at touch-gesture begin.
+	KeysPressed     map[uint32]bool
+	CursorID        uintptr // Active dynamic cursor handle
+	ArrowCursor     uintptr // System IDC_ARROW cursor
+	HandCursor      uintptr // System IDC_HAND cursor
+	IBeamCursor     uintptr // System IDC_IBEAM cursor
 
 	// Registry for buttons and interactive elements
 	Components []Component // Legacy/Global components
@@ -554,6 +556,13 @@ func MeasureContent(comp Component, avail image.Point, state *ApplicationState) 
 type ScrollableComponent interface {
 	Component
 	OnMouseWheel(pt image.Point, delta int, state *ApplicationState) bool
+}
+
+// PointerChildTransformer maps a pointer from a container's coordinate space
+// into the coordinate space used by its children. Scroll containers use this
+// to keep wheel and touch gestures aligned with visually scrolled content.
+type PointerChildTransformer interface {
+	PointerForChild(pt image.Point, state *ApplicationState) image.Point
 }
 
 // GesturePhase identifies the lifecycle position of a touch gesture.

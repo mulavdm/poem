@@ -1,0 +1,50 @@
+{
+  "name": "android-viewport-interactions",
+  "description": "Exercises screen-space viewport routing through a scrolled Android gallery page, asserts controlled image/map state, and captures before/after native frames.",
+  "base_url": "http://127.0.0.1:47833",
+  "launch": {
+    "platform": "android",
+    "avd": "Medium_Phone",
+    "package": "com.poem.gallery",
+    "activity": "android.app.NativeActivity",
+    "apk": "android_engine/gallery.apk",
+    "build": {
+      "script": "android_engine/build_apk.sh",
+      "app_dir": "../cmd/gallery",
+      "label": "Gallery",
+      "abi": "x86_64"
+    },
+    "inspection_property": "debug.poem.inspection",
+    "inspection_port_property": "debug.poem.inspection.port"
+  },
+  "warmup": 0,
+  "iterations": 24,
+  "settle_ms": 250,
+  "steps": [
+    { "action": "click", "id": "gallery.tabs/viewports" },
+    { "action": "wait", "ms": 500 },
+    { "action": "capture", "name": "before", "source": "native" },
+    { "action": "wheel", "id": "gallery.image-viewport", "delta": 120, "dynamic": true },
+    { "action": "assert-value", "id": "gallery.image-viewport", "value": "scale=1.200", "dynamic": true },
+    { "action": "pan", "id": "gallery.image-viewport", "phase": "begin", "dynamic": true },
+    { "action": "wait", "ms": 50 },
+    { "action": "pan", "id": "gallery.image-viewport", "phase": "update", "delta_x": 32, "delta_y": 16, "dynamic": true },
+    { "action": "wait", "ms": 50 },
+    { "action": "pan", "id": "gallery.image-viewport", "phase": "end", "dynamic": true },
+    { "action": "pointer-drag", "id": "gallery.map-viewport", "phase": "begin", "button": 2, "dynamic": true },
+    { "action": "wait", "ms": 50 },
+    { "action": "pointer-drag", "id": "gallery.map-viewport", "phase": "update", "button": 2, "delta_x": 40, "delta_y": 20, "dynamic": true },
+    { "action": "wait", "ms": 50 },
+    { "action": "pointer-drag", "id": "gallery.map-viewport", "phase": "end", "button": 2, "delta_x": 40, "delta_y": 20, "dynamic": true },
+    { "action": "assert-value", "id": "gallery.map-viewport", "value": "bearing=14.000", "dynamic": true },
+    { "action": "pinch", "id": "gallery.map-viewport", "phase": "begin", "dynamic": true },
+    { "action": "wait", "ms": 50 },
+    { "action": "pinch", "id": "gallery.map-viewport", "phase": "update", "scale": 1.25, "delta_x": 10, "delta_y": 20, "dynamic": true },
+    { "action": "wait", "ms": 50 },
+    { "action": "pinch", "id": "gallery.map-viewport", "phase": "end", "dynamic": true },
+    { "action": "assert-value", "id": "gallery.map-viewport", "value": "scale=1.250", "dynamic": true },
+    { "action": "assert-value", "id": "gallery.map-viewport", "value": "pitch=10.000", "dynamic": true },
+    { "action": "capture", "name": "after", "source": "native" }
+  ],
+  "regression_tolerance_pct": 25
+}

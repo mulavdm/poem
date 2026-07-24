@@ -30,13 +30,34 @@ func TestOverlayHitTargetPreventsCoveredCanvasFromOwningPan(t *testing.T) {
 	if canvas.ID() == hitID {
 		t.Fatal("covered canvas must not own the overlay hit")
 	}
-	if targets := pannableTargetsAt(root, point); len(targets) != 0 {
-		t.Fatalf("covered canvas received %d pannable targets", len(targets))
+	if route := inputRouteAt(root, point, &types.ApplicationState{}); len(route) == 0 || route[len(route)-1].component.ID() != action.ID() {
+		t.Fatalf("covered point route = %+v, want action", route)
 	}
-	if targets := pannableTargetsAt(root, image.Pt(100, 300)); len(targets) != 1 {
-		t.Fatalf("uncovered canvas received %d pannable targets, want 1", len(targets))
+	if route := inputRouteAt(root, image.Pt(100, 300), &types.ApplicationState{}); len(route) == 0 || route[len(route)-1].component.ID() != canvas.ID() {
+		t.Fatalf("uncovered point route = %+v, want canvas", route)
 	}
 	if _, ok := any(canvas).(types.PannableComponent); !ok {
 		t.Fatal("fixture canvas must be pannable")
+	}
+}
+
+func TestInputRouteMapsScrolledViewportCoordinatesToCanvas(t *testing.T) {
+	canvas := &components.ImageViewport{CompID: "map", Rect: image.Rect(0, 500, 400, 700)}
+	scroll := components.NewScrollView("scroll", canvas)
+	scroll.Rect = image.Rect(0, 100, 400, 500)
+	scroll.ContentH = 800
+	scroll.ScrollY, scroll.CurrentScrollY = 400, 400
+	state := &types.ApplicationState{ScrollCurrent: map[string]float64{"scroll": 400}}
+
+	route := inputRouteAt(scroll, image.Pt(200, 200), state)
+	if len(route) == 0 {
+		t.Fatal("scrolled canvas was not routed")
+	}
+	got := route[len(route)-1]
+	if got.component.ID() != "map" {
+		t.Fatalf("deepest component = %q, want map", got.component.ID())
+	}
+	if got.point != image.Pt(200, 600) {
+		t.Fatalf("content point = %v, want (200,600)", got.point)
 	}
 }

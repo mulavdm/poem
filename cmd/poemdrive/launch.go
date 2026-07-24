@@ -252,11 +252,13 @@ func (x *launcher) buildAPK() error {
 	if abi == "" {
 		abi = "x86_64"
 	}
-	// The build script is bash; on Windows that is Git Bash, which is present
-	// wherever the Go toolchain and NDK workflow already are.
-	bash, err := exec.LookPath("bash")
+	// The Android build script expects a POSIX shell over Windows paths. Prefer
+	// Git Bash explicitly on Windows: exec.LookPath("bash") commonly resolves
+	// System32\bash.exe first, which launches WSL and cannot see the Windows Go
+	// toolchain or the script's /c/... paths.
+	bash, err := androidBuildBash()
 	if err != nil {
-		return fmt.Errorf("launch.build needs bash on PATH: %w", err)
+		return err
 	}
 	fmt.Fprintf(os.Stderr, "  building %s (%s)\n", filepath.Base(x.launch.APK), abi)
 	// build_apk.sh resolves its app-directory argument against the working
@@ -276,6 +278,33 @@ func (x *launcher) buildAPK() error {
 		fmt.Fprintf(os.Stderr, "    %s\n", firstLine(strings.TrimSpace(string(out))))
 	}
 	return nil
+}
+
+func androidBuildBash() (string, error) {
+	if runtime.GOOS == "windows" {
+		var candidates []string
+		if programFiles := os.Getenv("ProgramFiles"); programFiles != "" {
+			candidates = append(candidates,
+				filepath.Join(programFiles, "Git", "bin", "bash.exe"),
+				filepath.Join(programFiles, "Git", "usr", "bin", "bash.exe"),
+			)
+		}
+		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+			candidates = append(candidates,
+				filepath.Join(localAppData, "Programs", "Git", "bin", "bash.exe"),
+				filepath.Join(localAppData, "Programs", "Git", "usr", "bin", "bash.exe"),
+			)
+		}
+		for _, candidate := range candidates {
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate, nil
+			}
+		}
+	}
+	if bash, err := exec.LookPath("bash"); err == nil {
+		return bash, nil
+	}
+	return "", fmt.Errorf("launch.build needs Git Bash on Windows or bash on PATH")
 }
 
 // buildWindows runs a PowerShell packaging script.
@@ -369,6 +398,7 @@ func (x *launcher) Prepare(forceBuild bool) error {
 
 	if x.launch.APK != "" {
 		fmt.Fprintf(os.Stderr, "  installing %s\n", filepath.Base(x.launch.APK))
+		_, _ = x.run(x.adb, "uninstall", x.launch.Package)
 		if _, err := x.run(x.adb, "install", "-r", filepath.FromSlash(x.launch.APK)); err != nil {
 			return err
 		}

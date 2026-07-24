@@ -37,11 +37,13 @@ import (
 )
 
 type driver struct {
-	scenario   *Scenario
-	client     *http.Client
-	verbose    bool
-	captureDir string
-	captures   int
+	scenario            *Scenario
+	client              *http.Client
+	verbose             bool
+	captureDir          string
+	captures            int
+	captureAfterFrame   uint64
+	captureFramePending bool
 }
 
 func (d *driver) url(path string) string {
@@ -69,9 +71,18 @@ func (d *driver) post(path string, body any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	raw, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return readErr
+	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("POST %s: %s", path, resp.Status)
+		var failure struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(raw, &failure) == nil && strings.TrimSpace(failure.Error) != "" {
+			return fmt.Errorf("POST %s: %s: %s", path, resp.Status, failure.Error)
+		}
+		return fmt.Errorf("POST %s: %s: %s", path, resp.Status, strings.TrimSpace(string(raw)))
 	}
 	return nil
 }
@@ -122,13 +133,31 @@ func (d *driver) waitReady(timeout time.Duration) error {
 func (d *driver) step(s Step) error {
 	switch s.Action {
 	case actionClick:
+		d.rememberFrameBeforeAction()
 		return d.post("/click", map[string]string{"command": "click", "id": s.ID})
 	case actionFocus:
+		d.rememberFrameBeforeAction()
 		return d.post("/focus", map[string]string{"command": "focus", "id": s.ID})
 	case actionSetText:
+		d.rememberFrameBeforeAction()
 		return d.post("/set-text", map[string]string{"command": "set-text", "id": s.ID, "value": s.Value})
 	case actionPressKey:
+		d.rememberFrameBeforeAction()
 		return d.post("/press-key", map[string]string{"command": "press-key", "key": s.Key})
+	case actionWheel:
+		d.rememberFrameBeforeAction()
+		return d.post("/wheel", map[string]any{"id": s.ID, "delta": s.Delta})
+	case actionPan:
+		d.rememberFrameBeforeAction()
+		return d.post("/pan", map[string]any{"id": s.ID, "delta_x": s.DeltaX, "delta_y": s.DeltaY, "phase": s.Phase})
+	case actionPinch:
+		d.rememberFrameBeforeAction()
+		return d.post("/pinch", map[string]any{"id": s.ID, "delta_x": s.DeltaX, "delta_y": s.DeltaY, "scale": s.Scale, "phase": s.Phase})
+	case actionDrag:
+		d.rememberFrameBeforeAction()
+		return d.post("/pointer-drag", map[string]any{"id": s.ID, "delta_x": s.DeltaX, "delta_y": s.DeltaY, "button": s.Button, "phase": s.Phase})
+	case actionAssertValue:
+		return d.assertComponentValue(s.ID, s.Value)
 	case actionWait:
 		time.Sleep(time.Duration(s.MS) * time.Millisecond)
 		return nil
@@ -136,6 +165,28 @@ func (d *driver) step(s Step) error {
 		return d.capture(s)
 	}
 	return fmt.Errorf("unknown action %q", s.Action)
+}
+
+func (d *driver) assertComponentValue(id, contains string) error {
+	var tree struct {
+		Flat []struct {
+			ID    string `json:"id"`
+			Value string `json:"value"`
+		} `json:"flat"`
+	}
+	if err := d.getJSON("/components", &tree); err != nil {
+		return err
+	}
+	for _, node := range tree.Flat {
+		if node.ID != id {
+			continue
+		}
+		if strings.Contains(node.Value, contains) {
+			return nil
+		}
+		return fmt.Errorf("component %q value %q does not contain %q", id, node.Value, contains)
+	}
+	return fmt.Errorf("component %q was not present while asserting value", id)
 }
 
 // capture asks the host for an image and writes it beside the others. The
@@ -152,8 +203,11 @@ func (d *driver) capture(s Step) error {
 	// frame has been presented, so an immediate readback grabs the previous
 	// frame. Waiting for the frame counter to advance is exact where a fixed
 	// sleep is a guess.
-	if err := d.awaitNewFrame(600 * time.Millisecond); err != nil && d.verbose {
-		fmt.Fprintln(os.Stderr, "  capture:", err)
+	if d.captureFramePending {
+		if err := d.awaitFrameAfter(d.captureAfterFrame, 600*time.Millisecond); err != nil && d.verbose {
+			fmt.Fprintln(os.Stderr, "  capture:", err)
+		}
+		d.captureFramePending = false
 	}
 	resp, err := d.client.Get(d.url(captureSources[source]))
 	if err != nil {
@@ -201,7 +255,7 @@ func (d *driver) verifyTargets() error {
 	var missing []string
 	seen := map[string]bool{}
 	for _, step := range d.scenario.Steps {
-		if step.ID == "" || seen[step.ID] || present[step.ID] {
+		if step.ID == "" || step.Dynamic || seen[step.ID] || present[step.ID] {
 			continue
 		}
 		seen[step.ID] = true
@@ -219,22 +273,33 @@ func (d *driver) verifyTargets() error {
 
 // awaitNewFrame blocks until the engine reports having rendered another frame,
 // so a capture shows the state the preceding steps produced.
-func (d *driver) awaitNewFrame(timeout time.Duration) error {
-	frameCount := func() (uint64, error) {
-		var perf render.PerfState
-		if err := d.getJSON("/perf/state", &perf); err != nil {
-			return 0, err
-		}
-		return perf.Frames.FrameCount, nil
+func (d *driver) currentFrameCount() (uint64, error) {
+	var perf render.PerfState
+	if err := d.getJSON("/perf/state", &perf); err != nil {
+		return 0, err
 	}
-	start, err := frameCount()
+	return perf.Frames.FrameCount, nil
+}
+
+func (d *driver) rememberFrameBeforeAction() {
+	if frame, err := d.currentFrameCount(); err == nil {
+		d.captureAfterFrame = frame
+		d.captureFramePending = true
+	}
+}
+
+func (d *driver) awaitFrameAfter(start uint64, timeout time.Duration) error {
+	now, err := d.currentFrameCount()
 	if err != nil {
 		return err
+	}
+	if now > start {
+		return nil
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		time.Sleep(25 * time.Millisecond)
-		if now, err := frameCount(); err == nil && now > start {
+		if now, err := d.currentFrameCount(); err == nil && now > start {
 			return nil
 		}
 	}

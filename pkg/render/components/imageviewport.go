@@ -1,11 +1,13 @@
 package components
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math"
 
 	"github.com/mulavdm/poem/pkg/render/semantics"
+	renderstate "github.com/mulavdm/poem/pkg/render/state"
 	"github.com/mulavdm/poem/pkg/render/types"
 )
 
@@ -15,6 +17,10 @@ type ImageTransform struct {
 	OffsetX float64
 	OffsetY float64
 	Scale   float64
+	// Bearing is clockwise map rotation in degrees. Pitch is map tilt away
+	// from a straight-down view. Still-image viewports leave both at zero.
+	Bearing float64
+	Pitch   float64
 }
 
 // ImageMarkerVariant selects a marker's semantic color.
@@ -66,6 +72,11 @@ type ImageViewport struct {
 	Transform     ImageTransform
 	MinScale      float64
 	MaxScale      float64
+	// MapInteraction enables map-camera gestures even when the retained scene
+	// is temporarily represented by fallback pixels.
+	MapInteraction bool
+	MinPitch       float64
+	MaxPitch       float64
 	// MaxWidth and MaxHeight cap the measured size in logical pixels when the
 	// author wants a bounded image. They are the author's intent — distinct from
 	// the laid-out Rect, which layout owns. Zero means unbounded (fill available).
@@ -81,12 +92,15 @@ type ImageViewport struct {
 	Markers []ImageMarker
 	// OnMarker receives the activated marker ID.
 	OnMarker func(string, *types.ApplicationState)
+}
 
-	dragging      bool
-	dragMoved     bool
-	dragStart     image.Point
-	start         ImageTransform
-	pressedMarker int
+type imageViewportInteraction struct {
+	Dragging      bool
+	DragMoved     bool
+	PoseDragging  bool
+	DragStart     image.Point
+	Start         ImageTransform
+	PressedMarker int
 }
 
 // MapViewportPlacement exposes the laid-out retained-map canvas to the native
@@ -117,7 +131,50 @@ func (i *ImageViewport) normalized() ImageTransform {
 	t.Scale = math.Max(minScale, math.Min(maxScale, t.Scale))
 	t.OffsetX = math.Max(-4, math.Min(4, t.OffsetX))
 	t.OffsetY = math.Max(-4, math.Min(4, t.OffsetY))
+	if i.isMapInteraction() {
+		t.Bearing = math.Mod(t.Bearing, 360)
+		if t.Bearing < 0 {
+			t.Bearing += 360
+		}
+		minPitch, maxPitch := i.MinPitch, i.MaxPitch
+		if minPitch < 0 {
+			minPitch = 0
+		}
+		if maxPitch < minPitch {
+			maxPitch = minPitch
+		}
+		t.Pitch = math.Max(minPitch, math.Min(maxPitch, t.Pitch))
+	}
 	return t
+}
+
+func (i *ImageViewport) isMapInteraction() bool {
+	return i.MapInteraction || i.MapViewportID != ""
+}
+
+func (i *ImageViewport) interactionKey() string { return i.CompID + "/viewport-interaction" }
+
+func (i *ImageViewport) loadInteraction(state *types.ApplicationState) (imageViewportInteraction, bool) {
+	if state == nil || state.TransientState == nil {
+		return imageViewportInteraction{}, false
+	}
+	return renderstate.Load[imageViewportInteraction](state.TransientState, i.interactionKey())
+}
+
+func (i *ImageViewport) storeInteraction(state *types.ApplicationState, interaction imageViewportInteraction) {
+	if state == nil {
+		return
+	}
+	if state.TransientState == nil {
+		state.TransientState = renderstate.NewStore()
+	}
+	renderstate.StoreValue(state.TransientState, i.interactionKey(), interaction)
+}
+
+func (i *ImageViewport) clearInteraction(state *types.ApplicationState) {
+	if state != nil && state.TransientState != nil {
+		state.TransientState.Delete(i.interactionKey())
+	}
 }
 
 func (i *ImageViewport) Measure(avail image.Point, _ *types.ApplicationState) types.MeasureResult {
@@ -203,48 +260,58 @@ func (i *ImageViewport) OnMouseDown(pt image.Point, state *types.ApplicationStat
 	if i.Disabled || !pt.In(i.Rect) {
 		return false
 	}
-	i.dragging = true
-	i.dragMoved = false
-	i.dragStart = pt
-	i.start = i.normalized()
-	i.pressedMarker = i.markerIndexAt(pt, i.start)
+	start := i.normalized()
+	i.storeInteraction(state, imageViewportInteraction{
+		Dragging: true, DragStart: pt, Start: start,
+		PoseDragging:  i.isMapInteraction() && state != nil && (state.MouseButton == 2 || state.MouseButton == 3),
+		PressedMarker: i.markerIndexAt(pt, start),
+	})
 	state.ActiveID = i.CompID
 	return true
 }
 
-func (i *ImageViewport) OnMouseMove(pt image.Point, _ *types.ApplicationState) bool {
-	if !i.dragging {
+func (i *ImageViewport) OnMouseMove(pt image.Point, state *types.ApplicationState) bool {
+	interaction, ok := i.loadInteraction(state)
+	if !ok || !interaction.Dragging {
 		return false
 	}
-	if !i.dragMoved {
-		dx, dy := pt.X-i.dragStart.X, pt.Y-i.dragStart.Y
+	if !interaction.DragMoved {
+		dx, dy := pt.X-interaction.DragStart.X, pt.Y-interaction.DragStart.Y
 		if dx*dx+dy*dy <= 36 {
 			return true
 		}
-		i.dragMoved = true
-		i.pressedMarker = -1
+		interaction.DragMoved = true
+		interaction.PressedMarker = -1
 	}
-	i.Transform = i.start
-	if i.Rect.Dx() > 0 {
-		i.Transform.OffsetX += float64(pt.X-i.dragStart.X) / float64(i.Rect.Dx())
-	}
-	if i.Rect.Dy() > 0 {
-		i.Transform.OffsetY += float64(pt.Y-i.dragStart.Y) / float64(i.Rect.Dy())
+	i.Transform = interaction.Start
+	if i.isMapInteraction() && interaction.PoseDragging {
+		i.Transform.Bearing += float64(pt.X-interaction.DragStart.X) * 0.35
+		i.Transform.Pitch += float64(pt.Y-interaction.DragStart.Y) * 0.25
+	} else {
+		if i.Rect.Dx() > 0 {
+			i.Transform.OffsetX += float64(pt.X-interaction.DragStart.X) / float64(i.Rect.Dx())
+		}
+		if i.Rect.Dy() > 0 {
+			i.Transform.OffsetY += float64(pt.Y-interaction.DragStart.Y) / float64(i.Rect.Dy())
+		}
 	}
 	i.Transform = i.normalized()
+	i.storeInteraction(state, interaction)
+	i.commit(state)
 	return true
 }
 
 func (i *ImageViewport) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
-	if !i.dragging {
+	interaction, ok := i.loadInteraction(state)
+	if !ok || !interaction.Dragging {
 		return false
 	}
-	i.dragging = false
-	if i.dragMoved {
+	i.clearInteraction(state)
+	if interaction.DragMoved {
 		i.commit(state)
 		return true
 	}
-	if index := i.markerIndexAt(pt, i.normalized()); index >= 0 && index == i.pressedMarker {
+	if index := i.markerIndexAt(pt, i.normalized()); index >= 0 && index == interaction.PressedMarker {
 		marker := i.Markers[index]
 		if !marker.Disabled && i.OnMarker != nil {
 			i.OnMarker(marker.ID, state)
@@ -282,32 +349,38 @@ func (i *ImageViewport) OnMouseWheel(pt image.Point, delta int, state *types.App
 }
 
 func (i *ImageViewport) OnPanGesture(pt, delta image.Point, phase types.GesturePhase, state *types.ApplicationState) bool {
-	if i.Disabled || !pt.In(i.Rect) {
+	if i.Disabled || phase == types.GestureBegin && !pt.In(i.Rect) {
 		return false
 	}
 	switch phase {
 	case types.GestureBegin:
-		i.start = i.normalized()
+		i.storeInteraction(state, imageViewportInteraction{Start: i.normalized()})
 	case types.GestureUpdate:
 		t := i.normalized()
 		t.OffsetX += float64(delta.X) / float64(maxInt(1, i.Rect.Dx()))
 		t.OffsetY += float64(delta.Y) / float64(maxInt(1, i.Rect.Dy()))
 		i.Transform = t
+		i.commit(state)
 	case types.GestureEnd:
 		i.commit(state)
+		i.clearInteraction(state)
 	case types.GestureCancel:
-		i.Transform = i.start
+		if interaction, ok := i.loadInteraction(state); ok {
+			i.Transform = interaction.Start
+			i.commit(state)
+		}
+		i.clearInteraction(state)
 	}
 	return true
 }
 
 func (i *ImageViewport) OnPinchGesture(pt, delta image.Point, scale float64, phase types.GesturePhase, state *types.ApplicationState) bool {
-	if i.Disabled || !pt.In(i.Rect) || scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
+	if i.Disabled || phase == types.GestureBegin && !pt.In(i.Rect) || scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
 		return false
 	}
 	switch phase {
 	case types.GestureBegin:
-		i.start = i.normalized()
+		i.storeInteraction(state, imageViewportInteraction{Start: i.normalized()})
 	case types.GestureUpdate:
 		t := i.normalized()
 		oldScale := t.Scale
@@ -317,14 +390,29 @@ func (i *ImageViewport) OnPinchGesture(pt, delta image.Point, scale float64, pha
 		ratio := newScale/oldScale - 1
 		t.OffsetX -= (fx - t.OffsetX) * ratio
 		t.OffsetY -= (fy - t.OffsetY) * ratio
-		t.OffsetX += float64(delta.X) / float64(maxInt(1, i.Rect.Dx()))
-		t.OffsetY += float64(delta.Y) / float64(maxInt(1, i.Rect.Dy()))
+		if i.isMapInteraction() {
+			// A map reserves one-finger movement for translation. With two
+			// contacts, centroid movement adjusts the camera pose while pinch
+			// distance controls zoom: horizontal changes bearing, vertical
+			// changes pitch.
+			t.Bearing += float64(delta.X) * 0.35
+			t.Pitch += float64(delta.Y) * 0.25
+		} else {
+			t.OffsetX += float64(delta.X) / float64(maxInt(1, i.Rect.Dx()))
+			t.OffsetY += float64(delta.Y) / float64(maxInt(1, i.Rect.Dy()))
+		}
 		t.Scale = newScale
 		i.Transform = t
+		i.commit(state)
 	case types.GestureEnd:
 		i.commit(state)
+		i.clearInteraction(state)
 	case types.GestureCancel:
-		i.Transform = i.start
+		if interaction, ok := i.loadInteraction(state); ok {
+			i.Transform = interaction.Start
+			i.commit(state)
+		}
+		i.clearInteraction(state)
 	}
 	return true
 }
@@ -376,8 +464,11 @@ func (i *ImageViewport) commit(state *types.ApplicationState) {
 }
 
 func (i *ImageViewport) Semantics(_ *types.ApplicationState) semantics.Node {
-	node := semantics.Node{ID: i.CompID, Role: semantics.RoleGroup, Name: i.Alt, Bounds: i.Rect}
 	t := i.normalized()
+	node := semantics.Node{ID: i.CompID, Role: semantics.RoleGroup, Name: i.Alt, Bounds: i.Rect,
+		Value: fmt.Sprintf("scale=%.3f offset_x=%.3f offset_y=%.3f bearing=%.3f pitch=%.3f",
+			t.Scale, t.OffsetX, t.OffsetY, t.Bearing, t.Pitch),
+		Actions: []semantics.Action{semantics.ActionIncrement, semantics.ActionDecrement}}
 	for index, marker := range i.Markers {
 		if marker.ID == "" || !validMarker(marker) {
 			continue
@@ -395,7 +486,18 @@ func (i *ImageViewport) Semantics(_ *types.ApplicationState) semantics.Node {
 
 // PerformSemanticAction invokes an accessible marker descendant.
 func (i *ImageViewport) PerformSemanticAction(targetID string, action semantics.Action, _ string, state *types.ApplicationState) bool {
-	if action != semantics.ActionInvoke || i.Disabled {
+	if i.Disabled {
+		return false
+	}
+	if targetID == i.CompID {
+		switch action {
+		case semantics.ActionIncrement:
+			return i.zoomAtCenter(1.25, state)
+		case semantics.ActionDecrement:
+			return i.zoomAtCenter(0.8, state)
+		}
+	}
+	if action != semantics.ActionInvoke {
 		return false
 	}
 	for _, marker := range i.Markers {
