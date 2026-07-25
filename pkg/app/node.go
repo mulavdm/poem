@@ -273,6 +273,7 @@ type TextInputNode struct {
 	Error       string
 	Disabled    bool
 	ReadOnly    bool
+	Password    bool
 	OnChange    Msg
 }
 
@@ -281,6 +282,11 @@ func (TextInputNode) isNode() {}
 // TextInput creates a TextInputNode.
 func TextInput(value, placeholder string, onChange Msg) TextInputNode {
 	return TextInputNode{Value: value, Placeholder: placeholder, OnChange: onChange}
+}
+
+// PasswordInput creates a TextInputNode masked for sensitive password input.
+func PasswordInput(value, placeholder string, onChange Msg) TextInputNode {
+	return TextInputNode{Value: value, Placeholder: placeholder, Password: true, OnChange: onChange}
 }
 
 // TextAreaNode renders an editable multi-line text field that fires OnChange

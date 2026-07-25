@@ -33,6 +33,8 @@ const (
 	IconClear      IconID = "clear"
 	IconDirections IconID = "directions"
 	IconConnection IconID = "connection"
+	IconFolder     IconID = "folder"
+	IconImage      IconID = "image"
 )
 
 type ActionImportance uint8
