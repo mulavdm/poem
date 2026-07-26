@@ -68,6 +68,20 @@ func TestRenderFrameRoundTripWithImageBytes(t *testing.T) {
 	}
 }
 
+func TestWindowCloseResponseEnvelope(t *testing.T) {
+	payload, err := EncodeWindowCloseResponse(WindowCloseResponse{Allow: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageType, body, err := DecodeEnvelope(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageType != MessageWindowCloseResponse || len(body) != 1 || body[0] != 1 {
+		t.Fatalf("close response envelope type=%d body=%v", messageType, body)
+	}
+}
+
 func TestRenderFrameRoundTripWithMapScenePlacement(t *testing.T) {
 	want := DrawCommand{Type: DrawCommandTypeDrawMapScene, X1: 4, Y1: 8, X2: 404, Y2: 308, W: 256, H: 128, Text: "main-map", Bytes: []byte{9, 8, 7}}
 	encoded, err := EncodeRenderFrame(RenderFrame{Width: 800, Height: 600, Commands: []DrawCommand{want}})

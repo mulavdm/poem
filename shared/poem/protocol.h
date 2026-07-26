@@ -8,7 +8,7 @@
 namespace poem::protocol {
 
 constexpr char kMagic[4] = {'P', 'O', 'E', 'M'};
-constexpr std::uint16_t kVersion = 5;
+constexpr std::uint16_t kVersion = 6;
 
 enum class MessageType : std::uint16_t {
     InitEngine = 1,
@@ -19,6 +19,7 @@ enum class MessageType : std::uint16_t {
     SetImeVisible = 6,
     MapSceneDelta = 7,
     MapCamera = 8,
+    WindowCloseResponse = 9,
     EventBatch = 101,
     NativeDebugRequest = 201,
     NativeDebugResponse = 202,
@@ -129,6 +130,7 @@ struct RenderFrame {
     std::uint8_t cursor{};
     std::vector<DrawCommand> commands;
 };
+struct WindowCloseResponse { bool allow{}; };
 
 enum class MapResourceType : std::uint8_t { VertexBuffer = 0, IndexBuffer = 1, TextureRGBA = 2, TextureSDF = 3, TextureAlpha = 4 };
 enum class MapResourceOperation : std::uint8_t { Upload = 0, Release = 1 };
@@ -341,6 +343,7 @@ RenderFrame DecodeRenderFrame(const std::vector<std::uint8_t>& body);
 MapSceneDelta DecodeMapSceneDelta(const std::vector<std::uint8_t>& body);
 MapCamera DecodeMapCamera(const std::vector<std::uint8_t>& body);
 PlaySound DecodePlaySound(const std::vector<std::uint8_t>& body);
+WindowCloseResponse DecodeWindowCloseResponse(const std::vector<std::uint8_t>& body);
 SetImeVisible DecodeSetImeVisible(const std::vector<std::uint8_t>& body);
 SemanticTree DecodeSemanticTree(const std::vector<std::uint8_t>& body);
 NativeDebugRequest DecodeNativeDebugRequest(const std::vector<std::uint8_t>& body);

@@ -94,7 +94,7 @@ void RendererRealtimeD3D12::Render(const protocol::RenderFrame& frame){
     const float clear[]{0.025f,0.04f,0.075f,1};list_->OMSetRenderTargets(1,&handle,FALSE,nullptr);
     list_->ClearRenderTargetView(handle,clear,0,nullptr);
     realtime::FrameInput input{sizeof(input),frameID_++,1.0f/60,viewportRect_,device_.Get(),queue_.Get(),list_.Get(),
-        DXGI_FORMAT_R8G8B8A8_UNORM,0};
+        DXGI_FORMAT_R8G8B8A8_UNORM,viewportFocused_?1u:0u};
     if(viewportCommand&&viewportRect_.width>0&&viewportRect_.height>0&&
        viewport_->render(viewport_->userData,&input)!=realtime::Result::ok)return;
     const D3D12_VIEWPORT fullViewport{0,0,static_cast<float>(width_),static_cast<float>(height_),0,1};

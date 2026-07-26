@@ -2,7 +2,7 @@ package protocol
 
 const (
 	Magic   = "POEM"
-	Version = uint16(5)
+	Version = uint16(6)
 )
 
 type MessageType uint16
@@ -16,6 +16,7 @@ const (
 	MessageSetImeVisible        MessageType = 6
 	MessageMapSceneDelta        MessageType = 7
 	MessageMapCamera            MessageType = 8
+	MessageWindowCloseResponse  MessageType = 9
 	MessageEventBatch           MessageType = 101
 	MessageNativeDebugRequest   MessageType = 201
 	MessageNativeDebugResponse  MessageType = 202
@@ -133,6 +134,7 @@ type RenderFrame struct {
 type PlaySound struct {
 	Type SoundType
 }
+type WindowCloseResponse struct{ Allow bool }
 
 // SetImeVisible asks the presenter to show or hide the platform text-input
 // method (the soft keyboard on Android). Presenters without an IME concept

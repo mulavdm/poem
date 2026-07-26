@@ -127,6 +127,12 @@ type TypographyConfig struct {
 	PrimaryFontPath   string
 	FallbackFontPaths []string
 }
+type CloseDecision uint8
+
+const (
+	CloseAllow CloseDecision = iota
+	CloseDefer
+)
 
 type AppConfig struct {
 	Title                 string
@@ -152,6 +158,10 @@ type AppConfig struct {
 	Input design.InputCapabilities
 	// OnStop releases application-owned resources when the hosted engine exits.
 	OnStop func()
+	// OnCloseRequested may defer native window destruction while the
+	// application presents a confirmation workflow. Deferred requests must
+	// eventually call ResolveWindowClose.
+	OnCloseRequested func(state *types.ApplicationState) CloseDecision
 }
 
 // Package-level orchestrator variables
@@ -167,6 +177,7 @@ var (
 	globalFontAtlas         *fontAtlasManager
 	globalPainter           *ProtocolPainter
 	globalRenderConn        io.Writer
+	globalCloseRequested    func(state *types.ApplicationState) CloseDecision
 	globalLastFrame         protocol.RenderFrame
 	globalSemanticRevision  uint64
 	globalRepaintRequested  atomic.Bool
@@ -406,6 +417,7 @@ func runEngine(config AppConfig, manager *theme.Manager, preferenceUpdates <-cha
 	pipeConnGoToSidecar := toPresenter
 	pipeConnSidecarToGo := fromPresenter
 	globalRenderConn = pipeConnGoToSidecar
+	globalCloseRequested = config.OnCloseRequested
 
 	globalState.PlaySoundFn = func(soundType int8) {
 		sendSoundEvent(pipeConnGoToSidecar, protocol.SoundType(soundType))
@@ -760,6 +772,19 @@ func SubmitMapScene(scene protocol.MapSceneDelta) error {
 		return fmt.Errorf("render: no active presenter")
 	}
 	payload, err := protocol.EncodeMapSceneDelta(scene)
+	if err != nil {
+		return err
+	}
+	return writeMessage(globalRenderConn, payload)
+}
+
+// ResolveWindowClose completes a previously deferred native close request.
+// allow=false cancels the request and keeps the window alive.
+func ResolveWindowClose(allow bool) error {
+	if globalRenderConn == nil {
+		return fmt.Errorf("render: no active presenter")
+	}
+	payload, err := protocol.EncodeWindowCloseResponse(protocol.WindowCloseResponse{Allow: allow})
 	if err != nil {
 		return err
 	}
@@ -1254,6 +1279,11 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 
 		switch ev.Type {
 		case protocol.EventTypeWindowClose:
+			if globalCloseRequested != nil && globalCloseRequested(globalState) == CloseDefer {
+				globalState.NeedsRepaint = true
+				continue
+			}
+			_ = ResolveWindowClose(true)
 			fmt.Println("Native host requested window termination. Shutting down Go...")
 			return true
 

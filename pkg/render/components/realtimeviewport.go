@@ -75,18 +75,32 @@ func (v *RealtimeViewport) OnMouseDown(pt image.Point, state *types.ApplicationS
 func (v *RealtimeViewport) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
 	if state.ActiveID == v.CompID {
 		state.ActiveID = ""
-		if pt.In(v.Rect) && v.OnPointer != nil {
-			v.OnPointer("up", float64(pt.X-v.Rect.Min.X)/float64(maxInt(1, v.Rect.Dx())),
+		if v.OnPointer != nil {
+			kind := "up"
+			if !pt.In(v.Rect) {
+				kind = "cancel"
+			}
+			v.OnPointer(kind, float64(pt.X-v.Rect.Min.X)/float64(maxInt(1, v.Rect.Dx())),
 				float64(pt.Y-v.Rect.Min.Y)/float64(maxInt(1, v.Rect.Dy())), state)
 		}
-		return pt.In(v.Rect)
+		return true
 	}
 	return false
 }
 func (v *RealtimeViewport) OnRealtimeViewportEvent(payload []byte, state *types.ApplicationState) bool {
 	return v.OnEvent != nil && v.OnEvent(append([]byte(nil), payload...), state)
 }
-func (v *RealtimeViewport) OnMouseMove(image.Point, *types.ApplicationState) bool { return false }
+func (v *RealtimeViewport) OnMouseMove(pt image.Point, state *types.ApplicationState) bool {
+	if v.Disabled || v.OnPointer == nil {
+		return false
+	}
+	if state.ActiveID == v.CompID || pt.In(v.Rect) {
+		v.OnPointer("move", float64(pt.X-v.Rect.Min.X)/float64(maxInt(1, v.Rect.Dx())),
+			float64(pt.Y-v.Rect.Min.Y)/float64(maxInt(1, v.Rect.Dy())), state)
+		return state.ActiveID == v.CompID
+	}
+	return false
+}
 func (v *RealtimeViewport) Semantics(_ *types.ApplicationState) semantics.Node {
 	label := v.Label
 	if label == "" {

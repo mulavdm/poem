@@ -45,4 +45,12 @@ func TestRealtimeViewportLayoutFocusAndCommand(t *testing.T) {
 	if !v.OnRealtimeViewportEvent([]byte("event"), state) || !called {
 		t.Fatal("opaque event was not routed")
 	}
+	var phases []string
+	v.OnPointer = func(kind string, _, _ float64, _ *types.ApplicationState) { phases = append(phases, kind) }
+	if !v.OnMouseDown(image.Pt(200, 200), state) || !v.OnMouseMove(image.Pt(300, 250), state) || !v.OnMouseUp(image.Pt(950, 700), state) {
+		t.Fatal("viewport pointer capture did not survive an outside release")
+	}
+	if len(phases) != 3 || phases[0] != "down" || phases[1] != "move" || phases[2] != "cancel" {
+		t.Fatalf("pointer phases %v", phases)
+	}
 }

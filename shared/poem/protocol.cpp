@@ -268,6 +268,9 @@ PlaySound DecodePlaySound(const std::vector<std::uint8_t>& body) {
     out.type = static_cast<SoundType>(r.Read<std::uint8_t>());
     return out;
 }
+WindowCloseResponse DecodeWindowCloseResponse(const std::vector<std::uint8_t>& body){
+    Reader reader(body);WindowCloseResponse value;value.allow=reader.Read<std::uint8_t>()!=0;reader.RequireEnd();return value;
+}
 
 SetImeVisible DecodeSetImeVisible(const std::vector<std::uint8_t>& body) {
     Reader r(body);

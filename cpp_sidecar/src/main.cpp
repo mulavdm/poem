@@ -26,6 +26,7 @@ namespace {
 
 constexpr UINT WM_POEM_FRAME = WM_APP + 1;
 constexpr UINT WM_POEM_SEMANTICS = WM_APP + 2;
+constexpr UINT WM_POEM_CLOSE_RESPONSE = WM_APP + 3;
 
 struct ComApartment {
     ComApartment() : result(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {}
@@ -47,6 +48,8 @@ struct AppState {
     std::atomic<bool> running = true;
     HWND hwnd = nullptr;
     bool imeResultSent = false;
+    bool closePending = false;
+    bool closeAuthorized = false;
 };
 
 std::string CompositionWideToUtf8(const std::wstring& value) {
@@ -265,10 +268,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         break;
     case WM_CLOSE:
         if (app) {
+            if(app->closeAuthorized){app->running=false;DestroyWindow(hwnd);return 0;}
+            if(app->closePending)return 0;
+            app->closePending=true;
             SendEvent(app, {poem::protocol::EventType::WindowClose, 0, 0, 0, 0, 0, 0, 0, 0});
-            app->running = false;
+            return 0;
         }
         DestroyWindow(hwnd);
+        return 0;
+    case WM_POEM_CLOSE_RESPONSE:
+        if(app){
+            app->closePending=false;
+            if(wParam){app->closeAuthorized=true;PostMessageW(hwnd,WM_CLOSE,0,0);}
+        }
         return 0;
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -914,6 +926,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     auto response = OpenNativeDialog(app.hwnd, request);
                     auto payload = poem::protocol::EncodeNativeDialogResponse(response);
                     app.native.WriteMessage(payload);
+                } else if(env.type==poem::protocol::MessageType::WindowCloseResponse){
+                    const auto response=poem::protocol::DecodeWindowCloseResponse(env.body);
+                    if(app.hwnd)PostMessageW(app.hwnd,WM_POEM_CLOSE_RESPONSE,response.allow?1:0,0);
                 }
             } catch (...) {
                 app.running = false;

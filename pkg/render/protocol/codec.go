@@ -76,6 +76,11 @@ func EncodePlaySound(msg PlaySound) ([]byte, error) {
 	writeByte(&body, byte(msg.Type))
 	return wrapEnvelope(MessagePlaySound, body.Bytes()), nil
 }
+func EncodeWindowCloseResponse(msg WindowCloseResponse) ([]byte, error) {
+	var body bytes.Buffer
+	writeBool(&body, msg.Allow)
+	return wrapEnvelope(MessageWindowCloseResponse, body.Bytes()), nil
+}
 
 func EncodeSetImeVisible(msg SetImeVisible) ([]byte, error) {
 	var body bytes.Buffer

@@ -124,6 +124,7 @@ type Button struct {
 	HoverColor     color.RGBA
 	Rounding       int
 	OnClick        func(state *types.ApplicationState)
+	OnDrag         func(phase string, point image.Point, state *types.ApplicationState)
 	UseTheme       bool
 	Variant        theme.Variant
 	Size           ControlSize
@@ -298,6 +299,9 @@ func (b *Button) OnMouseDown(pt image.Point, state *types.ApplicationState) bool
 		return false
 	}
 	state.ActiveID = b.CompID
+	if b.OnDrag != nil {
+		b.OnDrag("begin", pt, state)
+	}
 	return true
 }
 func (b *Button) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
@@ -305,9 +309,18 @@ func (b *Button) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
 	if wasActive && pt.In(b.Rect) && b.OnClick != nil && !b.Disabled && !b.Loading {
 		b.OnClick(state)
 	}
+	if wasActive && b.OnDrag != nil {
+		b.OnDrag("end", pt, state)
+	}
 	return wasActive
 }
-func (b *Button) OnMouseMove(pt image.Point, state *types.ApplicationState) bool { return false }
+func (b *Button) OnMouseMove(pt image.Point, state *types.ApplicationState) bool {
+	if state.ActiveID == b.CompID && b.OnDrag != nil {
+		b.OnDrag("update", pt, state)
+		return true
+	}
+	return false
+}
 
 func (b *Button) Focusable() bool               { return !b.Disabled }
 func (b *Button) Walk(fn func(types.Component)) { fn(b) }
