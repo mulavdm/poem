@@ -10,6 +10,9 @@ graphics, capture, and presentation. This is the primary integration direction
 for HamsterEngine, while POEM's own hosts remain unchanged for ordinary apps.
 `cmd/external-overlay` is the minimal transparent-surface fixture: it emits an
 accessible pause card that HamsterEngine composites in its own D3D12 UI pass.
+Its Settings/Back transition is an end-to-end interaction probe: the external
+host sends canonical pointer events and consumes the resulting frame
+asynchronously.
 
 ## Native real-time viewport foundation
 

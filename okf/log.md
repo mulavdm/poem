@@ -4,6 +4,7 @@
 
 - **Fixture**: Added `cmd/external-overlay`, a windowless POEM pause-card application with semantic resume and settings actions. It is intentionally generic and contains no HamsterEngine dependency.
 - **Integration proof**: HamsterEngine loaded the real c-shared module, decoded its canonical initialization and 16-command render frame, uploaded the POEM glyph atlas, and composited panels, labels, and buttons after its lit 3D pass in one engine-owned D3D12 swap chain. **Modified Concepts:** [external-native-hosts.md](/concepts/architecture/external-native-hosts.md).
+- **Interaction proof**: Engine-owned mouse and keyboard messages now cross as canonical event batches, while a dedicated reader accepts POEM output independently of render cadence. Clicking Settings in the real D3D12 host changed the fixture to its settings view and Back state. **Modified Concepts:** [external-native-hosts.md](/concepts/architecture/external-native-hosts.md).
 
 ## 2026-07-26 (External native UI host ownership)
 

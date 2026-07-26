@@ -12,6 +12,8 @@ import (
 	poemwindows "github.com/mulavdm/poem/pkg/windows"
 )
 
+var settingsOpen bool
+
 func init() {
 	config := render.AppConfig{
 		Title: "POEM External Overlay Example", Width: 960, Height: 540,
@@ -34,13 +36,19 @@ func buildOverlay(state *types.ApplicationState) {
 	card.Rounding = 16
 	card.SetBounds(image.Rect(w/2-230, h/2-150, w/2+230, h/2+150))
 
-	title := render.NewLabel("pause_title", "MISSION PAUSED")
+	titleText := "MISSION PAUSED"
+	bodyText := "Crumb Horizon is holding position."
+	if settingsOpen {
+		titleText = "SETTINGS"
+		bodyText = "Subtitles: ON    Reduced motion: OFF"
+	}
+	title := render.NewLabel("pause_title", titleText)
 	title.UseTheme = false
 	title.Color = color.RGBA{245, 247, 251, 255}
 	title.Typography = render.TypographyTitle
 	title.SetBounds(image.Rect(w/2-185, h/2-112, w/2+185, h/2-70))
 
-	body := render.NewLabel("pause_body", "Crumb Horizon is holding position.")
+	body := render.NewLabel("pause_body", bodyText)
 	body.UseTheme = false
 	body.Color = color.RGBA{190, 201, 218, 255}
 	body.SetBounds(image.Rect(w/2-185, h/2-58, w/2+185, h/2-18))
@@ -50,7 +58,13 @@ func buildOverlay(state *types.ApplicationState) {
 	resume.AccessibleName = "Resume mission"
 	resume.SetBounds(image.Rect(w/2-185, h/2+18, w/2+185, h/2+66))
 
-	settings := render.NewButton("settings", "Settings", func(*types.ApplicationState) {})
+	settingsLabel := "Settings"
+	if settingsOpen {
+		settingsLabel = "Back"
+	}
+	settings := render.NewButton("settings", settingsLabel, func(*types.ApplicationState) {
+		settingsOpen = !settingsOpen
+	})
 	settings.Variant = theme.VariantSecondary
 	settings.AccessibleName = "Open settings"
 	settings.SetBounds(image.Rect(w/2-185, h/2+78, w/2+185, h/2+126))

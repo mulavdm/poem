@@ -34,4 +34,8 @@ applications. It is not the primary HamsterGameRPG launch architecture.
 `cmd/external-overlay` is the checked-in external-host fixture. POEM emits its
 panel, labels, buttons, font atlas, and semantics without owning a window.
 HamsterEngine decodes the canonical protocol and records those commands after
-its 3D pass into the same engine-owned D3D12 target.
+its 3D pass into the same engine-owned D3D12 target. The fixture's Settings
+button changes the visible card to a settings view. This verifies the complete
+asynchronous loop: engine-owned Win32 input becomes a bounded `EventBatch`,
+POEM performs hit testing and updates state, and the engine's reader accepts a
+new `RenderFrame` independently of render cadence.
