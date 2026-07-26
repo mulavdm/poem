@@ -103,6 +103,16 @@ func (f *ProtocolPainter) DrawRoundedRect(r image.Rectangle, radius int, col col
 	})
 }
 
+// DrawRealtimeViewport reserves a clipped native real-time viewport in the
+// ordinary POEM display list. Bytes are a bounded opaque ABI v3 command.
+func (f *ProtocolPainter) DrawRealtimeViewport(r image.Rectangle, id string, command []byte) {
+	f.commands = append(f.commands, DrawCmdData{
+		Type: protocol.DrawCommandTypeDrawRealtimeViewport,
+		X1:   r.Min.X, Y1: r.Min.Y, X2: r.Max.X, Y2: r.Max.Y,
+		W: r.Dx(), H: r.Dy(), Text: id, Bytes: append([]byte(nil), command...),
+	})
+}
+
 func (f *ProtocolPainter) DrawRaycaster(r image.Rectangle, playerX, playerY, playerAngle float32) {
 	f.DrawRaycasterStyled(r, playerX, playerY, playerAngle, color.RGBA{255, 155, 70, 255})
 }

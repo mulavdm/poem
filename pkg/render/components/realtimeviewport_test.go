@@ -1,0 +1,37 @@
+package components_test
+
+import (
+	"image"
+	"testing"
+
+	"github.com/mulavdm/poem/pkg/render"
+	"github.com/mulavdm/poem/pkg/render/components"
+	"github.com/mulavdm/poem/pkg/render/protocol"
+	"github.com/mulavdm/poem/pkg/render/types"
+)
+
+func TestRealtimeViewportLayoutFocusAndCommand(t *testing.T) {
+	v := &components.RealtimeViewport{CompID: "scene_viewport", Rect: image.Rect(100, 50, 900, 650), Label: "Scene viewport", Command: []byte("pick")}
+	state := &types.ApplicationState{}
+	if v.HitTest(image.Pt(200, 200)) != "scene_viewport" || !v.OnMouseDown(image.Pt(200, 200), state) || state.FocusedID != "scene_viewport" {
+		t.Fatal("viewport did not participate in hit testing and focus")
+	}
+	p := render.NewProtocolPainter()
+	v.Draw(p, state)
+	frame := p.ToRenderFrame(1000, 700, 0)
+	found := false
+	for _, command := range frame.Commands {
+		if command.Type == protocol.DrawCommandTypeDrawRealtimeViewport {
+			found = true
+			if command.X1 != 100 || command.Y1 != 50 || command.W != 800 || command.H != 600 || string(command.Bytes) != "pick" {
+				t.Fatalf("bad viewport command: %+v", command)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing realtime viewport draw command")
+	}
+	if v.Semantics(state).Name != "Scene viewport" {
+		t.Fatal("missing accessible name")
+	}
+}

@@ -1,0 +1,75 @@
+package components
+
+import (
+	"image"
+	"image/color"
+
+	"github.com/mulavdm/poem/pkg/render/semantics"
+	"github.com/mulavdm/poem/pkg/render/types"
+)
+
+const maxRealtimeViewportCommandBytes = 1024 * 1024
+
+// RealtimeViewport reserves a native GPU viewport inside normal POEM layout.
+// Command is opaque to POEM and is validated and forwarded only by an ABI v3
+// native host. ABI v2 plugins continue to render with an empty command.
+type RealtimeViewport struct {
+	CompID   string
+	Rect     image.Rectangle
+	Label    string
+	Command  []byte
+	Disabled bool
+}
+
+func (v *RealtimeViewport) ID() string                    { return v.CompID }
+func (v *RealtimeViewport) GetID() string                 { return v.CompID }
+func (v *RealtimeViewport) Bounds() image.Rectangle       { return v.Rect }
+func (v *RealtimeViewport) SetBounds(r image.Rectangle)   { v.Rect = r }
+func (v *RealtimeViewport) Focusable() bool               { return !v.Disabled }
+func (v *RealtimeViewport) Walk(fn func(types.Component)) { fn(v) }
+func (v *RealtimeViewport) HitTest(pt image.Point) string {
+	if !v.Disabled && pt.In(v.Rect) {
+		return v.CompID
+	}
+	return ""
+}
+func (v *RealtimeViewport) Draw(p types.Painter, _ *types.ApplicationState) {
+	p.PushClip(v.Rect)
+	if native, ok := p.(interface {
+		DrawRealtimeViewport(image.Rectangle, string, []byte)
+	}); ok {
+		command := v.Command
+		if len(command) > maxRealtimeViewportCommandBytes {
+			command = nil
+		}
+		native.DrawRealtimeViewport(v.Rect, v.CompID, command)
+	} else {
+		p.FillRect(v.Rect, color.RGBA{18, 24, 35, 255})
+	}
+	p.PopClip()
+}
+func (v *RealtimeViewport) OnKey(uint32, rune, *types.ApplicationState) bool { return !v.Disabled }
+func (v *RealtimeViewport) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
+	if v.Disabled || !pt.In(v.Rect) {
+		return false
+	}
+	state.FocusedID = v.CompID
+	state.ActiveID = v.CompID
+	return true
+}
+func (v *RealtimeViewport) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
+	if state.ActiveID == v.CompID {
+		state.ActiveID = ""
+		return pt.In(v.Rect)
+	}
+	return false
+}
+func (v *RealtimeViewport) OnMouseMove(image.Point, *types.ApplicationState) bool { return false }
+func (v *RealtimeViewport) Semantics(_ *types.ApplicationState) semantics.Node {
+	label := v.Label
+	if label == "" {
+		label = "Real-time viewport"
+	}
+	return semantics.Node{ID: v.CompID, Role: semantics.RoleGroup, Name: label, Bounds: v.Rect,
+		State: semantics.State{Disabled: v.Disabled}}
+}

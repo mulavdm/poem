@@ -38,6 +38,7 @@ enum class DrawCommandType : std::uint8_t {
     SetClip = 8,
     DrawImage = 9,
     DrawMapScene = 10,
+    DrawRealtimeViewport = 11,
 };
 
 enum class SoundType : std::uint8_t {

@@ -1,4 +1,5 @@
 #include "renderer_realtime_d3d12.h"
+#include <algorithm>
 #include <cstdio>
 
 using Microsoft::WRL::ComPtr;
@@ -68,7 +69,26 @@ void RendererRealtimeD3D12::Resize(int width,int height){
     width_=width;height_=height;
     if(CreateTargets())viewport_->resize(viewport_->userData,{0,0,width_,height_});
 }
-void RendererRealtimeD3D12::Render(){
+void RendererRealtimeD3D12::Render(const protocol::RenderFrame& frame){
+    viewportRect_={0,0,width_,height_};
+    const protocol::DrawCommand* viewportCommand=nullptr;
+    for(const auto& command:frame.commands) {
+        if(command.type==protocol::DrawCommandType::DrawRealtimeViewport) {
+            viewportRect_={command.x1,command.y1,command.w,command.h};
+            viewportCommand=&command;
+            break;
+        }
+    }
+    if(viewportRect_.width<=0||viewportRect_.height<=0)return;
+    viewportRect_.x=std::max(0,viewportRect_.x);viewportRect_.y=std::max(0,viewportRect_.y);
+    viewportRect_.width=std::min(viewportRect_.width,width_-viewportRect_.x);
+    viewportRect_.height=std::min(viewportRect_.height,height_-viewportRect_.y);
+    if(viewport_->abiVersion>=realtime::kABIVersion&&viewportCommand&&!viewportCommand->bytes.empty()) {
+        realtime::Command command{sizeof(command),viewportCommand->bytes.data(),
+            static_cast<std::uint32_t>(viewportCommand->bytes.size())};
+        if(realtime::Validate(&command)!=realtime::Result::ok||
+           viewport_->submitCommand(viewport_->userData,&command)!=realtime::Result::ok)return;
+    }
     index_=swap_->GetCurrentBackBufferIndex();
     if(FAILED(allocators_[index_]->Reset())||FAILED(list_->Reset(allocators_[index_].Get(),nullptr)))return;
     D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -79,7 +99,7 @@ void RendererRealtimeD3D12::Render(){
     handle.ptr+=index_*device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     const float clear[]{0.025f,0.04f,0.075f,1};list_->OMSetRenderTargets(1,&handle,FALSE,nullptr);
     list_->ClearRenderTargetView(handle,clear,0,nullptr);
-    realtime::FrameInput input{sizeof(input),frameID_++,1.0f/60,{0,0,width_,height_},device_.Get(),queue_.Get(),list_.Get(),
+    realtime::FrameInput input{sizeof(input),frameID_++,1.0f/60,viewportRect_,device_.Get(),queue_.Get(),list_.Get(),
         DXGI_FORMAT_R8G8B8A8_UNORM,0};
     if(viewport_->render(viewport_->userData,&input)!=realtime::Result::ok)return;
     std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);list_->ResourceBarrier(1,&barrier);

@@ -1,5 +1,6 @@
 #pragma once
 #include "poem/realtime_viewport.h"
+#include "poem/protocol.h"
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -16,7 +17,7 @@ public:
     ~RendererRealtimeD3D12();
     bool Initialize(HWND hwnd,int width,int height,const wchar_t* modulePath);
     void Resize(int width,int height);
-    void Render();
+    void Render(const protocol::RenderFrame&);
     void Present();
     void Key(std::uint32_t key,bool down);
     bool CaptureBackbufferRGBA(std::vector<std::uint8_t>&,int&,int&){return false;}
@@ -44,5 +45,6 @@ private:
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> list_;
     Microsoft::WRL::ComPtr<ID3D12Fence> fence_;
     bool frameReady_{};
+    realtime::Rect viewportRect_{};
 };
 }

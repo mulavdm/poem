@@ -37,6 +37,7 @@ const (
 	DrawCommandTypeSetClip
 	DrawCommandTypeDrawImage
 	DrawCommandTypeDrawMapScene
+	DrawCommandTypeDrawRealtimeViewport
 )
 
 type SoundType byte

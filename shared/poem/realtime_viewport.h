@@ -1,9 +1,12 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 
 namespace poem::realtime {
-inline constexpr std::uint32_t kABIVersion = 2;
+inline constexpr std::uint32_t kABIVersion = 3;
+inline constexpr std::uint32_t kLegacyABIVersion = 2;
 inline constexpr std::uint32_t kMaxSemanticBytes = 256 * 1024;
+inline constexpr std::uint32_t kMaxMessageBytes = 1024 * 1024;
 enum class Result : std::uint32_t { ok, invalid_argument, unsupported_version, device_error, cancelled };
 struct Rect { std::int32_t x, y, width, height; };
 struct FrameInput {
@@ -20,6 +23,8 @@ struct FrameInput {
 struct SemanticSnapshot { std::uint32_t structSize; const std::uint8_t* bytes; std::uint32_t byteCount; };
 enum class Action : std::uint32_t { moveLeft=1, moveRight=2, confirm=3, cancel=4 };
 struct ActionEvent { std::uint32_t structSize; Action action; std::uint32_t down; float value; };
+struct Command { std::uint32_t structSize; const std::uint8_t* bytes; std::uint32_t byteCount; };
+struct EventBuffer { std::uint32_t structSize; std::uint8_t* bytes; std::uint32_t capacity; std::uint32_t byteCount; };
 struct Exports {
     std::uint32_t structSize;
     std::uint32_t abiVersion;
@@ -31,12 +36,28 @@ struct Exports {
     void (*shutdown)(void*);
     Result (*semanticSnapshot)(void*, SemanticSnapshot*);
     Result (*action)(void*, const ActionEvent*);
+    Result (*submitCommand)(void*, const Command*);
+    Result (*pollEvent)(void*, EventBuffer*);
 };
 inline Result Validate(const Exports* value) {
-    if (!value || value->structSize < sizeof(Exports)) return Result::invalid_argument;
-    if (value->abiVersion != kABIVersion) return Result::unsupported_version;
+    constexpr auto legacySize=offsetof(Exports,submitCommand);
+    if (!value || value->structSize < legacySize) return Result::invalid_argument;
+    if (value->abiVersion != kABIVersion && value->abiVersion != kLegacyABIVersion) return Result::unsupported_version;
     if (!value->initialize || !value->render || !value->resize || !value->deviceLost ||
         !value->shutdown || !value->semanticSnapshot || !value->action) return Result::invalid_argument;
+    if(value->abiVersion==kABIVersion &&
+       (value->structSize<sizeof(Exports)||!value->submitCommand||!value->pollEvent))
+        return Result::invalid_argument;
+    return Result::ok;
+}
+inline Result Validate(const Command* value) {
+    if(!value||value->structSize<sizeof(Command)||value->byteCount>kMaxMessageBytes||
+       (value->byteCount&&!value->bytes))return Result::invalid_argument;
+    return Result::ok;
+}
+inline Result Validate(const EventBuffer* value) {
+    if(!value||value->structSize<sizeof(EventBuffer)||value->capacity>kMaxMessageBytes||
+       (value->capacity&&!value->bytes)||value->byteCount>value->capacity)return Result::invalid_argument;
     return Result::ok;
 }
 inline Result ValidateSnapshot(const SemanticSnapshot* value) {

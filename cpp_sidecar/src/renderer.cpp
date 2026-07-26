@@ -16,7 +16,7 @@ bool Renderer::Initialize(HWND hwnd,int width,int height,const protocol::InitEng
 bool Renderer::UpdateFontAtlas(const protocol::InitEngine& init){return realtime_?true:d3d11_->UpdateFontAtlas(init);}
 void Renderer::Resize(int w,int h){if(realtime_)realtime_->Resize(w,h);else if(d3d11_)d3d11_->Resize(w,h);}
 void Renderer::ApplyMapScene(const protocol::MapSceneDelta& s){if(d3d11_)d3d11_->ApplyMapScene(s);}
-void Renderer::Render(const protocol::RenderFrame& f){if(realtime_)realtime_->Render();else d3d11_->Render(f);}
+void Renderer::Render(const protocol::RenderFrame& f){if(realtime_)realtime_->Render(f);else d3d11_->Render(f);}
 void Renderer::Present(){if(realtime_)realtime_->Present();else d3d11_->Present();}
 void Renderer::RealtimeKey(std::uint32_t key,bool down){if(realtime_)realtime_->Key(key,down);}
 bool Renderer::CaptureBackbufferRGBA(std::vector<std::uint8_t>& b,int& w,int& h){
