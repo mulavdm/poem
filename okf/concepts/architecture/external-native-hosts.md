@@ -31,3 +31,7 @@ game-specific concepts do not enter POEM.
 The POEM-owned D3D12 real-time viewport remains an embedding sample for ordinary
 applications. It is not the primary HamsterGameRPG launch architecture.
 
+`cmd/external-overlay` is the checked-in external-host fixture. POEM emits its
+panel, labels, buttons, font atlas, and semantics without owning a window.
+HamsterEngine decodes the canonical protocol and records those commands after
+its 3D pass into the same engine-owned D3D12 target.

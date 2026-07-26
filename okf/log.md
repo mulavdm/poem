@@ -1,5 +1,10 @@
 # OKF Bundle Update Log
 
+## 2026-07-26 (First engine-owned POEM composition)
+
+- **Fixture**: Added `cmd/external-overlay`, a windowless POEM pause-card application with semantic resume and settings actions. It is intentionally generic and contains no HamsterEngine dependency.
+- **Integration proof**: HamsterEngine loaded the real c-shared module, decoded its canonical initialization and 16-command render frame, uploaded the POEM glyph atlas, and composited panels, labels, and buttons after its lit 3D pass in one engine-owned D3D12 swap chain. **Modified Concepts:** [external-native-hosts.md](/concepts/architecture/external-native-hosts.md).
+
 ## 2026-07-26 (External native UI host ownership)
 
 - **Decision**: Formalized the existing windowless Go DLL as POEM's external-native-host surface. A native engine can load the six-function ABI directly and own its window, input loop, GPU, frame graph, capture, and presentation while POEM supplies UI state, layout, semantics, and framed draw output.

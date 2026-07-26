@@ -8,6 +8,8 @@ POEM's window or presenter. The stable contract is declared in
 framed UI output; the external engine owns platform resources, input timing,
 graphics, capture, and presentation. This is the primary integration direction
 for HamsterEngine, while POEM's own hosts remain unchanged for ordinary apps.
+`cmd/external-overlay` is the minimal transparent-surface fixture: it emits an
+accessible pause card that HamsterEngine composites in its own D3D12 UI pass.
 
 ## Native real-time viewport foundation
 
