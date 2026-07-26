@@ -1,6 +1,9 @@
 #include "renderer_realtime_d3d12.h"
+#include "realtime_coordinates.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 
 using Microsoft::WRL::ComPtr;
 namespace poem {
@@ -67,25 +70,13 @@ void RendererRealtimeD3D12::Resize(int width,int height){
     if(FAILED(swap_->ResizeBuffers(frameCount_,width,height,DXGI_FORMAT_R8G8B8A8_UNORM,0))) {
         viewport_->deviceLost(viewport_->userData);return;
     }
-    width_=width;height_=height;
+    width_=width;height_=height;hasPresentedFrame_=false;
     if(CreateTargets())viewport_->resize(viewport_->userData,{0,0,width_,height_});
 }
 void RendererRealtimeD3D12::Render(const protocol::RenderFrame& frame){
-    viewportRect_={0,0,width_,height_};
-    const protocol::DrawCommand* viewportCommand=nullptr;
-    for(const auto& command:frame.commands) {
-        if(command.type==protocol::DrawCommandType::DrawRealtimeViewport) {
-            viewportRect_={command.x1,command.y1,command.w,command.h};
-            viewportCommand=&command;
-            viewportTarget_=command.text;
-            viewportFocused_=command.flag;
-            break;
-        }
-    }
-    if(viewportRect_.width<=0||viewportRect_.height<=0)return;
-    viewportRect_.x=std::max(0,viewportRect_.x);viewportRect_.y=std::max(0,viewportRect_.y);
-    viewportRect_.width=std::min(viewportRect_.width,width_-viewportRect_.x);
-    viewportRect_.height=std::min(viewportRect_.height,height_-viewportRect_.y);
+    const auto resolved=ResolveRealtimeViewport(frame,width_,height_);viewportRect_=resolved.rect;
+    const protocol::DrawCommand* viewportCommand=resolved.command;
+    if(viewportCommand){viewportTarget_=viewportCommand->text;viewportFocused_=viewportCommand->flag;}
     if(viewport_->abiVersion>=realtime::kABIVersion&&viewportCommand&&!viewportCommand->bytes.empty()) {
         realtime::Command command{sizeof(command),viewportCommand->bytes.data(),
             static_cast<std::uint32_t>(viewportCommand->bytes.size())};
@@ -104,8 +95,13 @@ void RendererRealtimeD3D12::Render(const protocol::RenderFrame& frame){
     list_->ClearRenderTargetView(handle,clear,0,nullptr);
     realtime::FrameInput input{sizeof(input),frameID_++,1.0f/60,viewportRect_,device_.Get(),queue_.Get(),list_.Get(),
         DXGI_FORMAT_R8G8B8A8_UNORM,0};
-    if(viewport_->render(viewport_->userData,&input)!=realtime::Result::ok)return;
-    if(!overlay_.Record(device_.Get(),list_.Get(),frame,width_,height_))return;
+    if(viewportCommand&&viewportRect_.width>0&&viewportRect_.height>0&&
+       viewport_->render(viewport_->userData,&input)!=realtime::Result::ok)return;
+    const D3D12_VIEWPORT fullViewport{0,0,static_cast<float>(width_),static_cast<float>(height_),0,1};
+    const D3D12_RECT fullScissor{0,0,width_,height_};list_->RSSetViewports(1,&fullViewport);list_->RSSetScissorRects(1,&fullScissor);
+    list_->OMSetRenderTargets(1,&handle,FALSE,nullptr);
+    const D3D12_RECT engineRect{viewportRect_.x,viewportRect_.y,viewportRect_.x+viewportRect_.width,viewportRect_.y+viewportRect_.height};
+    if(!overlay_.Record(device_.Get(),list_.Get(),frame,width_,height_,engineRect))return;
     std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);list_->ResourceBarrier(1,&barrier);
     if(FAILED(list_->Close()))return;ID3D12CommandList* lists[]{list_.Get()};queue_->ExecuteCommandLists(1,lists);frameReady_=true;
 }
@@ -128,6 +124,7 @@ void RendererRealtimeD3D12::Present(){
     if(!frameReady_)return;frameReady_=false;
     const HRESULT hr=swap_->Present(1,0);
     if(FAILED(hr)){viewport_->deviceLost(viewport_->userData);return;}
+    hasPresentedFrame_=true;
     Wait();
 }
 void RendererRealtimeD3D12::Key(std::uint32_t key,bool down){
@@ -140,5 +137,27 @@ void RendererRealtimeD3D12::Key(std::uint32_t key,bool down){
     else return;
     const realtime::ActionEvent event{sizeof(event),action,down,down?1.0f:0.0f};
     viewport_->action(viewport_->userData,&event);
+}
+bool RendererRealtimeD3D12::CaptureBackbufferRGBA(std::vector<std::uint8_t>& pixels,int& width,int& height){
+    auto fail=[](const char* reason){std::fprintf(stderr,"POEM D3D12 capture failed: %s\n",reason);return false;};
+    if(!swap_||!device_||!queue_||!hasPresentedFrame_||width_<=0||height_<=0)return fail("renderer not ready");
+    if(!Wait())return fail("initial GPU wait");
+    const UINT captureIndex=swap_->GetCurrentBackBufferIndex();
+    D3D12_RESOURCE_DESC texture=targets_[captureIndex]->GetDesc();D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT rows{};UINT64 rowBytes{},totalBytes{};device_->GetCopyableFootprints(&texture,0,1,0,&footprint,&rows,&rowBytes,&totalBytes);
+    D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_READBACK};D3D12_RESOURCE_DESC buffer{D3D12_RESOURCE_DIMENSION_BUFFER,0,totalBytes,1,1,1,
+        DXGI_FORMAT_UNKNOWN,{1,0},D3D12_TEXTURE_LAYOUT_ROW_MAJOR};ComPtr<ID3D12Resource> readback;
+    if(FAILED(device_->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&buffer,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&readback))))return fail("readback allocation");
+    if(FAILED(allocators_[captureIndex]->Reset())||FAILED(list_->Reset(allocators_[captureIndex].Get(),nullptr)))return fail("command list reset");
+    D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;barrier.Transition={targets_[captureIndex].Get(),
+        D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_COPY_SOURCE};list_->ResourceBarrier(1,&barrier);
+    D3D12_TEXTURE_COPY_LOCATION source{targets_[captureIndex].Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    D3D12_TEXTURE_COPY_LOCATION destination{readback.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};destination.PlacedFootprint=footprint;
+    list_->CopyTextureRegion(&destination,0,0,0,&source,nullptr);std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);list_->ResourceBarrier(1,&barrier);
+    if(FAILED(list_->Close()))return fail("command list close");ID3D12CommandList* lists[]{list_.Get()};queue_->ExecuteCommandLists(1,lists);if(!Wait())return fail("copy GPU wait");
+    const std::size_t outputBytes=static_cast<std::size_t>(width_)*height_*4;pixels.resize(outputBytes);std::uint8_t* mapped{};
+    const D3D12_RANGE readRange{0,static_cast<SIZE_T>(totalBytes)};if(FAILED(readback->Map(0,&readRange,reinterpret_cast<void**>(&mapped))))return fail("readback map");
+    for(int y=0;y<height_;++y)std::memcpy(pixels.data()+static_cast<std::size_t>(y)*width_*4,mapped+footprint.Offset+static_cast<std::size_t>(y)*footprint.Footprint.RowPitch,static_cast<std::size_t>(width_)*4);
+    const D3D12_RANGE written{0,0};readback->Unmap(0,&written);width=width_;height=height_;return true;
 }
 }

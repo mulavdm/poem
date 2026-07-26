@@ -43,13 +43,35 @@ bool RealtimeOverlay::EnsureGpu(ID3D12Device* d,ID3D12GraphicsCommandList* l){
     D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;barrier.Transition={atlas_.Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE};l->ResourceBarrier(1,&barrier);
     D3D12_SHADER_RESOURCE_VIEW_DESC sd{};sd.Format=DXGI_FORMAT_R8G8B8A8_UNORM;sd.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;sd.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;sd.Texture2D.MipLevels=1;d->CreateShaderResourceView(atlas_.Get(),&sd,srv_->GetCPUDescriptorHandleForHeapStart());ready_=true;return true;
 }
-bool RealtimeOverlay::Record(ID3D12Device*d,ID3D12GraphicsCommandList*l,const protocol::RenderFrame& f,int width,int height){
-    if(!EnsureGpu(d,l))return false;std::vector<Vertex> vertices;float ox{},oy{};auto quad=[&](float x1,float y1,float x2,float y2,float u1,float v1,float u2,float v2,float r,float g,float b,float a,float t){Vertex q[]={{x1,y1,u1,v1,r,g,b,a,t},{x2,y1,u2,v1,r,g,b,a,t},{x1,y2,u1,v2,r,g,b,a,t},{x1,y2,u1,v2,r,g,b,a,t},{x2,y1,u2,v1,r,g,b,a,t},{x2,y2,u2,v2,r,g,b,a,t}};vertices.insert(vertices.end(),q,q+6);};
-    for(const auto& c:f.commands){if(c.type==protocol::DrawCommandType::DrawRealtimeViewport)continue;if(c.type==protocol::DrawCommandType::SetOffset){ox=c.val1;oy=c.val2;continue;}float r=c.r/255.f,g=c.g/255.f,b=c.b/255.f,a=c.a/255.f,x1=c.x1+ox,y1=c.y1+oy,x2=c.x2+ox,y2=c.y2+oy;
+bool RealtimeOverlay::Record(ID3D12Device*d,ID3D12GraphicsCommandList*l,const protocol::RenderFrame& f,int width,int height,D3D12_RECT engineViewport){
+    if(!EnsureGpu(d,l)||f.width<=0||f.height<=0)return false;
+    const float sx=static_cast<float>(width)/f.width,sy=static_cast<float>(height)/f.height;
+    std::vector<Vertex> vertices;float ox{},oy{};float clipX1=0,clipY1=0,clipX2=static_cast<float>(width),clipY2=static_cast<float>(height);
+    auto quad=[&](float x1,float y1,float x2,float y2,float u1,float v1,float u2,float v2,float r,float g,float b,float a,float t){
+        if(x2<=x1||y2<=y1)return;const float originalX1=x1,originalY1=y1,originalX2=x2,originalY2=y2;
+        x1=std::max(x1,clipX1);y1=std::max(y1,clipY1);x2=std::min(x2,clipX2);y2=std::min(y2,clipY2);if(x2<=x1||y2<=y1)return;
+        if(t>.5f){const float du=u2-u1,dv=v2-v1,ow=originalX2-originalX1,oh=originalY2-originalY1;
+            const float nu1=u1+du*(x1-originalX1)/ow,nu2=u1+du*(x2-originalX1)/ow;
+            const float nv1=v1+dv*(y1-originalY1)/oh,nv2=v1+dv*(y2-originalY1)/oh;u1=nu1;u2=nu2;v1=nv1;v2=nv2;}
+        Vertex q[]={{x1,y1,u1,v1,r,g,b,a,t},{x2,y1,u2,v1,r,g,b,a,t},{x1,y2,u1,v2,r,g,b,a,t},{x1,y2,u1,v2,r,g,b,a,t},{x2,y1,u2,v1,r,g,b,a,t},{x2,y2,u2,v2,r,g,b,a,t}};vertices.insert(vertices.end(),q,q+6);};
+    bool seenViewport=false;
+    for(const auto& c:f.commands){if(c.type==protocol::DrawCommandType::DrawRealtimeViewport){seenViewport=true;continue;}
+        if(c.type==protocol::DrawCommandType::SetOffset){ox=c.val1;oy=c.val2;continue;}
+        if(c.type==protocol::DrawCommandType::SetClip){if(c.flag){clipX1=std::clamp(c.x1*sx,0.f,(float)width);clipY1=std::clamp(c.y1*sy,0.f,(float)height);clipX2=std::clamp((c.x1+c.w)*sx,0.f,(float)width);clipY2=std::clamp((c.y1+c.h)*sy,0.f,(float)height);}
+            else{clipX1=clipY1=0;clipX2=(float)width;clipY2=(float)height;}continue;}
+        float r=c.r/255.f,g=c.g/255.f,b=c.b/255.f,a=c.a/255.f,x1=(c.x1+ox)*sx,y1=(c.y1+oy)*sy,x2=(c.x2+ox)*sx,y2=(c.y2+oy)*sy;
         if((c.type==protocol::DrawCommandType::FillRect||c.type==protocol::DrawCommandType::DrawRoundedRect)&&x1<=0&&y1<=0&&x2>=width&&y2>=height)continue;
-        if(c.type==protocol::DrawCommandType::FillRect||c.type==protocol::DrawCommandType::DrawRoundedRect)quad(x1,y1,x2,y2,0,0,0,0,r,g,b,a,0);
+        if(c.type==protocol::DrawCommandType::FillRect||c.type==protocol::DrawCommandType::DrawRoundedRect){
+            const bool punchesViewport=!seenViewport&&engineViewport.right>engineViewport.left&&engineViewport.bottom>engineViewport.top&&
+                x1<engineViewport.right&&x2>engineViewport.left&&y1<engineViewport.bottom&&y2>engineViewport.top;
+            if(punchesViewport){quad(x1,y1,x2,std::min(y2,(float)engineViewport.top),0,0,0,0,r,g,b,a,0);
+                quad(x1,std::max(y1,(float)engineViewport.bottom),x2,y2,0,0,0,0,r,g,b,a,0);
+                quad(x1,std::max(y1,(float)engineViewport.top),std::min(x2,(float)engineViewport.left),std::min(y2,(float)engineViewport.bottom),0,0,0,0,r,g,b,a,0);
+                quad(std::max(x1,(float)engineViewport.right),std::max(y1,(float)engineViewport.top),x2,std::min(y2,(float)engineViewport.bottom),0,0,0,0,r,g,b,a,0);
+            }else quad(x1,y1,x2,y2,0,0,0,0,r,g,b,a,0);
+        }
         else if(c.type==protocol::DrawCommandType::DrawLine){float dx=x2-x1,dy=y2-y1,n=std::sqrt(dx*dx+dy*dy);if(n>.01f){float nx=-dy/n*.75f,ny=dx/n*.75f;quad(x1+nx,y1+ny,x2-nx,y2-ny,0,0,0,0,r,g,b,a,0);}}
-        else if(c.type==protocol::DrawCommandType::DrawText){float pen=x1;for(auto cp:utf8(c.text)){auto it=glyphs_.find(cp);if(it==glyphs_.end())it=glyphs_.find('?');if(it==glyphs_.end())continue;auto& gl=it->second;float top=y1-gl.height*.78f;quad(pen,top,pen+gl.width,top+gl.height,gl.u1,gl.v1,gl.u2,gl.v2,r,g,b,a,1);pen+=gl.advance;}}}
+        else if(c.type==protocol::DrawCommandType::DrawText){float pen=x1;for(auto cp:utf8(c.text)){auto it=glyphs_.find(cp);if(it==glyphs_.end())it=glyphs_.find('?');if(it==glyphs_.end())continue;auto& gl=it->second;float gw=gl.width*sx,gh=gl.height*sy,top=y1-gh*.78f;quad(pen,top,pen+gw,top+gh,gl.u1,gl.v1,gl.u2,gl.v2,r,g,b,a,1);pen+=gl.advance*sx;}}}
     if(vertices.empty())return true;auto bytes=vertices.size()*sizeof(Vertex);if(bytes>capacity_){D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_UPLOAD};D3D12_RESOURCE_DESC bd{D3D12_RESOURCE_DIMENSION_BUFFER,0,bytes,1,1,1,DXGI_FORMAT_UNKNOWN,{1,0},D3D12_TEXTURE_LAYOUT_ROW_MAJOR};if(FAILED(d->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&bd,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&vertex_))))return false;capacity_=bytes;}
     void*m{};vertex_->Map(0,nullptr,&m);std::memcpy(m,vertices.data(),bytes);vertex_->Unmap(0,nullptr);float screen[]{(float)width,(float)height};l->SetPipelineState(pipeline_.Get());l->SetGraphicsRootSignature(root_.Get());l->SetGraphicsRoot32BitConstants(0,2,screen,0);ID3D12DescriptorHeap* heaps[]{srv_.Get()};l->SetDescriptorHeaps(1,heaps);l->SetGraphicsRootDescriptorTable(1,srv_->GetGPUDescriptorHandleForHeapStart());D3D12_VERTEX_BUFFER_VIEW view{vertex_->GetGPUVirtualAddress(),(UINT)bytes,sizeof(Vertex)};l->IASetVertexBuffers(0,1,&view);l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);l->DrawInstanced((UINT)vertices.size(),1,0,0);return true;
 }

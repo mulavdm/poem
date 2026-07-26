@@ -1271,6 +1271,10 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 				if ev.X > 0 && ev.Y > 0 {
 					globalState.PhysicalWindowWidth = int(ev.X)
 					globalState.PhysicalWindowHeight = int(ev.Y)
+					globalState.DPIScale = float32(ev.X) / float32(w)
+					if globalState.DPIScale < 1 {
+						globalState.DPIScale = 1
+					}
 				}
 				globalState.ResolveDesign(w, h)
 			}

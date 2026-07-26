@@ -23,7 +23,7 @@ public:
     void Present();
     void Key(std::uint32_t key,bool down);
     std::vector<protocol::Event> DrainEvents();
-    bool CaptureBackbufferRGBA(std::vector<std::uint8_t>&,int&,int&){return false;}
+    bool CaptureBackbufferRGBA(std::vector<std::uint8_t>&,int&,int&);
     int BackbufferWidth()const{return width_;}
     int BackbufferHeight()const{return height_;}
 private:
@@ -48,6 +48,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> list_;
     Microsoft::WRL::ComPtr<ID3D12Fence> fence_;
     bool frameReady_{};
+    bool hasPresentedFrame_{};
     realtime::Rect viewportRect_{};
     std::string viewportTarget_;
     bool viewportFocused_{};

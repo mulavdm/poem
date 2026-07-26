@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <mutex>
@@ -94,6 +95,17 @@ void SendEvent(AppState* app, const poem::protocol::Event& ev) noexcept {
     }
 }
 
+void SendWindowMetrics(AppState* app,HWND hwnd,int physicalWidth,int physicalHeight,UINT dpi) {
+    if(!app||physicalWidth<=0||physicalHeight<=0)return;
+    const float scale=std::max(1.0f,static_cast<float>(dpi)/96.0f);
+    const auto logicalWidth=static_cast<std::int32_t>(std::lround(physicalWidth/scale));
+    const auto logicalHeight=static_cast<std::int32_t>(std::lround(physicalHeight/scale));
+    SendEvent(app,{poem::protocol::EventType::WindowSize,physicalWidth,physicalHeight,0,0,0,0,logicalWidth,logicalHeight});
+    poem::protocol::Event capabilities;capabilities.type=poem::protocol::EventType::Capabilities;
+    char json[256]{};std::snprintf(json,sizeof(json),R"({"pointer":2,"hover":true,"keyboard":true,"touch":false,"trackpad":false,"stylus":false,"density":%.3f,"textScale":1,"reducedMotion":false,"highContrast":false})",scale);
+    capabilities.value=json;SendEvent(app,capabilities);
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     auto* app = reinterpret_cast<AppState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     switch (msg) {
@@ -118,14 +130,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             int width = LOWORD(lParam);
             int height = HIWORD(lParam);
             app->renderer.Resize(width, height);
-            const auto dpi = GetDpiForWindow(hwnd);
-            float scale = static_cast<float>(dpi) / 96.0f;
-            SendEvent(app, {poem::protocol::EventType::WindowSize, width, height, 0, 0, 0, 0,
-                            static_cast<std::int32_t>(width / scale), static_cast<std::int32_t>(height / scale)});
-            poem::protocol::Event capabilities;
-            capabilities.type = poem::protocol::EventType::Capabilities;
-            capabilities.value = R"({"pointer":2,"hover":true,"keyboard":true,"touch":false,"trackpad":false,"stylus":false,"density":2,"textScale":1,"reducedMotion":false,"highContrast":false})";
-            SendEvent(app, capabilities);
+            SendWindowMetrics(app,hwnd,width,height,GetDpiForWindow(hwnd));
         }
         return 0;
     case WM_DPICHANGED:
@@ -136,10 +141,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             const auto dpi = HIWORD(wParam);
             RECT rc{};
             GetClientRect(hwnd, &rc);
-            float scale = static_cast<float>(dpi) / 96.0f;
-            SendEvent(app, {poem::protocol::EventType::WindowSize, rc.right - rc.left, rc.bottom - rc.top, 0, 0, 0, 0,
-                            static_cast<std::int32_t>((rc.right - rc.left) / scale),
-                            static_cast<std::int32_t>((rc.bottom - rc.top) / scale)});
+            SendWindowMetrics(app,hwnd,rc.right-rc.left,rc.bottom-rc.top,dpi);
         }
         return 0;
     case WM_MOUSEMOVE:
@@ -825,7 +827,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
     try {
-        app.native.Start(rc.right - rc.left, rc.bottom - rc.top);
+        const auto startupDpi=GetDpiForWindow(hwnd);
+        const float startupScale=std::max(1.0f,static_cast<float>(startupDpi)/96.0f);
+        app.native.Start(static_cast<std::int32_t>(std::lround((rc.right-rc.left)/startupScale)),
+                         static_cast<std::int32_t>(std::lround((rc.bottom-rc.top)/startupScale)));
         auto initPayload = app.native.ReadMessage();
         auto initEnvelope = poem::protocol::DecodeEnvelope(initPayload);
         if (initEnvelope.type != poem::protocol::MessageType::InitEngine) {
@@ -844,6 +849,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         app.native.Stop();
         return 3;
     }
+    SendWindowMetrics(&app,hwnd,rc.right-rc.left,rc.bottom-rc.top,GetDpiForWindow(hwnd));
 
     std::thread reader([&app]() {
         while (app.running) {

@@ -9,7 +9,7 @@ namespace poem {
 class RealtimeOverlay {
 public:
     bool UpdateAtlas(const protocol::InitEngine&);
-    bool Record(ID3D12Device*,ID3D12GraphicsCommandList*,const protocol::RenderFrame&,int,int);
+    bool Record(ID3D12Device*,ID3D12GraphicsCommandList*,const protocol::RenderFrame&,int,int,D3D12_RECT);
 private:
     struct Vertex{float x,y,u,v,r,g,b,a,texture;};
     bool EnsureGpu(ID3D12Device*,ID3D12GraphicsCommandList*);
