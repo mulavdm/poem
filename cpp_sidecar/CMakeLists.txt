@@ -42,6 +42,10 @@ if(BUILD_TESTING)
   target_include_directories(poem_map_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
   add_test(NAME poem_map_view COMMAND poem_map_view_test)
 
+  add_executable(poem_realtime_viewport_test tests/realtime_viewport_test.cpp)
+  target_include_directories(poem_realtime_viewport_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
+  add_test(NAME poem_realtime_viewport COMMAND poem_realtime_viewport_test)
+
   if(WIN32)
     add_executable(poem_map_shader_test tests/map_shader_test.cpp)
     target_include_directories(poem_map_shader_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)

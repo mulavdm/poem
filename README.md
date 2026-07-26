@@ -1,5 +1,14 @@
 # POEM
 
+## Native real-time viewport foundation
+
+POEM defines a size- and version-checked native real-time viewport contract in
+`shared/poem/realtime_viewport.h`. It preserves the existing D3D11 application
+path while establishing the lifecycle, borrowed-frame-resource, and bounded
+semantic-snapshot boundary needed by a shared D3D12 presenter. The host remains
+responsible for the window, input, accessibility, device recovery, composition,
+and presentation. A viewport never retains borrowed frame objects.
+
 ## Vector cartography foundation (M9, in development)
 
 `MapViewportNode` is POEM's controlled semantic map canvas: applications provide a credential-free `MapSource`, typed style intent, stable map features, camera limits, quality/cache policy, and fallback image. State-derived `App.MapResources` providers keep endpoints and tokens in Go; web sessions access them only through the validated same-origin broker. `App.Subscriptions` adds keyed multi-message sources, and host capabilities are available only through command/subscription contexts via `PlatformServices`.

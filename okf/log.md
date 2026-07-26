@@ -1,5 +1,10 @@
 # OKF Bundle Update Log
 
+## 2026-07-26 (Native real-time viewport contract)
+
+- **Foundation**: Added a renderer-neutral, size- and version-checked native real-time viewport contract with explicit lifecycle callbacks, borrowed per-frame GPU resources, device-loss notification, and a bounded semantic snapshot. Existing D3D11 applications remain on their unchanged presenter; D3D12 composition is an additive opt-in implementation milestone rather than an implicit backend switch.
+- **Verification**: Added a native contract test for accepted exports, incompatible ABI versions, missing callbacks, and malformed or oversized semantic snapshots. **Added Concept:** [realtime-viewports.md](/concepts/architecture/realtime-viewports.md). **Modified Concepts:** [architecture/index.md](/concepts/architecture/index.md).
+
 ## 2026-07-24 (Viewport gestures route in visible space)
 
 - **Framework fix**: Wheel, pan, and pinch routing now follows the topmost component path while applying container-to-child pointer transforms. A viewport inside a scrolled page therefore receives content-space coordinates derived from the visible screen point, and the target captured at gesture begin keeps ownership through end/cancel. Mouse button identity is retained in shared application state instead of being discarded. In-progress viewport gestures are stored by stable semantic ID in transient application state, so a real multi-frame drag survives `BuildPages` replacing the component instance.
