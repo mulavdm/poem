@@ -1590,6 +1590,13 @@ func processEventBatch(batch protocol.EventBatch, conn io.Writer, painter *Proto
 			if performSemanticAction(ev.Target, semantics.Action(ev.Action), ev.Value) {
 				globalState.NeedsRepaint = true
 			}
+		case protocol.EventTypeRealtimeViewport:
+			if component := libFindComponent(ev.Target); component != nil {
+				if target, ok := component.(types.RealtimeViewportEventComponent); ok &&
+					target.OnRealtimeViewportEvent(ev.Bytes, globalState) {
+					globalState.NeedsRepaint = true
+				}
+			}
 		}
 	}
 	globalPerfTracker.recordEventBatch(len(batch.Events), time.Since(batchStart), resizeEvents, mouseEvents, keyboardEvents)

@@ -13,6 +13,7 @@ public:
     void Render(const protocol::RenderFrame& frame);
     void Present();
     void RealtimeKey(std::uint32_t key,bool down);
+    std::vector<protocol::Event> DrainRealtimeEvents();
     bool CaptureBackbufferRGBA(std::vector<std::uint8_t>& rgba,int& width,int& height);
     int BackbufferWidth() const;
     int BackbufferHeight() const;

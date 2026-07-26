@@ -1,6 +1,7 @@
 #pragma once
 #include "poem/realtime_viewport.h"
 #include "poem/protocol.h"
+#include "realtime_overlay.h"
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -15,11 +16,13 @@ class RendererRealtimeD3D12 {
 public:
     RendererRealtimeD3D12()=default;
     ~RendererRealtimeD3D12();
-    bool Initialize(HWND hwnd,int width,int height,const wchar_t* modulePath);
+    bool Initialize(HWND hwnd,int width,int height,const wchar_t* modulePath,const protocol::InitEngine&);
+    bool UpdateFontAtlas(const protocol::InitEngine& value){return overlay_.UpdateAtlas(value);}
     void Resize(int width,int height);
     void Render(const protocol::RenderFrame&);
     void Present();
     void Key(std::uint32_t key,bool down);
+    std::vector<protocol::Event> DrainEvents();
     bool CaptureBackbufferRGBA(std::vector<std::uint8_t>&,int&,int&){return false;}
     int BackbufferWidth()const{return width_;}
     int BackbufferHeight()const{return height_;}
@@ -46,5 +49,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Fence> fence_;
     bool frameReady_{};
     realtime::Rect viewportRect_{};
+    std::string viewportTarget_;
+    bool viewportFocused_{};
+    RealtimeOverlay overlay_;
 };
 }

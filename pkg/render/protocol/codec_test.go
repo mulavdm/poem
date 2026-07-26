@@ -146,6 +146,22 @@ func TestSemanticActionEventRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRealtimeViewportEventRoundTrip(t *testing.T) {
+	want := EventBatch{Events: []Event{{Type: EventTypeRealtimeViewport, Target: "scene_viewport", Bytes: []byte{0, 1, 2, 255}}}}
+	encoded, err := EncodeEventBatch(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeEventBatch(encoded)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("realtime event=%#v err=%v", got, err)
+	}
+	oversized := EventBatch{Events: []Event{{Type: EventTypeRealtimeViewport, Bytes: make([]byte, (1<<20)+1)}}}
+	if _, err := EncodeEventBatch(oversized); err == nil {
+		t.Fatal("oversized realtime payload accepted")
+	}
+}
+
 func TestCompositionEventRejectsOversizedText(t *testing.T) {
 	_, err := EncodeEventBatch(EventBatch{Events: []Event{{Type: EventTypeCompositionUpdate, Text: strings.Repeat("x", (1<<20)+1)}}})
 	if err == nil {

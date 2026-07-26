@@ -324,7 +324,7 @@ func EncodeEventBatch(msg EventBatch) ([]byte, error) {
 	var body bytes.Buffer
 	writeUint32(&body, uint32(len(msg.Events)))
 	for _, ev := range msg.Events {
-		if len(ev.Text) > 1<<20 || len(ev.Target) > 1<<20 || len(ev.Action) > 1<<20 || len(ev.Value) > 1<<20 {
+		if len(ev.Text) > 1<<20 || len(ev.Target) > 1<<20 || len(ev.Action) > 1<<20 || len(ev.Value) > 1<<20 || len(ev.Bytes) > 1<<20 {
 			return nil, fmt.Errorf("event string exceeds 1 MiB")
 		}
 		writeByte(&body, byte(ev.Type))
@@ -344,6 +344,7 @@ func EncodeEventBatch(msg EventBatch) ([]byte, error) {
 		writeInt32(&body, ev.DeltaY)
 		writeFloat32(&body, ev.Scale)
 		writeByte(&body, byte(ev.Phase))
+		writeBytes(&body, ev.Bytes)
 	}
 	return wrapEnvelope(MessageEventBatch, body.Bytes()), nil
 }
@@ -721,6 +722,13 @@ func DecodeEventBatch(payload []byte) (EventBatch, error) {
 		if err != nil {
 			return EventBatch{}, err
 		}
+		opaque, err := readBytes(r)
+		if err != nil || len(opaque) > 1<<20 {
+			return EventBatch{}, fmt.Errorf("invalid realtime viewport event payload")
+		}
+		if len(opaque) == 0 {
+			opaque = nil
+		}
 		events = append(events, Event{
 			Type:    EventType(t),
 			X:       x,
@@ -739,6 +747,7 @@ func DecodeEventBatch(payload []byte) (EventBatch, error) {
 			DeltaY:  deltaY,
 			Scale:   scale,
 			Phase:   GesturePhase(phase),
+			Bytes:   opaque,
 		})
 	}
 	return EventBatch{Events: events}, nil

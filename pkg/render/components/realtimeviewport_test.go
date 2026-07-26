@@ -26,6 +26,9 @@ func TestRealtimeViewportLayoutFocusAndCommand(t *testing.T) {
 			if command.X1 != 100 || command.Y1 != 50 || command.W != 800 || command.H != 600 || string(command.Bytes) != "pick" {
 				t.Fatalf("bad viewport command: %+v", command)
 			}
+			if !command.Flag {
+				t.Fatal("focused viewport flag missing")
+			}
 		}
 	}
 	if !found {
@@ -33,5 +36,13 @@ func TestRealtimeViewportLayoutFocusAndCommand(t *testing.T) {
 	}
 	if v.Semantics(state).Name != "Scene viewport" {
 		t.Fatal("missing accessible name")
+	}
+	called := false
+	v.OnEvent = func(payload []byte, _ *types.ApplicationState) bool {
+		called = string(payload) == "event"
+		return called
+	}
+	if !v.OnRealtimeViewportEvent([]byte("event"), state) || !called {
+		t.Fatal("opaque event was not routed")
 	}
 }

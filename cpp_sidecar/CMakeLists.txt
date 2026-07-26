@@ -13,6 +13,7 @@ add_executable(poem_windows_host WIN32
   src/renderer.cpp
   src/renderer_d3d11.cpp
   src/renderer_realtime_d3d12.cpp
+  src/realtime_overlay.cpp
   src/accessibility.cpp
   ../shared/poem/perf.cpp
 )

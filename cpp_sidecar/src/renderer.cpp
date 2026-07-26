@@ -6,19 +6,20 @@ bool Renderer::Initialize(HWND hwnd,int width,int height,const protocol::InitEng
     wchar_t path[32768]{};
     if(GetEnvironmentVariableW(L"POEM_REALTIME_VIEWPORT_DLL",path,32768)>0) {
         realtime_=std::make_unique<RendererRealtimeD3D12>();
-        if(realtime_->Initialize(hwnd,width,height,path)) return true;
+        if(realtime_->Initialize(hwnd,width,height,path,init)) return true;
         realtime_.reset();
         return false; // Explicit opt-in must fail loudly, never fall back silently.
     }
     d3d11_=std::make_unique<RendererD3D11>();
     return d3d11_->Initialize(hwnd,width,height,init);
 }
-bool Renderer::UpdateFontAtlas(const protocol::InitEngine& init){return realtime_?true:d3d11_->UpdateFontAtlas(init);}
+bool Renderer::UpdateFontAtlas(const protocol::InitEngine& init){return realtime_?realtime_->UpdateFontAtlas(init):d3d11_->UpdateFontAtlas(init);}
 void Renderer::Resize(int w,int h){if(realtime_)realtime_->Resize(w,h);else if(d3d11_)d3d11_->Resize(w,h);}
 void Renderer::ApplyMapScene(const protocol::MapSceneDelta& s){if(d3d11_)d3d11_->ApplyMapScene(s);}
 void Renderer::Render(const protocol::RenderFrame& f){if(realtime_)realtime_->Render(f);else d3d11_->Render(f);}
 void Renderer::Present(){if(realtime_)realtime_->Present();else d3d11_->Present();}
 void Renderer::RealtimeKey(std::uint32_t key,bool down){if(realtime_)realtime_->Key(key,down);}
+std::vector<protocol::Event> Renderer::DrainRealtimeEvents(){return realtime_?realtime_->DrainEvents():std::vector<protocol::Event>{};}
 bool Renderer::CaptureBackbufferRGBA(std::vector<std::uint8_t>& b,int& w,int& h){
     return realtime_?realtime_->CaptureBackbufferRGBA(b,w,h):d3d11_->CaptureBackbufferRGBA(b,w,h);
 }

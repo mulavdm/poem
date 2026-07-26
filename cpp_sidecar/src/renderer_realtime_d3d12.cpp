@@ -11,7 +11,7 @@ RendererRealtimeD3D12::~RendererRealtimeD3D12(){
     // Viewport modules may own language runtimes or worker state; match POEM's
     // Go DLL rule and leave a successfully loaded module resident until exit.
 }
-bool RendererRealtimeD3D12::Initialize(HWND hwnd,int width,int height,const wchar_t* path){
+bool RendererRealtimeD3D12::Initialize(HWND hwnd,int width,int height,const wchar_t* path,const protocol::InitEngine& init){
     if(!hwnd||width<=0||height<=0||!path||!*path)return false;
     hwnd_=hwnd;width_=width;height_=height;
     module_=LoadLibraryW(path);
@@ -46,6 +46,7 @@ bool RendererRealtimeD3D12::Initialize(HWND hwnd,int width,int height,const wcha
     fenceEvent_=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!fenceEvent_||!CreateTargets())return false;
     realtime::FrameInput input{sizeof(input),0,0,{0,0,width_,height_},device_.Get(),queue_.Get(),list_.Get(),
         DXGI_FORMAT_R8G8B8A8_UNORM,0};
+    overlay_.UpdateAtlas(init);
     return viewport_->initialize(viewport_->userData,&input)==realtime::Result::ok;
 }
 bool RendererRealtimeD3D12::CreateTargets(){
@@ -76,6 +77,8 @@ void RendererRealtimeD3D12::Render(const protocol::RenderFrame& frame){
         if(command.type==protocol::DrawCommandType::DrawRealtimeViewport) {
             viewportRect_={command.x1,command.y1,command.w,command.h};
             viewportCommand=&command;
+            viewportTarget_=command.text;
+            viewportFocused_=command.flag;
             break;
         }
     }
@@ -102,8 +105,24 @@ void RendererRealtimeD3D12::Render(const protocol::RenderFrame& frame){
     realtime::FrameInput input{sizeof(input),frameID_++,1.0f/60,viewportRect_,device_.Get(),queue_.Get(),list_.Get(),
         DXGI_FORMAT_R8G8B8A8_UNORM,0};
     if(viewport_->render(viewport_->userData,&input)!=realtime::Result::ok)return;
+    if(!overlay_.Record(device_.Get(),list_.Get(),frame,width_,height_))return;
     std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);list_->ResourceBarrier(1,&barrier);
     if(FAILED(list_->Close()))return;ID3D12CommandList* lists[]{list_.Get()};queue_->ExecuteCommandLists(1,lists);frameReady_=true;
+}
+std::vector<protocol::Event> RendererRealtimeD3D12::DrainEvents(){
+    std::vector<protocol::Event> events;
+    if(!viewport_||viewport_->abiVersion<realtime::kABIVersion||!viewport_->pollEvent)return events;
+    std::vector<std::uint8_t> storage(realtime::kMaxMessageBytes);
+    for(std::size_t count=0;count<64;++count){
+        realtime::EventBuffer buffer{sizeof(buffer),storage.data(),static_cast<std::uint32_t>(storage.size()),0};
+        const auto result=viewport_->pollEvent(viewport_->userData,&buffer);
+        if(result!=realtime::Result::ok||buffer.byteCount==0)break;
+        if(realtime::Validate(&buffer)!=realtime::Result::ok)break;
+        protocol::Event event;event.type=protocol::EventType::RealtimeViewport;
+        event.target=viewportTarget_;event.bytes.assign(storage.begin(),storage.begin()+buffer.byteCount);
+        events.push_back(std::move(event));
+    }
+    return events;
 }
 void RendererRealtimeD3D12::Present(){
     if(!frameReady_)return;frameReady_=false;
@@ -112,7 +131,7 @@ void RendererRealtimeD3D12::Present(){
     Wait();
 }
 void RendererRealtimeD3D12::Key(std::uint32_t key,bool down){
-    if(!viewport_||!viewport_->action)return;
+    if(!viewport_||!viewport_->action||!viewportFocused_)return;
     realtime::Action action{};
     if(key==VK_LEFT||key=='A')action=realtime::Action::moveLeft;
     else if(key==VK_RIGHT||key=='D')action=realtime::Action::moveRight;

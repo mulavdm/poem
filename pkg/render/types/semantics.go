@@ -18,6 +18,12 @@ type SemanticActionComponent interface {
 	PerformSemanticAction(targetID string, action semantics.Action, value string, state *ApplicationState) bool
 }
 
+// RealtimeViewportEventComponent consumes an opaque event emitted by a native
+// ABI-v3 viewport. POEM routes by component ID and never interprets payload.
+type RealtimeViewportEventComponent interface {
+	OnRealtimeViewportEvent(payload []byte, state *ApplicationState) bool
+}
+
 // SemanticChildTransformer maps descendant semantic geometry through a
 // container's coordinate space, such as scrolling and clipping.
 type SemanticChildTransformer interface {

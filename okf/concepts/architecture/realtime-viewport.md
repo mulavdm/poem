@@ -16,4 +16,8 @@ opaque command submission and caller-buffered event polling without assigning
 application meaning to either payload. Structure-size validation permits an
 older v2 export table and requires the complete appended table for v3.
 
+Wire protocol v5 carries polled plugin output as a targeted opaque component
+event. The D3D12 presenter composites POEM's display list after the borrowed
+viewport pass so shell controls and overlays remain POEM-owned.
+
 No editor, scene, entity, or game concept crosses this boundary.

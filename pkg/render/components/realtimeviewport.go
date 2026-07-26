@@ -14,11 +14,14 @@ const maxRealtimeViewportCommandBytes = 1024 * 1024
 // Command is opaque to POEM and is validated and forwarded only by an ABI v3
 // native host. ABI v2 plugins continue to render with an empty command.
 type RealtimeViewport struct {
-	CompID   string
-	Rect     image.Rectangle
-	Label    string
-	Command  []byte
-	Disabled bool
+	CompID        string
+	Rect          image.Rectangle
+	Label         string
+	Command       []byte
+	Disabled      bool
+	OnPointer     func(kind string, x, y float64, state *types.ApplicationState)
+	OnViewportKey func(key uint32, char rune, state *types.ApplicationState) bool
+	OnEvent       func(payload []byte, state *types.ApplicationState) bool
 }
 
 func (v *RealtimeViewport) ID() string                    { return v.CompID }
@@ -33,36 +36,55 @@ func (v *RealtimeViewport) HitTest(pt image.Point) string {
 	}
 	return ""
 }
-func (v *RealtimeViewport) Draw(p types.Painter, _ *types.ApplicationState) {
+func (v *RealtimeViewport) Draw(p types.Painter, state *types.ApplicationState) {
 	p.PushClip(v.Rect)
 	if native, ok := p.(interface {
-		DrawRealtimeViewport(image.Rectangle, string, []byte)
+		DrawRealtimeViewport(image.Rectangle, string, []byte, bool)
 	}); ok {
 		command := v.Command
 		if len(command) > maxRealtimeViewportCommandBytes {
 			command = nil
 		}
-		native.DrawRealtimeViewport(v.Rect, v.CompID, command)
+		native.DrawRealtimeViewport(v.Rect, v.CompID, command, state != nil && state.FocusedID == v.CompID)
 	} else {
 		p.FillRect(v.Rect, color.RGBA{18, 24, 35, 255})
 	}
 	p.PopClip()
 }
-func (v *RealtimeViewport) OnKey(uint32, rune, *types.ApplicationState) bool { return !v.Disabled }
+func (v *RealtimeViewport) OnKey(key uint32, char rune, state *types.ApplicationState) bool {
+	if v.Disabled {
+		return false
+	}
+	if v.OnViewportKey != nil {
+		return v.OnViewportKey(key, char, state)
+	}
+	return true
+}
 func (v *RealtimeViewport) OnMouseDown(pt image.Point, state *types.ApplicationState) bool {
 	if v.Disabled || !pt.In(v.Rect) {
 		return false
 	}
 	state.FocusedID = v.CompID
 	state.ActiveID = v.CompID
+	if v.OnPointer != nil {
+		v.OnPointer("down", float64(pt.X-v.Rect.Min.X)/float64(maxInt(1, v.Rect.Dx())),
+			float64(pt.Y-v.Rect.Min.Y)/float64(maxInt(1, v.Rect.Dy())), state)
+	}
 	return true
 }
 func (v *RealtimeViewport) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
 	if state.ActiveID == v.CompID {
 		state.ActiveID = ""
+		if pt.In(v.Rect) && v.OnPointer != nil {
+			v.OnPointer("up", float64(pt.X-v.Rect.Min.X)/float64(maxInt(1, v.Rect.Dx())),
+				float64(pt.Y-v.Rect.Min.Y)/float64(maxInt(1, v.Rect.Dy())), state)
+		}
 		return pt.In(v.Rect)
 	}
 	return false
+}
+func (v *RealtimeViewport) OnRealtimeViewportEvent(payload []byte, state *types.ApplicationState) bool {
+	return v.OnEvent != nil && v.OnEvent(append([]byte(nil), payload...), state)
 }
 func (v *RealtimeViewport) OnMouseMove(image.Point, *types.ApplicationState) bool { return false }
 func (v *RealtimeViewport) Semantics(_ *types.ApplicationState) semantics.Node {

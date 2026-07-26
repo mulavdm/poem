@@ -253,6 +253,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 {
                     poem::perf::ScopedTimer timer("present");
                     app->renderer.Render(app->latestFrame);
+                    for(const auto& event:app->renderer.DrainRealtimeEvents())SendEvent(app,event);
                 }
                 app->renderer.Present();
             }

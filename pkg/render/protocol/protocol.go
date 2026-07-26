@@ -2,7 +2,7 @@ package protocol
 
 const (
 	Magic   = "POEM"
-	Version = uint16(4)
+	Version = uint16(5)
 )
 
 type MessageType uint16
@@ -70,6 +70,7 @@ const (
 	EventTypeMapCamera
 	EventTypeMapFeature
 	EventTypeMapFailure
+	EventTypeRealtimeViewport
 )
 
 type GesturePhase byte
@@ -208,6 +209,7 @@ type Event struct {
 	DeltaY  int32
 	Scale   float32
 	Phase   GesturePhase
+	Bytes   []byte
 }
 
 type EventBatch struct {
