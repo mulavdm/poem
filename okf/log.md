@@ -1,5 +1,10 @@
 # OKF Bundle Update Log
 
+## 2026-07-26 (External native UI host ownership)
+
+- **Decision**: Formalized the existing windowless Go DLL as POEM's external-native-host surface. A native engine can load the six-function ABI directly and own its window, input loop, GPU, frame graph, capture, and presentation while POEM supplies UI state, layout, semantics, and framed draw output.
+- **Boundary**: POEM exports a general contract and never imports HamsterEngine. The POEM-owned D3D12 viewport remains an embedding sample rather than HamsterGameRPG's primary launch direction. **Added Concept:** [external-native-hosts.md](/concepts/architecture/external-native-hosts.md). **Modified Concepts:** [architecture/index.md](/concepts/architecture/index.md).
+
 ## 2026-07-26 (D3D12 real-time viewport host)
 
 - **Host integration**: Added an explicit `POEM_REALTIME_VIEWPORT_DLL` renderer route. The default D3D11 presenter is unchanged; the opt-in route loads and validates ABI v2, creates a hardware D3D12 device, flip-model swap chain, queue, command list, render targets and fences, owns transitions/presentation/resize, and invokes the module with borrowed frame objects.

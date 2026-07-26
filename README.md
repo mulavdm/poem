@@ -1,5 +1,14 @@
 # POEM
 
+## External native hosts
+
+Native engines may embed an application-specific `poem_app.dll` without using
+POEM's window or presenter. The stable contract is declared in
+`shared/poem/external_ui_host.h`: POEM owns UI state, layout, semantics, and
+framed UI output; the external engine owns platform resources, input timing,
+graphics, capture, and presentation. This is the primary integration direction
+for HamsterEngine, while POEM's own hosts remain unchanged for ordinary apps.
+
 ## Native real-time viewport foundation
 
 POEM defines a size- and version-checked native real-time viewport contract in

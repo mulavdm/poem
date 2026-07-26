@@ -1,5 +1,7 @@
 # Architecture Concepts
 
+* [External Native UI Hosts](/concepts/architecture/external-native-hosts.md) — engine-owned platform/presentation with POEM-provided UI frames and semantics
+
 * [Native Real-Time Viewports](/concepts/architecture/realtime-viewports.md) — versioned lifecycle, borrowed GPU resources, semantic snapshots, and D3D11 compatibility
 
 * [Single-Process Windows Host](/concepts/architecture/windows-host.md) — the adjacent Go DLL ABI, secure loader, in-memory transport, lifecycle, and packaging contract
