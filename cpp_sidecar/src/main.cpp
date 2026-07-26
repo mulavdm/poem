@@ -3,7 +3,7 @@
 #include "native_app.h"
 #include "poem/perf.h"
 #include "poem/protocol.h"
-#include "renderer_d3d11.h"
+#include "renderer.h"
 
 #include <shellscalingapi.h>
 #include <shellapi.h>
@@ -35,7 +35,7 @@ struct ComApartment {
 struct AppState {
     poem::host::NativeApp native;
     poem::protocol::InitEngine init;
-    poem::RendererD3D11 renderer;
+    poem::Renderer renderer;
     poem::AudioEngine audio;
     std::mutex frameMutex;
     std::mutex eventMutex;
@@ -183,6 +183,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
         if (app) {
+            app->renderer.RealtimeKey(static_cast<std::uint32_t>(wParam), true);
             SendEvent(app, {poem::protocol::EventType::KeyDown, 0, 0, static_cast<std::int32_t>(ModifierMask()), 0,
                             static_cast<std::uint32_t>(wParam), 0, 0, 0});
         }
@@ -219,6 +220,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_KEYUP:
     case WM_SYSKEYUP:
         if (app) {
+            app->renderer.RealtimeKey(static_cast<std::uint32_t>(wParam), false);
             SendEvent(app, {poem::protocol::EventType::KeyUp, 0, 0, static_cast<std::int32_t>(ModifierMask()), 0,
                             static_cast<std::uint32_t>(wParam), 0, 0, 0});
         }

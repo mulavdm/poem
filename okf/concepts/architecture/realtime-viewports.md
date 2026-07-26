@@ -10,7 +10,9 @@ timestamp: 2026-07-26T00:00:00Z
 `shared/poem/realtime_viewport.h` defines the renderer-neutral native contract
 used to embed a real-time renderer without making its game types part of POEM.
 Every structure carries a byte size and every export table carries an ABI
-version. Missing callbacks, incompatible versions, oversized semantic payloads,
+version. ABI v2 adds semantic action events for left, right, confirm, and
+cancel; the host maps platform keys before crossing the boundary. Missing
+callbacks, incompatible versions, oversized semantic payloads,
 and inconsistent pointer/count pairs fail validation before invocation.
 
 The host owns the window, input routing, GPU device, command queue, command
@@ -23,7 +25,13 @@ objects to accessibility or automation code. POEM converts that snapshot into
 its ordinary semantic UI and inspection surfaces.
 
 The existing Windows D3D11 presenter remains the default and does not load this
-contract. D3D12 viewport composition is additive work: the contract and tests
-land first, followed by the shared D3D12 presenter and application opt-in. This
-prevents an unfinished renderer from silently changing established apps.
+contract. `POEM_REALTIME_VIEWPORT_DLL` is the explicit Windows opt-in. It loads
+the module, validates `HamsterRealtimeViewportExports`, selects a hardware
+adapter, creates the D3D12 device/queue/swap chain, owns transitions and fences,
+and invokes the viewport between render-target transitions. Resize drains the
+queue, recreates swap-chain targets, and notifies the viewport.
 
+The opt-in currently proves hosting rather than full UI composition: ordinary
+POEM frame geometry is not replayed over the D3D12 target and native D3D12
+backbuffer capture returns unavailable. Invalid explicit configuration fails
+startup rather than falling back to D3D11 and hiding a packaging fault.

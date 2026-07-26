@@ -1,5 +1,11 @@
 # OKF Bundle Update Log
 
+## 2026-07-26 (D3D12 real-time viewport host)
+
+- **Host integration**: Added an explicit `POEM_REALTIME_VIEWPORT_DLL` renderer route. The default D3D11 presenter is unchanged; the opt-in route loads and validates ABI v2, creates a hardware D3D12 device, flip-model swap chain, queue, command list, render targets and fences, owns transitions/presentation/resize, and invokes the module with borrowed frame objects.
+- **Input and honesty**: POEM maps keyboard input to renderer-neutral left/right/confirm/cancel actions before crossing the ABI. Invalid explicit configuration fails startup. Ordinary POEM UI composition and D3D12 capture are documented as not yet implemented rather than implied by the host proof.
+- **Verification**: All five native CTests pass. Real launches of both the opt-in D3D12 module and unchanged default D3D11 renderer produced responsive native windows. **Modified Concepts:** [realtime-viewports.md](/concepts/architecture/realtime-viewports.md).
+
 ## 2026-07-26 (Native real-time viewport contract)
 
 - **Foundation**: Added a renderer-neutral, size- and version-checked native real-time viewport contract with explicit lifecycle callbacks, borrowed per-frame GPU resources, device-loss notification, and a bounded semantic snapshot. Existing D3D11 applications remain on their unchanged presenter; D3D12 composition is an additive opt-in implementation milestone rather than an implicit backend switch.

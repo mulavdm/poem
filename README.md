@@ -4,10 +4,17 @@
 
 POEM defines a size- and version-checked native real-time viewport contract in
 `shared/poem/realtime_viewport.h`. It preserves the existing D3D11 application
-path while establishing the lifecycle, borrowed-frame-resource, and bounded
-semantic-snapshot boundary needed by a shared D3D12 presenter. The host remains
-responsible for the window, input, accessibility, device recovery, composition,
-and presentation. A viewport never retains borrowed frame objects.
+path. Setting `POEM_REALTIME_VIEWPORT_DLL` to a compatible module explicitly
+selects the experimental D3D12 real-time presenter; an invalid opt-in fails
+startup instead of silently falling back. The host owns the hardware adapter,
+device, flip-model swap chain, command queue/list, transitions, fences, resize,
+input mapping, and presentation. The viewport records commands into borrowed
+frame objects and receives semantic left/right/confirm/cancel actions.
+
+This path currently proves native viewport hosting. It does not yet replay
+POEM's ordinary UI draw commands over the D3D12 target, and D3D12 backbuffer
+capture is not implemented; keep production applications on the default D3D11
+presenter until composition and capture land.
 
 ## Vector cartography foundation (M9, in development)
 
