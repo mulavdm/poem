@@ -3,8 +3,8 @@
 #include <cstdint>
 
 namespace poem::realtime {
-inline constexpr std::uint32_t kABIVersion = 3;
-inline constexpr std::uint32_t kLegacyABIVersion = 2;
+inline constexpr std::uint32_t kABIVersion = 4;
+inline constexpr std::uint32_t kLegacyABIVersion = 3;
 inline constexpr std::uint32_t kMaxSemanticBytes = 256 * 1024;
 inline constexpr std::uint32_t kMaxMessageBytes = 1024 * 1024;
 enum class Result : std::uint32_t { ok, invalid_argument, unsupported_version, device_error, cancelled };
@@ -19,6 +19,10 @@ struct FrameInput {
     void* nativeCommandList;
     std::uint32_t renderTargetFormat;
     std::uint32_t flags;
+    // DXGI_FORMAT of a depth-stencil buffer already bound by the caller
+    // alongside the render target (0 = none). Mirrors
+    // HamsterViewportInput::depth_stencil_format byte-for-byte.
+    std::uint32_t depthStencilFormat;
 };
 struct SemanticSnapshot { std::uint32_t structSize; const std::uint8_t* bytes; std::uint32_t byteCount; };
 enum class Action : std::uint32_t { moveLeft=1, moveRight=2, confirm=3, cancel=4 };

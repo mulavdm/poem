@@ -10,9 +10,13 @@ POEM wire protocol v5 adds a targeted `RealtimeViewport` event carrying up to
 and routes them to the matching component on the Go side.
 
 The Windows host continues to accept native viewport ABI v2 plugins. ABI v3
-adds `submitCommand` and `pollEvent`, both bounded to 1 MiB. Structures carry
-their byte size and version; invalid pointers, sizes, versions, and buffer
-lengths are rejected before a plugin callback is used.
+adds `submitCommand` and `pollEvent`, both bounded to 1 MiB. ABI v4 adds a
+`depthStencilFormat` field to `FrameInput`: the sidecar renderer creates and
+binds its own depth target before calling the plugin's `render()`, matching
+the depth format it declares, so hosts (like HamsterEditor) that render real
+mesh geometry alongside greybox boxes get correct depth ordering. Structures
+carry their byte size and version; invalid pointers, sizes, versions, and
+buffer lengths are rejected before a plugin callback is used.
 
 When the display list contains a realtime viewport command, the host clips the
 borrowed `FrameInput.viewport` to the window and submits the component's opaque

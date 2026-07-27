@@ -43,6 +43,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue_;
     Microsoft::WRL::ComPtr<IDXGISwapChain3> swap_;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> rtvHeap_;
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> dsvHeap_;
+    Microsoft::WRL::ComPtr<ID3D12Resource> depthTarget_;
     std::array<Microsoft::WRL::ComPtr<ID3D12Resource>,frameCount_> targets_;
     std::array<Microsoft::WRL::ComPtr<ID3D12CommandAllocator>,frameCount_> allocators_;
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> list_;

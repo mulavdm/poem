@@ -41,6 +41,8 @@ bool RendererRealtimeD3D12::Initialize(HWND hwnd,int width,int height,const wcha
        FAILED(base.As(&swap_)))return false;
     D3D12_DESCRIPTOR_HEAP_DESC heap{};heap.NumDescriptors=frameCount_;heap.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     if(FAILED(device_->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&rtvHeap_))))return false;
+    D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc{};dsvHeapDesc.NumDescriptors=1;dsvHeapDesc.Type=D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    if(FAILED(device_->CreateDescriptorHeap(&dsvHeapDesc,IID_PPV_ARGS(&dsvHeap_))))return false;
     for(auto& allocator:allocators_)
         if(FAILED(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&allocator))))return false;
     if(FAILED(device_->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocators_[0].Get(),nullptr,IID_PPV_ARGS(&list_))))return false;
@@ -48,7 +50,7 @@ bool RendererRealtimeD3D12::Initialize(HWND hwnd,int width,int height,const wcha
     if(FAILED(device_->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence_))))return false;
     fenceEvent_=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!fenceEvent_||!CreateTargets())return false;
     realtime::FrameInput input{sizeof(input),0,0,{0,0,width_,height_},device_.Get(),queue_.Get(),list_.Get(),
-        DXGI_FORMAT_R8G8B8A8_UNORM,0};
+        DXGI_FORMAT_R8G8B8A8_UNORM,0,DXGI_FORMAT_D32_FLOAT};
     overlay_.UpdateAtlas(init);
     return viewport_->initialize(viewport_->userData,&input)==realtime::Result::ok;
 }
@@ -56,7 +58,18 @@ bool RendererRealtimeD3D12::CreateTargets(){
     index_=swap_->GetCurrentBackBufferIndex();auto handle=rtvHeap_->GetCPUDescriptorHandleForHeapStart();
     const auto step=device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     for(UINT i=0;i<frameCount_;++i){if(FAILED(swap_->GetBuffer(i,IID_PPV_ARGS(&targets_[i]))))return false;
-        device_->CreateRenderTargetView(targets_[i].Get(),nullptr,handle);handle.ptr+=step;}return true;
+        device_->CreateRenderTargetView(targets_[i].Get(),nullptr,handle);handle.ptr+=step;}
+    depthTarget_.Reset();
+    D3D12_HEAP_PROPERTIES depthHeap{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC depthDesc{};depthDesc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    depthDesc.Width=static_cast<UINT64>(width_);depthDesc.Height=static_cast<UINT>(height_);
+    depthDesc.DepthOrArraySize=1;depthDesc.MipLevels=1;depthDesc.Format=DXGI_FORMAT_D32_FLOAT;
+    depthDesc.SampleDesc.Count=1;depthDesc.Flags=D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    D3D12_CLEAR_VALUE depthClear{};depthClear.Format=DXGI_FORMAT_D32_FLOAT;depthClear.DepthStencil={1.0f,0};
+    if(FAILED(device_->CreateCommittedResource(&depthHeap,D3D12_HEAP_FLAG_NONE,&depthDesc,
+        D3D12_RESOURCE_STATE_DEPTH_WRITE,&depthClear,IID_PPV_ARGS(&depthTarget_))))return false;
+    device_->CreateDepthStencilView(depthTarget_.Get(),nullptr,dsvHeap_->GetCPUDescriptorHandleForHeapStart());
+    return true;
 }
 bool RendererRealtimeD3D12::Wait(){
     if(!queue_||!fence_)return true;const auto value=++fenceValue_;
@@ -91,10 +104,12 @@ void RendererRealtimeD3D12::Render(const protocol::RenderFrame& frame){
     list_->ResourceBarrier(1,&barrier);
     auto handle=rtvHeap_->GetCPUDescriptorHandleForHeapStart();
     handle.ptr+=index_*device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-    const float clear[]{0.025f,0.04f,0.075f,1};list_->OMSetRenderTargets(1,&handle,FALSE,nullptr);
+    const auto depthHandle=dsvHeap_->GetCPUDescriptorHandleForHeapStart();
+    const float clear[]{0.025f,0.04f,0.075f,1};list_->OMSetRenderTargets(1,&handle,FALSE,&depthHandle);
     list_->ClearRenderTargetView(handle,clear,0,nullptr);
+    list_->ClearDepthStencilView(depthHandle,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
     realtime::FrameInput input{sizeof(input),frameID_++,1.0f/60,viewportRect_,device_.Get(),queue_.Get(),list_.Get(),
-        DXGI_FORMAT_R8G8B8A8_UNORM,viewportFocused_?1u:0u};
+        DXGI_FORMAT_R8G8B8A8_UNORM,viewportFocused_?1u:0u,DXGI_FORMAT_D32_FLOAT};
     if(viewportCommand&&viewportRect_.width>0&&viewportRect_.height>0&&
        viewport_->render(viewport_->userData,&input)!=realtime::Result::ok)return;
     const D3D12_VIEWPORT fullViewport{0,0,static_cast<float>(width_),static_cast<float>(height_),0,1};
