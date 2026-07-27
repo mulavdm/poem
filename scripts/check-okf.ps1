@@ -4,33 +4,52 @@
 
 .DESCRIPTION
   A thin wrapper around the shared `okfcheck` tool that ships with the
-  OpenKnowledgeFormat reference folder. This script deliberately contains no
-  rules of its own: the rule set lives in one implementation shared by every
-  repository, and this bundle's stricter policy (required frontmatter fields,
-  bundle-absolute links, strict mode) lives in `okf/.okfcheck` beside the
-  knowledge it governs. Two copies of the rules would drift.
+  OpenKnowledgeFormat reference repository. This script deliberately
+  contains no rules of its own: the rule set lives in one implementation
+  shared by every repository, and this bundle's stricter policy (required
+  frontmatter fields, bundle-absolute links, strict mode) lives in
+  `okf/.okfcheck` beside the knowledge it governs. Two copies of the rules
+  would drift.
 
-  The reference folder is gitignored, so a clean checkout does not have it.
-  Clone it next to this script's repository root before running:
-
-      git clone https://github.com/mulavdm/OpenKnowledgeFormat.git
+  Locally, every project shares one canonical reference checkout at the
+  workspace root instead of holding its own copy. In CI, where the
+  workspace root doesn't exist, the pipeline clones the reference
+  repository directly next to this repository's root instead. This script
+  checks the workspace-root location first, then falls back to a
+  repo-root-adjacent checkout.
 #>
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Bundle = Join-Path $RepoRoot "okf"
-$Tool = Join-Path $RepoRoot "OpenKnowledgeFormat/tools/okfcheck"
+
+$CandidateRoots = @()
+$WorkspaceRootPath = Join-Path $RepoRoot "../.."
+if (Test-Path -LiteralPath $WorkspaceRootPath) {
+    $CandidateRoots += (Resolve-Path $WorkspaceRootPath).Path
+}
+$CandidateRoots += $RepoRoot
+
+$Tool = $null
+foreach ($Root in $CandidateRoots) {
+    $Candidate = Join-Path $Root "OpenKnowledgeFormat/tools/okfcheck"
+    if (Test-Path -LiteralPath (Join-Path $Candidate "main.go")) {
+        $Tool = $Candidate
+        break
+    }
+}
 
 if (-not (Test-Path -LiteralPath $Bundle)) {
     throw "No OKF bundle found at $Bundle"
 }
-if (-not (Test-Path -LiteralPath (Join-Path $Tool "main.go"))) {
+if (-not $Tool) {
+    $Searched = ($CandidateRoots | ForEach-Object { Join-Path $_ "OpenKnowledgeFormat/tools/okfcheck" }) -join "`n  "
     throw @"
-The shared okfcheck tool is not present at:
-  $Tool
+The shared okfcheck tool was not found in any of:
+  $Searched
 
-It ships with the OpenKnowledgeFormat reference folder, which is gitignored.
-Clone it into the repository root and re-run:
+Clone the reference repository into the workspace root (shared by every
+project) or next to this repository's root, then re-run:
   git clone https://github.com/mulavdm/OpenKnowledgeFormat.git
 "@
 }

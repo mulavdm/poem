@@ -1,5 +1,9 @@
 # OKF Bundle Update Log
 
+## 2026-07-27 (OKF reference checkout consolidated to workspace root)
+
+- The shared OKF reference repository moved from a local, git-ignored `OpenKnowledgeFormat/` checkout at this repo's root to a single canonical checkout at the workspace root, consulted by every project. Updated `scripts/check-okf.ps1` to resolve the shared `okfcheck` tool there instead, and repointed the reference-checkout note in [index.md](/index.md). **Modified Concepts:** [index.md](/index.md).
+
 ## 2026-07-26 (First engine-owned POEM composition)
 
 - **Fixture**: Added `cmd/external-overlay`, a windowless POEM pause-card application with semantic resume and settings actions. It is intentionally generic and contains no HamsterEngine dependency.
