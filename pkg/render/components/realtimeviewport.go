@@ -23,9 +23,14 @@ type RealtimeViewport struct {
 	// OnWheel receives a non-zero native wheel delta while the pointer is in
 	// the viewport. The delta follows the host convention (120 per Windows
 	// wheel notch); POEM does not assign it a renderer-specific meaning.
-	OnWheel       func(delta int, state *types.ApplicationState)
-	OnViewportKey func(key uint32, char rune, state *types.ApplicationState) bool
-	OnEvent       func(payload []byte, state *types.ApplicationState) bool
+	OnWheel func(delta int, state *types.ApplicationState)
+	// OnPointerButton receives pointer phases together with the host button
+	// code (1 primary, 2 secondary, 3 middle). When set, it takes precedence
+	// over OnPointer so advanced native views can distinguish navigation
+	// gestures without changing ordinary component input behavior.
+	OnPointerButton func(kind string, button int, x, y float64, state *types.ApplicationState)
+	OnViewportKey   func(key uint32, char rune, state *types.ApplicationState) bool
+	OnEvent         func(payload []byte, state *types.ApplicationState) bool
 }
 
 func (v *RealtimeViewport) ID() string                    { return v.CompID }
@@ -70,22 +75,18 @@ func (v *RealtimeViewport) OnMouseDown(pt image.Point, state *types.ApplicationS
 	}
 	state.FocusedID = v.CompID
 	state.ActiveID = v.CompID
-	if v.OnPointer != nil {
-		v.OnPointer("down", float64(pt.X-v.Rect.Min.X)/float64(maxInt(1, v.Rect.Dx())),
-			float64(pt.Y-v.Rect.Min.Y)/float64(maxInt(1, v.Rect.Dy())), state)
-	}
+	v.pointer("down", state.MouseButton, pt, state)
 	return true
 }
 func (v *RealtimeViewport) OnMouseUp(pt image.Point, state *types.ApplicationState) bool {
 	if state.ActiveID == v.CompID {
 		state.ActiveID = ""
-		if v.OnPointer != nil {
+		if v.OnPointer != nil || v.OnPointerButton != nil {
 			kind := "up"
 			if !pt.In(v.Rect) {
 				kind = "cancel"
 			}
-			v.OnPointer(kind, float64(pt.X-v.Rect.Min.X)/float64(maxInt(1, v.Rect.Dx())),
-				float64(pt.Y-v.Rect.Min.Y)/float64(maxInt(1, v.Rect.Dy())), state)
+			v.pointer(kind, state.MouseButton, pt, state)
 		}
 		return true
 	}
@@ -94,13 +95,21 @@ func (v *RealtimeViewport) OnMouseUp(pt image.Point, state *types.ApplicationSta
 func (v *RealtimeViewport) OnRealtimeViewportEvent(payload []byte, state *types.ApplicationState) bool {
 	return v.OnEvent != nil && v.OnEvent(append([]byte(nil), payload...), state)
 }
+func (v *RealtimeViewport) pointer(kind string, button int, pt image.Point, state *types.ApplicationState) {
+	x := float64(pt.X-v.Rect.Min.X) / float64(maxInt(1, v.Rect.Dx()))
+	y := float64(pt.Y-v.Rect.Min.Y) / float64(maxInt(1, v.Rect.Dy()))
+	if v.OnPointerButton != nil {
+		v.OnPointerButton(kind, button, x, y, state)
+	} else if v.OnPointer != nil {
+		v.OnPointer(kind, x, y, state)
+	}
+}
 func (v *RealtimeViewport) OnMouseMove(pt image.Point, state *types.ApplicationState) bool {
-	if v.Disabled || v.OnPointer == nil {
+	if v.Disabled || (v.OnPointer == nil && v.OnPointerButton == nil) {
 		return false
 	}
 	if state.ActiveID == v.CompID || pt.In(v.Rect) {
-		v.OnPointer("move", float64(pt.X-v.Rect.Min.X)/float64(maxInt(1, v.Rect.Dx())),
-			float64(pt.Y-v.Rect.Min.Y)/float64(maxInt(1, v.Rect.Dy())), state)
+		v.pointer("move", state.MouseButton, pt, state)
 		return state.ActiveID == v.CompID
 	}
 	return false

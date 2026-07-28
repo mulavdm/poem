@@ -30,6 +30,12 @@ delta (120 per Windows wheel notch) to its optional `OnWheel` callback. The
 component does not interpret the delta, so orbit, zoom, scrub, and other
 renderer-specific behavior remains owned by the embedding application.
 
+For native views that need distinct navigation gestures,
+`RealtimeViewport.OnPointerButton` receives the same normalized pointer phases
+with the host button code (primary, secondary, or middle). It takes precedence
+over the legacy button-agnostic callback, preserving compatibility while
+keeping gesture interpretation in the embedding application.
+
 The existing Windows D3D11 presenter remains the default and does not load this
 contract. `POEM_REALTIME_VIEWPORT_DLL` is the explicit Windows opt-in. It loads
 the module, validates `HamsterRealtimeViewportExports`, selects a hardware

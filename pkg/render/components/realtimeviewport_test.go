@@ -61,4 +61,14 @@ func TestRealtimeViewportLayoutFocusAndCommand(t *testing.T) {
 	if v.OnMouseWheel(image.Pt(950, 700), 120, state) || wheel != 120 {
 		t.Fatal("viewport wheel escaped its bounds")
 	}
+	var button int
+	v.OnPointerButton = func(kind string, next int, _, _ float64, _ *types.ApplicationState) {
+		if kind == "down" {
+			button = next
+		}
+	}
+	state.MouseButton = 3
+	if !v.OnMouseDown(image.Pt(200, 200), state) || button != 3 {
+		t.Fatalf("viewport pointer button = %d", button)
+	}
 }
