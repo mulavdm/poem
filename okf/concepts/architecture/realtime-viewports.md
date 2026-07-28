@@ -24,6 +24,12 @@ The viewport publishes a bounded semantic snapshot rather than exposing native
 objects to accessibility or automation code. POEM converts that snapshot into
 its ordinary semantic UI and inspection surfaces.
 
+`components.RealtimeViewport` implements the ordinary wheel-input component
+contract. When the pointer is inside its bounds, it forwards a non-zero native
+delta (120 per Windows wheel notch) to its optional `OnWheel` callback. The
+component does not interpret the delta, so orbit, zoom, scrub, and other
+renderer-specific behavior remains owned by the embedding application.
+
 The existing Windows D3D11 presenter remains the default and does not load this
 contract. `POEM_REALTIME_VIEWPORT_DLL` is the explicit Windows opt-in. It loads
 the module, validates `HamsterRealtimeViewportExports`, selects a hardware

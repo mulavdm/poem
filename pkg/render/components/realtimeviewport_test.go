@@ -53,4 +53,12 @@ func TestRealtimeViewportLayoutFocusAndCommand(t *testing.T) {
 	if len(phases) != 3 || phases[0] != "down" || phases[1] != "move" || phases[2] != "cancel" {
 		t.Fatalf("pointer phases %v", phases)
 	}
+	wheel := 0
+	v.OnWheel = func(delta int, _ *types.ApplicationState) { wheel += delta }
+	if !v.OnMouseWheel(image.Pt(200, 200), 120, state) || wheel != 120 {
+		t.Fatalf("viewport wheel = %d", wheel)
+	}
+	if v.OnMouseWheel(image.Pt(950, 700), 120, state) || wheel != 120 {
+		t.Fatal("viewport wheel escaped its bounds")
+	}
 }

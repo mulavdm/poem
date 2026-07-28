@@ -1,5 +1,12 @@
 # OKF Bundle Update Log
 
+## 2026-07-28 (Real-time viewport wheel callback)
+
+- `components.RealtimeViewport` now implements POEM's regular wheel-input
+  contract and forwards bounded in-bounds deltas to an optional application
+  callback without assigning them renderer semantics. **Modified Concepts:**
+  [realtime-viewports.md](/concepts/architecture/realtime-viewports.md).
+
 ## 2026-07-27 (OKF reference checkout consolidated to workspace root)
 
 - The shared OKF reference repository moved from a local, git-ignored `OpenKnowledgeFormat/` checkout at this repo's root to a single canonical checkout at the workspace root, consulted by every project. Updated `scripts/check-okf.ps1` to resolve the shared `okfcheck` tool there instead, and repointed the reference-checkout note in [index.md](/index.md). **Modified Concepts:** [index.md](/index.md).

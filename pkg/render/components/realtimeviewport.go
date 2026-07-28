@@ -14,12 +14,16 @@ const maxRealtimeViewportCommandBytes = 1024 * 1024
 // Command is opaque to POEM and is validated and forwarded only by an ABI v3
 // native host. ABI v2 plugins continue to render with an empty command.
 type RealtimeViewport struct {
-	CompID        string
-	Rect          image.Rectangle
-	Label         string
-	Command       []byte
-	Disabled      bool
-	OnPointer     func(kind string, x, y float64, state *types.ApplicationState)
+	CompID    string
+	Rect      image.Rectangle
+	Label     string
+	Command   []byte
+	Disabled  bool
+	OnPointer func(kind string, x, y float64, state *types.ApplicationState)
+	// OnWheel receives a non-zero native wheel delta while the pointer is in
+	// the viewport. The delta follows the host convention (120 per Windows
+	// wheel notch); POEM does not assign it a renderer-specific meaning.
+	OnWheel       func(delta int, state *types.ApplicationState)
 	OnViewportKey func(key uint32, char rune, state *types.ApplicationState) bool
 	OnEvent       func(payload []byte, state *types.ApplicationState) bool
 }
@@ -100,6 +104,13 @@ func (v *RealtimeViewport) OnMouseMove(pt image.Point, state *types.ApplicationS
 		return state.ActiveID == v.CompID
 	}
 	return false
+}
+func (v *RealtimeViewport) OnMouseWheel(pt image.Point, delta int, state *types.ApplicationState) bool {
+	if v.Disabled || v.OnWheel == nil || delta == 0 || !pt.In(v.Rect) {
+		return false
+	}
+	v.OnWheel(delta, state)
+	return true
 }
 func (v *RealtimeViewport) Semantics(_ *types.ApplicationState) semantics.Node {
 	label := v.Label

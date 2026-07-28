@@ -23,7 +23,9 @@ selects the experimental D3D12 real-time presenter; an invalid opt-in fails
 startup instead of silently falling back. The host owns the hardware adapter,
 device, flip-model swap chain, command queue/list, transitions, fences, resize,
 input mapping, and presentation. The viewport records commands into borrowed
-frame objects and receives semantic left/right/confirm/cancel actions.
+frame objects and receives semantic left/right/confirm/cancel actions. The
+`RealtimeViewport` component also forwards in-bounds wheel deltas to an
+application-owned callback without assigning them a renderer-specific meaning.
 
 This path currently proves native viewport hosting. It does not yet replay
 POEM's ordinary UI draw commands over the D3D12 target, and D3D12 backbuffer
