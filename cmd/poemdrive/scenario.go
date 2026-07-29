@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Scenario is a repeatable interaction over POEM's automation surface, plus
@@ -78,10 +79,15 @@ type Scenario struct {
 
 // Step is one interaction. Exactly one action per step.
 type Step struct {
-	Action string  `json:"action"`
-	ID     string  `json:"id,omitempty"`
-	Value  string  `json:"value,omitempty"`
-	Key    string  `json:"key,omitempty"`
+	Action string `json:"action"`
+	ID     string `json:"id,omitempty"`
+	// Value is the literal text for set-text, the required substring for
+	// assert-value, and the required substring for wait-for (omit it on
+	// wait-for to poll for existence instead of a value).
+	Value string `json:"value,omitempty"`
+	Key   string `json:"key,omitempty"`
+	// MS is the sleep duration for wait, and the poll timeout for wait-for
+	// (defaults to waitForDefaultTimeout when zero).
 	MS     int     `json:"ms,omitempty"`
 	Delta  int     `json:"delta,omitempty"`
 	DeltaX int     `json:"delta_x,omitempty"`
@@ -128,7 +134,18 @@ const (
 	actionAssertAbsent    = "assert-absent"
 	actionAssertCount     = "assert-count"
 	actionAssertNoOverlap = "assert-no-overlap"
+	actionWaitFor         = "wait-for"
 )
+
+// waitForDefaultTimeout bounds a wait-for step when the scene does not set
+// ms. Some interactions apply asynchronously, through a round trip a driven
+// action's HTTP response does not wait for -- HamsterEditor's document
+// command queue is one example, where a property commit only lands once the
+// C++ authority has processed and echoed it back. A fixed sleep before
+// asserting is a guess at that round trip's latency; wait-for polls the
+// actual condition instead, so five seconds of headroom costs nothing when
+// the condition is already met and only matters on the rare slow run.
+const waitForDefaultTimeout = 5 * time.Second
 
 // captureSources maps a scenario's source name to the automation endpoint that
 // produces it. "native" is the host's own backbuffer — the pixels the presenter
@@ -208,6 +225,13 @@ func (s *Scenario) Validate() error {
 		case actionWait:
 			if step.MS <= 0 {
 				return fmt.Errorf("step %d (wait) needs a positive ms", i)
+			}
+		case actionWaitFor:
+			if step.ID == "" {
+				return fmt.Errorf("step %d (wait-for) needs an id", i)
+			}
+			if step.MS < 0 {
+				return fmt.Errorf("step %d (wait-for) ms must not be negative", i)
 			}
 		case actionCapture:
 			if step.Name == "" {

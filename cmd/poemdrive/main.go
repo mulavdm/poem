@@ -158,6 +158,8 @@ func (d *driver) step(s Step) error {
 		return d.post("/pointer-drag", map[string]any{"id": s.ID, "delta_x": s.DeltaX, "delta_y": s.DeltaY, "button": s.Button, "phase": s.Phase})
 	case actionAssertValue:
 		return d.assertComponentValue(s.ID, s.Value)
+	case actionWaitFor:
+		return d.waitForComponent(s.ID, s.Value, waitForTimeout(s.MS))
 	case actionResize:
 		d.rememberFrameBeforeAction()
 		return d.post("/resize", map[string]any{"width": s.Width, "height": s.Height})
@@ -198,6 +200,42 @@ func (d *driver) assertComponentValue(id, contains string) error {
 		return fmt.Errorf("component %q value %q does not contain %q", id, node.Value, contains)
 	}
 	return fmt.Errorf("component %q was not present while asserting value", id)
+}
+
+// waitForTimeout resolves a wait-for step's ms field to the timeout it polls
+// against, falling back to waitForDefaultTimeout when unset.
+func waitForTimeout(ms int) time.Duration {
+	if ms > 0 {
+		return time.Duration(ms) * time.Millisecond
+	}
+	return waitForDefaultTimeout
+}
+
+// waitForComponent polls the component tree until id exists -- or, when want
+// is non-empty, until id's value contains want -- or timeout elapses.
+// Some interactions only take effect after an asynchronous round trip an
+// action's HTTP response does not wait for (see waitForDefaultTimeout), so
+// asserting immediately, or even after a generous fixed sleep, is inherently
+// racy under load. This is the poll-until-true counterpart to
+// assert-exists/assert-value, reusing the same checks rather than a fixed
+// delay guessing at the round trip's latency.
+func (d *driver) waitForComponent(id, want string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		if want == "" {
+			lastErr = d.assertComponentExists(id)
+		} else {
+			lastErr = d.assertComponentValue(id, want)
+		}
+		if lastErr == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %s waiting for component %q: %w", timeout, id, lastErr)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (d *driver) componentFlatList() ([]struct {

@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mulavdm/poem/pkg/render"
 )
@@ -68,6 +70,8 @@ func TestScenarioValidate(t *testing.T) {
 		"assert-count without prefix":   {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionAssertCount, Count: 1}}},
 		"assert-no-overlap with one id": {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionAssertNoOverlap, IDs: []string{"a"}}}},
 		"assert-no-overlap with no ids": {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionAssertNoOverlap}}},
+		"wait-for without id":           {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionWaitFor}}},
+		"wait-for with negative ms":     {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionWaitFor, ID: "a", MS: -1}}},
 	}
 	for name, scenario := range assertCases {
 		if err := scenario.Validate(); err == nil {
@@ -82,6 +86,8 @@ func TestScenarioValidate(t *testing.T) {
 			{Action: actionAssertAbsent, ID: "b"},
 			{Action: actionAssertCount, IDPrefix: "row_", Count: 0},
 			{Action: actionAssertNoOverlap, IDs: []string{"a", "b"}},
+			{Action: actionWaitFor, ID: "a"},
+			{Action: actionWaitFor, ID: "a", Value: "2.0", MS: 6000},
 		},
 	}
 	if err := validAsserts.Validate(); err != nil {
@@ -183,6 +189,71 @@ func TestAssertNoOverlap(t *testing.T) {
 	})
 	if err := missing.assertNoOverlap([]string{"a", "b"}); err == nil {
 		t.Error("expected a missing id to fail")
+	}
+}
+
+// TestWaitForComponent proves the actual point of wait-for over a fixed
+// sleep + assert: it must keep polling through a component that has not
+// converged yet -- exactly what an async document-command round trip looks
+// like from the driver's side -- and succeed once it does, rather than
+// failing on the first stale read.
+func TestWaitForComponent(t *testing.T) {
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/components", func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		value := "1.000000"
+		if n >= 3 {
+			// The third and later poll sees the value a slow async commit
+			// eventually applied.
+			value = "2.000000"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"flat": []map[string]any{{"id": "a", "value": value}}})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	d := &driver{scenario: &Scenario{BaseURL: server.URL}, client: http.DefaultClient}
+
+	if err := d.waitForComponent("a", "2.000000", time.Second); err != nil {
+		t.Fatalf("expected wait-for to converge once the value lands, got: %v", err)
+	}
+	if atomic.LoadInt32(&calls) < 3 {
+		t.Errorf("expected at least 3 polls before convergence, got %d", calls)
+	}
+}
+
+// TestWaitForComponentTimesOut proves a condition that never converges still
+// fails, rather than polling forever or reporting a false success.
+func TestWaitForComponentTimesOut(t *testing.T) {
+	d := componentsServer(t, []map[string]any{{"id": "a", "value": "1.000000"}})
+	err := d.waitForComponent("a", "2.000000", 250*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected a timeout error for a value that never converges")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected a clear timeout error, got: %v", err)
+	}
+}
+
+// TestWaitForComponentExistenceOnly proves an empty want polls for mere
+// existence, matching wait-for's "omit value to wait for appearance" contract.
+func TestWaitForComponentExistenceOnly(t *testing.T) {
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/components", func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		flat := []map[string]any{}
+		if n >= 2 {
+			flat = []map[string]any{{"id": "a"}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"flat": flat})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	d := &driver{scenario: &Scenario{BaseURL: server.URL}, client: http.DefaultClient}
+
+	if err := d.waitForComponent("a", "", time.Second); err != nil {
+		t.Fatalf("expected wait-for to converge once the component appears, got: %v", err)
 	}
 }
 
