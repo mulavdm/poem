@@ -165,7 +165,7 @@ func TestAutomationViewportInputUsesVisibleScrolledCoordinates(t *testing.T) {
 		ScrollPositions: map[string]int{"scroll": 400}, ScrollCurrent: map[string]float64{"scroll": 400},
 	}
 
-	resp := handleAutomationRequest(AutomationRequest{Command: "wheel", ID: "map", Delta: 120}, AutomationConfig{})
+	resp, _ := handleAutomationRequest(AutomationRequest{Command: "wheel", ID: "map", Delta: 120}, AutomationConfig{})
 	if !resp.OK {
 		t.Fatalf("wheel failed: %s", resp.Error)
 	}
@@ -791,7 +791,7 @@ func TestAutomationRequestFailsFastWhenLockWedged(t *testing.T) {
 	defer stateMutex.Unlock()
 
 	start := time.Now()
-	resp := handleAutomationRequest(AutomationRequest{Command: "get-state"}, AutomationConfig{})
+	resp, _ := handleAutomationRequest(AutomationRequest{Command: "get-state"}, AutomationConfig{})
 	elapsed := time.Since(start)
 
 	if resp.OK {
@@ -1128,7 +1128,7 @@ func TestSemanticAutomationSelectorTargetsUniqueNode(t *testing.T) {
 	cancel := components.NewButton("cancel", "Cancel", func(*ApplicationState) { clicked = "cancel" })
 	globalState = &ApplicationState{CurrentPage: PageDashboard, Pages: map[string][]Component{PageDashboard: {publish, cancel}}}
 
-	resp := handleAutomationRequest(AutomationRequest{Command: "click", Selector: &AutomationSelector{
+	resp, _ := handleAutomationRequest(AutomationRequest{Command: "click", Selector: &AutomationSelector{
 		Role: "button", Name: "publish", States: map[string]bool{"enabled": true, "selected": true},
 	}}, AutomationConfig{})
 	if !resp.OK || clicked != "publish" || globalState.FocusedID != "publish" {
@@ -1146,7 +1146,7 @@ func TestSemanticAutomationSelectorRejectsAmbiguityAndInvalidInput(t *testing.T)
 		{Command: "click", ID: "save-one", Selector: &AutomationSelector{Name: "Save"}},
 		{Command: "click", Selector: &AutomationSelector{}},
 	} {
-		if resp := handleAutomationRequest(req, AutomationConfig{}); resp.OK || resp.Error == "" {
+		if resp, _ := handleAutomationRequest(req, AutomationConfig{}); resp.OK || resp.Error == "" {
 			t.Fatalf("invalid selector accepted: req=%+v response=%+v", req, resp)
 		}
 	}
@@ -1155,7 +1155,7 @@ func TestSemanticAutomationSelectorRejectsAmbiguityAndInvalidInput(t *testing.T)
 func TestSemanticAutomationSelectorFocusesDescendant(t *testing.T) {
 	tabs := components.NewTabs("tabs", []components.TabItem{{ID: "first", Label: "First"}, {ID: "second", Label: "Second"}}, "first", nil)
 	globalState = &ApplicationState{CurrentPage: PageDashboard, Pages: map[string][]Component{PageDashboard: {tabs}}}
-	resp := handleAutomationRequest(AutomationRequest{Command: "focus", Selector: &AutomationSelector{Role: "tab", Name: "Second"}}, AutomationConfig{})
+	resp, _ := handleAutomationRequest(AutomationRequest{Command: "focus", Selector: &AutomationSelector{Role: "tab", Name: "Second"}}, AutomationConfig{})
 	second, found := types.BuildSemanticsTree(globalState).Find("tabs/second")
 	if !resp.OK || globalState.FocusedID != "tabs" || !found || !second.State.Focused {
 		t.Fatalf("response=%+v focus=%q semantic=%+v found=%v", resp, globalState.FocusedID, second, found)

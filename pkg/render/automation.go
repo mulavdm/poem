@@ -296,7 +296,8 @@ func handleAutomationConnection(conn io.ReadWriteCloser, cfg AutomationConfig) {
 		return
 	}
 
-	resp := handleAutomationRequest(req, cfg)
+	resp, frame := handleAutomationRequest(req, cfg)
+	flushAutomationFrame(frame)
 	_ = writeAutomationResponse(conn, resp)
 }
 
@@ -322,14 +323,16 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 			writeHTTPAutomationMethodNotAllowed(w)
 			return
 		}
-		writeHTTPAutomationJSON(w, http.StatusOK, handleAutomationRequest(AutomationRequest{Command: "get-state"}, cfg))
+		resp, _ := handleAutomationRequest(AutomationRequest{Command: "get-state"}, cfg)
+		writeHTTPAutomationJSON(w, http.StatusOK, resp)
 	})
 	mux.HandleFunc("/components", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeHTTPAutomationMethodNotAllowed(w)
 			return
 		}
-		writeHTTPAutomationJSON(w, http.StatusOK, handleAutomationRequest(AutomationRequest{Command: "list-components"}, cfg))
+		resp, _ := handleAutomationRequest(AutomationRequest{Command: "list-components"}, cfg)
+		writeHTTPAutomationJSON(w, http.StatusOK, resp)
 	})
 	mux.HandleFunc("/click", func(w http.ResponseWriter, r *http.Request) {
 		writeAutomationHTTPCommand(w, r, cfg, "click")
@@ -781,7 +784,8 @@ func writeHTTPPerfJSON(w http.ResponseWriter, status int, payload any) {
 
 func executeAutomationRequest(req AutomationRequest, cfg AutomationConfig) AutomationResponse {
 	start := time.Now()
-	resp := handleAutomationRequest(req, cfg)
+	resp, frame := handleAutomationRequest(req, cfg)
+	flushAutomationFrame(frame)
 	if strings.TrimSpace(req.Command) != "" {
 		globalPerfTracker.recordAutomationAction(strings.ToLower(strings.TrimSpace(req.Command)), time.Since(start), automationActionDetails(req, resp))
 	}
@@ -1107,89 +1111,98 @@ func healthSnapshot() HealthResponse {
 	}
 }
 
-func handleAutomationRequest(req AutomationRequest, cfg AutomationConfig) AutomationResponse {
+// handleAutomationRequest executes one automation command under stateMutex
+// and returns, alongside the response, any render frame a repaint produced.
+// The frame is only buffered here, never written to the presenter pipe --
+// callers must flush it (flushAutomationFrame) only after this function has
+// returned and therefore released stateMutex. See automationRepaintInto for
+// why writing synchronously from inside the lock is the hazard this avoids.
+func handleAutomationRequest(req AutomationRequest, cfg AutomationConfig) (AutomationResponse, []byte) {
 	if !tryLockStateMutexWithTimeout(automationLockTimeout) {
 		return AutomationResponse{OK: false, Error: fmt.Sprintf(
-			"automation surface busy: could not acquire state lock within %s; the render loop may be stuck -- check GET /health", automationLockTimeout)}
+			"automation surface busy: could not acquire state lock within %s; the render loop may be stuck -- check GET /health", automationLockTimeout)}, nil
 	}
 	defer stateMutex.Unlock()
 
 	if globalState == nil {
-		return AutomationResponse{OK: false, Error: "POEM state not initialized"}
+		return AutomationResponse{OK: false, Error: "POEM state not initialized"}, nil
 	}
+
+	var outbound bytes.Buffer
+	repaint := func() { automationRepaintInto(&outbound) }
 
 	switch strings.ToLower(strings.TrimSpace(req.Command)) {
 	case "list-components":
 		nodes, flat := buildAutomationSnapshot()
-		return baseAutomationResponse(nodes, flat)
+		return baseAutomationResponse(nodes, flat), nil
 	case "get-state":
-		return baseAutomationResponse(nil, nil)
+		return baseAutomationResponse(nil, nil), nil
 	case "click":
 		target, err := resolveAutomationTarget(req)
 		if err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
 		if err := automationClickComponent(target); err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
-		automationRepaint()
-		return automationTargetResponse(target)
+		repaint()
+		return automationTargetResponse(target), outbound.Bytes()
 	case "focus":
 		target, err := resolveAutomationTarget(req)
 		if err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
 		if err := automationFocusComponent(target); err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
-		automationRepaint()
-		return automationTargetResponse(target)
+		repaint()
+		return automationTargetResponse(target), outbound.Bytes()
 	case "set-text":
 		target, err := resolveAutomationTarget(req)
 		if err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
 		if err := automationSetText(target, req.Value); err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
-		automationRepaint()
-		return automationTargetResponse(target)
+		repaint()
+		return automationTargetResponse(target), outbound.Bytes()
 	case "select-text":
 		target, err := resolveAutomationTarget(req)
 		if err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
 		if err := automationSelectText(target, req.Start, req.End); err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
-		automationRepaint()
-		return automationTargetResponse(target)
+		repaint()
+		return automationTargetResponse(target), outbound.Bytes()
 	case "composition-start", "composition-update", "composition-end":
 		target, err := resolveAutomationTarget(req)
 		if err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
 		if err := automationComposition(target, strings.TrimPrefix(strings.ToLower(strings.TrimSpace(req.Command)), "composition-"), req.Value); err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
-		automationRepaint()
-		return automationTargetResponse(target)
+		repaint()
+		return automationTargetResponse(target), outbound.Bytes()
 	case "press-key":
 		if err := automationPressKey(req.Key); err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
-		automationRepaint()
-		return baseAutomationResponse(nil, nil)
+		repaint()
+		return baseAutomationResponse(nil, nil), outbound.Bytes()
 	case "wheel", "pan", "pinch", "pointer-drag":
 		target, err := resolveAutomationTarget(req)
 		if err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
 		if err := automationViewportInput(target, req); err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
-		automationRepaint()
-		return automationTargetResponse(target)
+		repaint()
+		return automationTargetResponse(target), outbound.Bytes()
 	case "capture-frame":
 		targetPath := req.Path
 		if strings.TrimSpace(targetPath) == "" {
@@ -1199,13 +1212,13 @@ func handleAutomationRequest(req AutomationRequest, cfg AutomationConfig) Automa
 			targetPath = filepath.Join(cfg.CaptureDir, targetPath)
 		}
 		if err := captureCurrentFrame(targetPath); err != nil {
-			return AutomationResponse{OK: false, Error: err.Error()}
+			return AutomationResponse{OK: false, Error: err.Error()}, nil
 		}
 		resp := baseAutomationResponse(nil, nil)
 		resp.CapturePath = targetPath
-		return resp
+		return resp, nil
 	default:
-		return AutomationResponse{OK: false, Error: "unknown automation command"}
+		return AutomationResponse{OK: false, Error: "unknown automation command"}, nil
 	}
 }
 
@@ -1881,10 +1894,30 @@ func automationPressKey(key string) error {
 	return nil
 }
 
-func automationRepaint() {
-	if globalPainter != nil && globalRenderConn != nil {
-		triggerRepaintFrame(globalRenderConn, globalPainter)
+// automationRepaintInto renders one frame into buf instead of writing it to
+// the presenter pipe. handleAutomationRequest calls this while still holding
+// stateMutex, and the presenter pipe write is a blocking, synchronous
+// operation (see run.go's repaint loop) -- writing directly from here, like
+// this used to, could stall behind a busy native host with the lock held,
+// wedging every other stateMutex reader such as /components. Buffering here
+// and flushing only after the lock is released (flushAutomationFrame) is the
+// same fix the main repaint loop already applies to its own frame writes.
+func automationRepaintInto(buf *bytes.Buffer) {
+	if globalPainter == nil {
+		return
 	}
+	triggerRepaintFrame(buf, globalPainter)
+}
+
+// flushAutomationFrame writes a repaint frame produced by an automation
+// command to the presenter pipe. Callers must invoke this only after
+// handleAutomationRequest has returned -- and therefore after stateMutex has
+// been released -- never while still holding the lock.
+func flushAutomationFrame(frame []byte) {
+	if len(frame) == 0 || globalRenderConn == nil {
+		return
+	}
+	flushBufferedFrames(globalRenderConn, frame)
 }
 
 func captureCurrentFrame(path string) error {
