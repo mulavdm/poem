@@ -3,7 +3,6 @@ package components
 import (
 	"image"
 	"image/color"
-	"strings"
 
 	"github.com/mulavdm/poem/pkg/render/semantics"
 	"github.com/mulavdm/poem/pkg/render/theme"
@@ -56,10 +55,35 @@ func (d *Dialog) SetBounds(r image.Rectangle) {
 	d.buildModal() // rebuild layout on resize
 }
 
+// dialogDefaultColors returns default, always-visible colors for whichever
+// of the four fields are still Go zero-value (fully transparent). A bare
+// &Dialog{...} literal with UseTheme left false never runs applyTheme's
+// color population, so without this fallback its card, title, and backdrop
+// render invisible -- only buttons (which default UseTheme=true themselves)
+// would show. This only fills in colors nobody set; an applied theme or an
+// explicitly-chosen color is never overwritten, since neither is zero-value.
+func dialogDefaultColors(backdrop, card, title, text color.RGBA) (color.RGBA, color.RGBA, color.RGBA, color.RGBA) {
+	if backdrop.A == 0 {
+		backdrop = color.RGBA{0, 0, 0, 180}
+	}
+	if card.A == 0 {
+		card = color.RGBA{40, 40, 40, 255}
+	}
+	if title.A == 0 {
+		title = color.RGBA{255, 255, 255, 255}
+	}
+	if text.A == 0 {
+		text = color.RGBA{200, 200, 200, 255}
+	}
+	return backdrop, card, title, text
+}
+
 func (d *Dialog) buildModal() {
 	const pad = 20
-	const messageTop, messageLineH = 60, 24
+	const messageTop, messageLineH, messageCharW = 60, 24, 8
 	const btnH, btnGap, btnRowGap = 40, 10, 10
+
+	d.BackdropColor, d.CardColor, d.TitleColor, d.TextColor = dialogDefaultColors(d.BackdropColor, d.CardColor, d.TitleColor, d.TextColor)
 
 	// cardW is a typical dialog width, but shrinks to fit narrow windows
 	// rather than overflowing them.
@@ -68,8 +92,17 @@ func (d *Dialog) buildModal() {
 		cardW = minInt(cardW, maxInt(240, available))
 	}
 
-	lines := dialogMessageLines(d.Message, 44)
-	messageH := len(lines) * messageLineH
+	// estimatedLines uses the same wrapPlainText algorithm the message
+	// Label itself wraps with at Draw time (see Label.Draw), rather than an
+	// independent rune-count heuristic -- the two disagreeing is what
+	// previously caused a per-pre-wrapped-line Label to internally re-wrap
+	// into more lines than its fixed 24px slot held, overlapping the label
+	// above or below it. The message now gets one label spanning a rect
+	// sized to this estimate, so a residual mismatch (state's real font
+	// metrics aren't known until Draw) just adds a little breathing room
+	// rather than causing an overlap.
+	estimatedLines := maxInt(1, wrapLineCount(d.Message, maxInt(4, (cardW-2*pad)/messageCharW)))
+	messageH := estimatedLines * messageLineH
 
 	// Lay out buttons left-to-right, wrapping onto a new row instead of
 	// overflowing past the card edge when there are more buttons than fit
@@ -111,9 +144,9 @@ func (d *Dialog) buildModal() {
 	}
 
 	children := []types.Component{card, titleLabel}
-	for index, line := range lines {
-		message := NewLabel(d.CompID+"_msg_"+intString(index), line)
-		message.SetBounds(image.Rect(cardRect.Min.X+20, cardRect.Min.Y+60+index*24, cardRect.Max.X-20, cardRect.Min.Y+84+index*24))
+	if d.Message != "" {
+		message := NewLabel(d.CompID+"_msg", d.Message)
+		message.SetBounds(image.Rect(cardRect.Min.X+20, cardRect.Min.Y+messageTop, cardRect.Max.X-20, cardRect.Min.Y+messageTop+messageH))
 		message.Role = TextMuted
 		message.Typography = TypographyBody
 		message.UseTheme = true
@@ -136,25 +169,6 @@ func (d *Dialog) buildModal() {
 		Children:      children,
 		OnDismiss:     d.OnDismiss,
 	}
-}
-
-func dialogMessageLines(text string, maxRunes int) []string {
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return nil
-	}
-	lines := make([]string, 0, 2)
-	line := words[0]
-	for _, word := range words[1:] {
-		candidate := line + " " + word
-		if len([]rune(candidate)) <= maxRunes {
-			line = candidate
-			continue
-		}
-		lines = append(lines, line)
-		line = word
-	}
-	return append(lines, line)
 }
 
 func (d *Dialog) Draw(p types.Painter, state *types.ApplicationState) {
