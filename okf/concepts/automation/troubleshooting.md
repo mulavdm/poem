@@ -32,6 +32,10 @@ Check:
 - whether the app actually stayed alive after startup
 - whether the adjacent `poem_app.dll` exists and exports ABI v1
 
+## An interactive command hangs while `/frame` keeps answering
+
+`/frame` reads the last-produced frame through its own separate synchronization, independent of `stateMutex` — a clean `/frame` response is not proof the app is healthy. Check `GET /health`: `state_locked:true` means `stateMutex` is genuinely held (likely the render/frame loop stuck mid-frame), not just contended. An interactive command that has been failing with `"automation surface busy"` for longer than a moment, rather than actually hanging, confirms the same thing — `automationLockTimeout` (5s) bounds the wait so a stuck lock now fails fast instead of hanging indefinitely. See [Endpoints: State and components](/concepts/automation/endpoints.md#state-and-components).
+
 ## The Windows host does not rebuild
 
 The binary is often still in use by a running POEM app. Stop the product-named host process, then rebuild `poem_windows_host`.

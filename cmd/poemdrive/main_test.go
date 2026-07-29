@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,13 +34,15 @@ func TestScenarioValidate(t *testing.T) {
 	}
 
 	cases := map[string]Scenario{
-		"no name":          {BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionClick, ID: "a"}}},
-		"no base_url":      {Name: "s", Iterations: 1, Steps: []Step{{Action: actionClick, ID: "a"}}},
-		"no steps":         {Name: "s", BaseURL: "u", Iterations: 1},
-		"no iterations":    {Name: "s", BaseURL: "u", Steps: []Step{{Action: actionClick, ID: "a"}}},
-		"click without id": {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionClick}}},
-		"unknown action":   {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: "teleport"}}},
-		"wait without ms":  {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionWait}}},
+		"no name":                   {BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionClick, ID: "a"}}},
+		"no base_url":               {Name: "s", Iterations: 1, Steps: []Step{{Action: actionClick, ID: "a"}}},
+		"no steps":                  {Name: "s", BaseURL: "u", Iterations: 1},
+		"no iterations":             {Name: "s", BaseURL: "u", Steps: []Step{{Action: actionClick, ID: "a"}}},
+		"click without id":          {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionClick}}},
+		"unknown action":            {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: "teleport"}}},
+		"wait without ms":           {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionWait}}},
+		"resize without dimensions": {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionResize}}},
+		"resize with zero height":   {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionResize, Width: 800}}},
 	}
 	for name, scenario := range cases {
 		if err := scenario.Validate(); err == nil {
@@ -50,6 +54,172 @@ func TestScenarioValidate(t *testing.T) {
 	bad.Budgets = map[string]float64{"go.total.p90": 1}
 	if err := bad.Validate(); err == nil {
 		t.Error("a budget with an unknown statistic should be rejected before the app is driven")
+	}
+
+	withResize := valid
+	withResize.Steps = []Step{{Action: actionResize, Width: 800, Height: 600}}
+	if err := withResize.Validate(); err != nil {
+		t.Errorf("resize step with positive dimensions rejected: %v", err)
+	}
+
+	assertCases := map[string]Scenario{
+		"assert-exists without id":      {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionAssertExists}}},
+		"assert-absent without id":      {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionAssertAbsent}}},
+		"assert-count without prefix":   {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionAssertCount, Count: 1}}},
+		"assert-no-overlap with one id": {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionAssertNoOverlap, IDs: []string{"a"}}}},
+		"assert-no-overlap with no ids": {Name: "s", BaseURL: "u", Iterations: 1, Steps: []Step{{Action: actionAssertNoOverlap}}},
+	}
+	for name, scenario := range assertCases {
+		if err := scenario.Validate(); err == nil {
+			t.Errorf("%s: expected rejection", name)
+		}
+	}
+
+	validAsserts := Scenario{
+		Name: "s", BaseURL: "u", Iterations: 1,
+		Steps: []Step{
+			{Action: actionAssertExists, ID: "a"},
+			{Action: actionAssertAbsent, ID: "b"},
+			{Action: actionAssertCount, IDPrefix: "row_", Count: 0},
+			{Action: actionAssertNoOverlap, IDs: []string{"a", "b"}},
+		},
+	}
+	if err := validAsserts.Validate(); err != nil {
+		t.Errorf("valid assertion steps rejected: %v", err)
+	}
+}
+
+func TestNeedsForegroundWindow(t *testing.T) {
+	nativeOnly := Scenario{Steps: []Step{{Action: actionCapture, Name: "a", Source: "native"}}}
+	if nativeOnly.NeedsForegroundWindow() {
+		t.Error("a native-only capture should not need the foreground")
+	}
+	noSource := Scenario{Steps: []Step{{Action: actionCapture, Name: "a"}}}
+	if noSource.NeedsForegroundWindow() {
+		t.Error("an unset capture source defaults to native and should not need the foreground")
+	}
+	noCaptures := Scenario{Steps: []Step{{Action: actionClick, ID: "a"}}}
+	if noCaptures.NeedsForegroundWindow() {
+		t.Error("a scenario with no captures should not need the foreground")
+	}
+	desktop := Scenario{Steps: []Step{{Action: actionCapture, Name: "a", Source: "desktop"}}}
+	if !desktop.NeedsForegroundWindow() {
+		t.Error("a desktop capture should need the foreground")
+	}
+	mixed := Scenario{Steps: []Step{
+		{Action: actionCapture, Name: "a", Source: "native"},
+		{Action: actionCapture, Name: "b", Source: "desktop"},
+	}}
+	if !mixed.NeedsForegroundWindow() {
+		t.Error("any desktop capture in the scenario should need the foreground")
+	}
+}
+
+// componentsServer fakes /components with a fixed flat list, for testing the
+// assertion helpers without a real running app.
+func componentsServer(t *testing.T, flat []map[string]any) *driver {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/components", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"flat": flat})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return &driver{scenario: &Scenario{BaseURL: server.URL}, client: http.DefaultClient}
+}
+
+func TestAssertComponentExistsAndAbsent(t *testing.T) {
+	d := componentsServer(t, []map[string]any{{"id": "a"}})
+
+	if err := d.assertComponentExists("a"); err != nil {
+		t.Errorf("expected id %q to exist: %v", "a", err)
+	}
+	if err := d.assertComponentExists("missing"); err == nil {
+		t.Error("expected assertComponentExists to fail for a missing id")
+	}
+	if err := d.assertComponentAbsent("missing"); err != nil {
+		t.Errorf("expected id %q to be absent: %v", "missing", err)
+	}
+	if err := d.assertComponentAbsent("a"); err == nil {
+		t.Error("expected assertComponentAbsent to fail for a present id")
+	}
+}
+
+func TestAssertComponentCount(t *testing.T) {
+	d := componentsServer(t, []map[string]any{
+		{"id": "row_1"}, {"id": "row_2"}, {"id": "row_3"}, {"id": "other"},
+	})
+
+	if err := d.assertComponentCount("row_", 3); err != nil {
+		t.Errorf("expected 3 matches for prefix row_: %v", err)
+	}
+	if err := d.assertComponentCount("row_", 2); err == nil {
+		t.Error("expected a wrong count to fail")
+	}
+	if err := d.assertComponentCount("nonexistent_", 0); err != nil {
+		t.Errorf("expecting zero matches should be a valid, passing assertion: %v", err)
+	}
+}
+
+func TestAssertNoOverlap(t *testing.T) {
+	separated := componentsServer(t, []map[string]any{
+		{"id": "a", "bounds": map[string]int{"x": 0, "y": 0, "w": 10, "h": 10}},
+		{"id": "b", "bounds": map[string]int{"x": 20, "y": 0, "w": 10, "h": 10}},
+	})
+	if err := separated.assertNoOverlap([]string{"a", "b"}); err != nil {
+		t.Errorf("non-overlapping rects should pass: %v", err)
+	}
+
+	overlapping := componentsServer(t, []map[string]any{
+		{"id": "a", "bounds": map[string]int{"x": 0, "y": 0, "w": 10, "h": 10}},
+		{"id": "b", "bounds": map[string]int{"x": 5, "y": 5, "w": 10, "h": 10}},
+	})
+	if err := overlapping.assertNoOverlap([]string{"a", "b"}); err == nil {
+		t.Error("expected overlapping rects to fail")
+	}
+
+	missing := componentsServer(t, []map[string]any{
+		{"id": "a", "bounds": map[string]int{"x": 0, "y": 0, "w": 10, "h": 10}},
+	})
+	if err := missing.assertNoOverlap([]string{"a", "b"}); err == nil {
+		t.Error("expected a missing id to fail")
+	}
+}
+
+// TestRunFunctionalModeSkipsNoFramesError proves gap C's actual fix: a
+// scenario built purely from assertion steps produces zero frames (nothing
+// it does repaints anything), which run() otherwise rejects outright.
+func TestRunFunctionalModeSkipsNoFramesError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/components", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"flat": []map[string]any{{"id": "a"}}})
+	})
+	mux.HandleFunc("/perf/reset", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/perf/state", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(render.PerfState{})
+	})
+	mux.HandleFunc("/perf/native", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	pace := 0
+	scenario := &Scenario{
+		Name: "s", BaseURL: server.URL, Iterations: 1, PaceMS: &pace,
+		Steps: []Step{{Action: actionAssertExists, ID: "a"}},
+	}
+	d := &driver{scenario: scenario, client: http.DefaultClient}
+
+	if _, err := d.run(); err == nil || !strings.Contains(err.Error(), "no frames") {
+		t.Fatalf("expected a no-frames error without Functional set, got %v", err)
+	}
+
+	scenario.Functional = true
+	m, err := d.run()
+	if err != nil {
+		t.Fatalf("a Functional scenario with zero frames should succeed, got: %v", err)
+	}
+	if m.Frames != 0 {
+		t.Fatalf("expected zero frames, got %d", m.Frames)
 	}
 }
 

@@ -279,6 +279,10 @@ struct NativeDebugRequest {
     // Clears the native timing rings after this response is built, so a
     // caller can scope a measurement to one driven scene.
     bool resetPerf{};
+    // When both greater than zero, resize the window's client area (not the
+    // outer window rect) to this size before any capture above runs.
+    std::int32_t resizeWidth{};
+    std::int32_t resizeHeight{};
 };
 
 // NativePerfPhase mirrors poem::perf::PhaseStats on the wire. One entry per

@@ -1,5 +1,57 @@
 # OKF Bundle Update Log
 
+## 2026-07-29 (poemdrive: stop foregrounding when nothing needs it)
+
+- `prepare_window` no longer brings the window to the OS foreground
+  unconditionally. `Scenario.NeedsForegroundWindow()` checks whether any
+  `capture` step actually uses `"source": "desktop"` — the only capture mode
+  that needs literal desktop pixels with nothing drawn on top; `native`
+  (default)/`self`/`window` read the GPU backbuffer or internal render
+  output directly and are unaffected by z-order. Restore-and-clamp still
+  always happens (a minimized/off-screen window still fails to present).
+  Fixes an observed problem: running scenarios back to back alt-tabbed the
+  window to front every single time, unconditionally, with no benefit for
+  the vast majority of scenarios that never capture the desktop.
+  **Modified Concepts:**
+  [perf-profiling.md](/concepts/automation/perf-profiling.md).
+
+## 2026-07-29 (poemdrive: functional mode + richer assertions)
+
+- `Scenario.Functional` skips `run()`'s "no frames were recorded" hard
+  failure, for scenarios built to prove behavior (assertions) rather than
+  gate frame timing. Added `assert-exists`, `assert-absent`, `assert-count`
+  (`id_prefix`+`count`), and `assert-no-overlap` (`ids`, pairwise bounding-
+  rect intersection) scenario steps, replacing the kind of one-off Go test
+  and Python-script verification `assert-value` alone could not express.
+  **Modified Concepts:**
+  [perf-profiling.md](/concepts/automation/perf-profiling.md).
+
+## 2026-07-29 (Automation: bounded lock + /health)
+
+- `handleAutomationRequest` (every `/click`/`/focus`/`/set-text`/etc. and
+  `/state`/`/components`) now waits at most `automationLockTimeout` (5s) to
+  acquire `stateMutex` via a polling `TryLock`, failing with an explicit
+  `"automation surface busy"` error instead of hanging indefinitely behind a
+  wedged owner. Added `GET /health`, which never blocks on `stateMutex` and
+  reports whether it is currently held, telling apart "momentarily busy"
+  from "actually stuck" — something `/frame` alone cannot do, since it reads
+  the last-produced frame through separate synchronization and kept
+  answering during the incident that prompted this change even while every
+  interactive command was hung. **Modified Concepts:**
+  [endpoints.md](/concepts/automation/endpoints.md),
+  [troubleshooting.md](/concepts/automation/troubleshooting.md).
+
+## 2026-07-29 (Automation: /resize endpoint)
+
+- Added `POST /resize {width,height}`, resizing the window's client area
+  through a new `NativeDebugRequest.resizeWidth`/`resizeHeight` protocol pair
+  (Go and C++ codecs, round-trip fixture), so a responsive breakpoint can be
+  crossed deterministically instead of a platform-specific window-management
+  script. `cmd/poemdrive` gained a matching `resize` scenario step.
+  **Modified Concepts:**
+  [endpoints.md](/concepts/automation/endpoints.md),
+  [perf-profiling.md](/concepts/automation/perf-profiling.md).
+
 ## 2026-07-28 (Real-time viewport wheel callback)
 
 - `components.RealtimeViewport` now implements POEM's regular wheel-input

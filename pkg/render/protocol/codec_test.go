@@ -208,6 +208,8 @@ func TestNativeDebugRoundTrip(t *testing.T) {
 		BringToForeground:     true,
 		MaximizeWindow:        true,
 		ResetPerf:             true,
+		ResizeWidth:           1280,
+		ResizeHeight:          720,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -218,6 +220,9 @@ func TestNativeDebugRoundTrip(t *testing.T) {
 	}
 	if !req.CaptureFrame || !req.CapturePresentedFrame || !req.CaptureDesktopFrame || !req.RestoreWindow || !req.ClampToWorkArea || !req.BringToForeground || !req.MaximizeWindow || !req.ResetPerf {
 		t.Fatalf("expected both native capture flags: %+v", req)
+	}
+	if req.ResizeWidth != 1280 || req.ResizeHeight != 720 {
+		t.Fatalf("expected resize dimensions to round-trip: %+v", req)
 	}
 
 	respPayload, err := EncodeNativeDebugResponse(NativeDebugResponse{

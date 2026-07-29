@@ -153,6 +153,13 @@ type NativeWindowControlRequest struct {
 	MaximizeWindow    bool `json:"maximize_window"`
 }
 
+// ResizeWindowRequest resizes the app window's client area (not the outer
+// window rect) to Width x Height. Both must be positive.
+type ResizeWindowRequest struct {
+	Width  int32 `json:"width"`
+	Height int32 `json:"height"`
+}
+
 type InspectFrameRequest struct {
 	PrepareWindow     bool `json:"prepare_window"`
 	RestoreWindow     bool `json:"restore_window"`
@@ -303,6 +310,13 @@ func writeAutomationResponse(conn io.Writer, resp AutomationResponse) error {
 
 func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		writeHTTPPerfJSON(w, http.StatusOK, healthSnapshot())
+	})
 	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeHTTPAutomationMethodNotAllowed(w)
@@ -511,6 +525,33 @@ func newAutomationHTTPHandler(cfg AutomationConfig) http.Handler {
 			ClampToWorkArea:   req.ClampToWorkArea,
 			BringToForeground: req.BringToForeground,
 			MaximizeWindow:    req.MaximizeWindow,
+		})
+		if err != nil {
+			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		writeHTTPNativeStateJSON(w, http.StatusOK, nativeAutomationStateFromProtocol(resp))
+	})
+	mux.HandleFunc("/resize", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeHTTPAutomationMethodNotAllowed(w)
+			return
+		}
+		defer r.Body.Close()
+
+		var req ResizeWindowRequest
+		if err := decodeAutomationJSON(w, r, &req); err != nil {
+			writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: err.Error()})
+			return
+		}
+		if req.Width <= 0 || req.Height <= 0 {
+			writeHTTPAutomationJSON(w, http.StatusBadRequest, AutomationResponse{OK: false, Error: "width and height must both be positive"})
+			return
+		}
+
+		resp, err := nativeDebugRequest(protocol.NativeDebugRequest{
+			ResizeWidth:  req.Width,
+			ResizeHeight: req.Height,
 		})
 		if err != nil {
 			writeHTTPAutomationJSON(w, http.StatusInternalServerError, AutomationResponse{OK: false, Error: err.Error()})
@@ -800,10 +841,13 @@ func measureAutomationAction(req PerfMeasureActionRequest, cfg AutomationConfig)
 
 	deadline := time.Now().Add(timeout)
 	for {
-		stateMutex.Lock()
-		met := perfConditionMetLocked(req.Condition, startFrameCount)
-		finalState := baseAutomationResponse(nil, nil)
-		stateMutex.Unlock()
+		met := false
+		finalState := AutomationResponse{}
+		if tryLockStateMutexWithTimeout(automationLockTimeout) {
+			met = perfConditionMetLocked(req.Condition, startFrameCount)
+			finalState = baseAutomationResponse(nil, nil)
+			stateMutex.Unlock()
+		}
 		if met {
 			elapsed := time.Since(start)
 			globalPerfTracker.recordAutomationAction("measure-"+strings.ToLower(strings.TrimSpace(req.Command)), elapsed, "condition_met=true")
@@ -1014,8 +1058,60 @@ func nativePerfConditionMet(cond NativePerfCondition, state NativeAutomationStat
 	return true
 }
 
+// automationLockTimeout bounds how long an interactive automation command
+// waits to acquire stateMutex before failing fast with a clear "app busy"
+// error, instead of hanging silently behind whatever (possibly wedged) owner
+// -- typically the render/frame loop in run.go, which holds the same lock --
+// currently has it. Observed live: /click hung for minutes while /frame,
+// which never takes this lock, kept answering and wrongly suggesting the
+// app was healthy. See /health below for a way to tell the two apart.
+// A var, not a const, so tests can shrink it rather than actually waiting.
+var automationLockTimeout = 5 * time.Second
+
+// tryLockStateMutexWithTimeout polls TryLock rather than blocking on Lock,
+// trading a small amount of latency (poll interval) for a bounded, honest
+// failure instead of an indefinite hang.
+func tryLockStateMutexWithTimeout(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if stateMutex.TryLock() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// HealthResponse is deliberately independent of stateMutex: it never blocks
+// on it, only reports whether it is currently held. That is the signal /frame
+// cannot give -- /frame reads the last-produced frame buffer through its own
+// separate synchronization and keeps answering even while stateMutex (and
+// therefore every interactive command) is stuck behind a wedged render loop.
+type HealthResponse struct {
+	OK          bool   `json:"ok"`
+	StateLocked bool   `json:"state_locked"`
+	FrameCount  uint64 `json:"frame_count"`
+}
+
+func healthSnapshot() HealthResponse {
+	locked := !stateMutex.TryLock()
+	if !locked {
+		stateMutex.Unlock()
+	}
+	return HealthResponse{
+		OK:          true,
+		StateLocked: locked,
+		FrameCount:  globalPerfTracker.snapshot().Frames.FrameCount,
+	}
+}
+
 func handleAutomationRequest(req AutomationRequest, cfg AutomationConfig) AutomationResponse {
-	stateMutex.Lock()
+	if !tryLockStateMutexWithTimeout(automationLockTimeout) {
+		return AutomationResponse{OK: false, Error: fmt.Sprintf(
+			"automation surface busy: could not acquire state lock within %s; the render loop may be stuck -- check GET /health", automationLockTimeout)}
+	}
 	defer stateMutex.Unlock()
 
 	if globalState == nil {

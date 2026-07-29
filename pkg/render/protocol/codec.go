@@ -364,6 +364,8 @@ func EncodeNativeDebugRequest(msg NativeDebugRequest) ([]byte, error) {
 	writeBool(&body, msg.BringToForeground)
 	writeBool(&body, msg.MaximizeWindow)
 	writeBool(&body, msg.ResetPerf)
+	writeInt32(&body, msg.ResizeWidth)
+	writeInt32(&body, msg.ResizeHeight)
 	return wrapEnvelope(MessageNativeDebugRequest, body.Bytes()), nil
 }
 
@@ -408,6 +410,14 @@ func DecodeNativeDebugRequest(payload []byte) (NativeDebugRequest, error) {
 	if err != nil {
 		return NativeDebugRequest{}, err
 	}
+	resizeWidth, err := readInt32(r)
+	if err != nil {
+		return NativeDebugRequest{}, err
+	}
+	resizeHeight, err := readInt32(r)
+	if err != nil {
+		return NativeDebugRequest{}, err
+	}
 	return NativeDebugRequest{
 		CaptureFrame:          captureFrame,
 		CapturePresentedFrame: capturePresentedFrame,
@@ -417,6 +427,8 @@ func DecodeNativeDebugRequest(payload []byte) (NativeDebugRequest, error) {
 		BringToForeground:     bringToForeground,
 		MaximizeWindow:        maximizeWindow,
 		ResetPerf:             resetPerf,
+		ResizeWidth:           resizeWidth,
+		ResizeHeight:          resizeHeight,
 	}, nil
 }
 

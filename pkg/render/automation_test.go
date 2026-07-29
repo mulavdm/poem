@@ -627,6 +627,184 @@ func TestAutomationHTTPPrepareWindowPropagatesNativeErrors(t *testing.T) {
 	}
 }
 
+func TestAutomationHTTPResizePassesDimensions(t *testing.T) {
+	previous := nativeDebugRequest
+	t.Cleanup(func() {
+		nativeDebugRequest = previous
+	})
+
+	var captured protocol.NativeDebugRequest
+	nativeDebugRequest = func(req protocol.NativeDebugRequest) (protocol.NativeDebugResponse, error) {
+		captured = req
+		return protocol.NativeDebugResponse{WindowVisible: true, ClientWidth: 800, ClientHeight: 600}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/resize", bytes.NewBufferString(`{"width":800,"height":600}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if captured.ResizeWidth != 800 || captured.ResizeHeight != 600 {
+		t.Fatalf("unexpected native debug request: %+v", captured)
+	}
+
+	var state NativeAutomationState
+	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
+		t.Fatalf("failed to decode native state response: %v body=%s", err, rec.Body.String())
+	}
+	if state.ClientWidth != 800 || state.ClientHeight != 600 {
+		t.Fatalf("unexpected native state response: %+v", state)
+	}
+}
+
+func TestAutomationHTTPResizeRejectsNonPositiveDimensions(t *testing.T) {
+	for _, body := range []string{`{"width":0,"height":600}`, `{"width":800,"height":0}`, `{"width":-1,"height":600}`, `{}`} {
+		req := httptest.NewRequest(http.MethodPost, "/resize", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body=%s: expected 400, got %d body=%s", body, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestAutomationHTTPResizeRejectsInvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/resize", bytes.NewBufferString(`{`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAutomationHTTPResizePropagatesNativeErrors(t *testing.T) {
+	previous := nativeDebugRequest
+	t.Cleanup(func() {
+		nativeDebugRequest = previous
+	})
+	nativeDebugRequest = func(req protocol.NativeDebugRequest) (protocol.NativeDebugResponse, error) {
+		return protocol.NativeDebugResponse{}, fmt.Errorf("native boom")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/resize", bytes.NewBufferString(`{"width":800,"height":600}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAutomationHTTPResizeRejectsWrongMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/resize", nil)
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAutomationHTTPHealthReportsUnlockedByDefault(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var health HealthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
+		t.Fatalf("failed to decode health response: %v body=%s", err, rec.Body.String())
+	}
+	if !health.OK || health.StateLocked {
+		t.Fatalf("expected an unlocked, healthy state, got %+v", health)
+	}
+}
+
+func TestAutomationHTTPHealthReportsLockedWhileStateMutexHeld(t *testing.T) {
+	stateMutex.Lock()
+	held := make(chan struct{})
+	released := make(chan struct{})
+	go func() {
+		close(held)
+		<-released
+		stateMutex.Unlock()
+	}()
+	<-held
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+	close(released)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var health HealthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
+		t.Fatalf("failed to decode health response: %v body=%s", err, rec.Body.String())
+	}
+	if !health.OK || !health.StateLocked {
+		t.Fatalf("expected /health to report the lock held by another goroutine, got %+v", health)
+	}
+}
+
+func TestAutomationHTTPHealthNeverBlocksOnStateMutex(t *testing.T) {
+	stateMutex.Lock()
+	defer stateMutex.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+		rec := httptest.NewRecorder()
+		newAutomationHTTPHandler(resolveAutomationConfig(&AutomationConfig{})).ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("/health blocked on stateMutex instead of reporting it held")
+	}
+}
+
+// This is the failure mode from the original incident: an interactive
+// command hung indefinitely behind a stuck stateMutex owner while /frame
+// (untouched here, but structurally the same as /health) kept answering.
+// automationLockTimeout is shrunk so the test proves "bounded", not "5
+// seconds", without actually waiting 5 seconds.
+func TestAutomationRequestFailsFastWhenLockWedged(t *testing.T) {
+	previous := automationLockTimeout
+	automationLockTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { automationLockTimeout = previous })
+
+	stateMutex.Lock()
+	defer stateMutex.Unlock()
+
+	start := time.Now()
+	resp := handleAutomationRequest(AutomationRequest{Command: "get-state"}, AutomationConfig{})
+	elapsed := time.Since(start)
+
+	if resp.OK {
+		t.Fatalf("expected a busy error while the lock is held, got %+v", resp)
+	}
+	if !strings.Contains(resp.Error, "busy") {
+		t.Fatalf("expected a clear busy error, got %q", resp.Error)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("expected a bounded failure near automationLockTimeout, took %s", elapsed)
+	}
+}
+
 func TestInspectFramePNGPrefersDesktopWhenForegrounded(t *testing.T) {
 	previous := nativeDebugRequest
 	t.Cleanup(func() {

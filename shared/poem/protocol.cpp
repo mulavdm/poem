@@ -367,6 +367,8 @@ NativeDebugRequest DecodeNativeDebugRequest(const std::vector<std::uint8_t>& bod
     out.bringToForeground = r.Read<std::uint8_t>() != 0;
     out.maximizeWindow = r.Read<std::uint8_t>() != 0;
     out.resetPerf = r.Read<std::uint8_t>() != 0;
+    out.resizeWidth = r.Read<std::int32_t>();
+    out.resizeHeight = r.Read<std::int32_t>();
     return out;
 }
 

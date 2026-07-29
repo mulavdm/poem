@@ -642,6 +642,17 @@ void ApplyNativeWindowControl(HWND hwnd, const poem::protocol::NativeDebugReques
             RequestForegroundActivation(hwnd);
         }
     }
+    if (request.resizeWidth > 0 && request.resizeHeight > 0) {
+        RECT clientSize{0, 0, request.resizeWidth, request.resizeHeight};
+        const auto style = GetWindowLongW(hwnd, GWL_STYLE);
+        const auto exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        AdjustWindowRectEx(&clientSize, style, FALSE, exStyle);
+        RECT current{};
+        GetWindowRect(hwnd, &current);
+        SetWindowPos(hwnd, nullptr, current.left, current.top,
+            clientSize.right - clientSize.left, clientSize.bottom - clientSize.top,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 void ClampWindowToCurrentMonitorWorkArea(HWND hwnd) {

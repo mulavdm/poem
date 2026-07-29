@@ -66,6 +66,14 @@ type Scenario struct {
 	// resolution — Go-side timings on Windows quantize to roughly 0.5 ms, so a
 	// p95 of 0.55 ms moving a single bucket reads as +35%. Defaults to 0.5.
 	RegressionFloorMS float64 `json:"regression_floor_ms,omitempty"`
+
+	// Functional marks a scenario that exists to prove behavior, not gate
+	// frame timing: run() does not fail when the steps produce zero frames
+	// (a pure assertion pass, or a click that legitimately repaints nothing),
+	// and Budgets/regression checking is expected to stay unset rather than
+	// skipped by special-casing — an empty Budgets map already checks
+	// nothing.
+	Functional bool `json:"functional,omitempty"`
 }
 
 // Step is one interaction. Exactly one action per step.
@@ -81,6 +89,8 @@ type Step struct {
 	Scale  float64 `json:"scale,omitempty"`
 	Button int     `json:"button,omitempty"`
 	Phase  string  `json:"phase,omitempty"`
+	Width  int     `json:"width,omitempty"`
+	Height int     `json:"height,omitempty"`
 	// Dynamic marks a target that is expected to appear only after an earlier
 	// step changes the component tree. It is skipped by the initial fail-fast
 	// target scan and still validated by its action when that step executes.
@@ -90,20 +100,34 @@ type Step struct {
 	// the host should produce.
 	Name   string `json:"name,omitempty"`
 	Source string `json:"source,omitempty"`
+
+	// assert-count only: components whose id has this prefix are counted and
+	// compared against Count.
+	IDPrefix string `json:"id_prefix,omitempty"`
+	Count    int    `json:"count,omitempty"`
+
+	// assert-no-overlap only: every one of these ids must be present, and no
+	// two of their bounding rectangles may intersect.
+	IDs []string `json:"ids,omitempty"`
 }
 
 const (
-	actionClick       = "click"
-	actionFocus       = "focus"
-	actionSetText     = "set-text"
-	actionPressKey    = "press-key"
-	actionWait        = "wait"
-	actionCapture     = "capture"
-	actionWheel       = "wheel"
-	actionPan         = "pan"
-	actionPinch       = "pinch"
-	actionDrag        = "pointer-drag"
-	actionAssertValue = "assert-value"
+	actionClick           = "click"
+	actionFocus           = "focus"
+	actionSetText         = "set-text"
+	actionPressKey        = "press-key"
+	actionWait            = "wait"
+	actionCapture         = "capture"
+	actionWheel           = "wheel"
+	actionPan             = "pan"
+	actionPinch           = "pinch"
+	actionDrag            = "pointer-drag"
+	actionAssertValue     = "assert-value"
+	actionResize          = "resize"
+	actionAssertExists    = "assert-exists"
+	actionAssertAbsent    = "assert-absent"
+	actionAssertCount     = "assert-count"
+	actionAssertNoOverlap = "assert-no-overlap"
 )
 
 // captureSources maps a scenario's source name to the automation endpoint that
@@ -165,6 +189,22 @@ func (s *Scenario) Validate() error {
 			if step.ID == "" || step.Value == "" {
 				return fmt.Errorf("step %d (assert-value) needs an id and value substring", i)
 			}
+		case actionResize:
+			if step.Width <= 0 || step.Height <= 0 {
+				return fmt.Errorf("step %d (resize) needs a positive width and height", i)
+			}
+		case actionAssertExists, actionAssertAbsent:
+			if step.ID == "" {
+				return fmt.Errorf("step %d (%s) needs an id", i, step.Action)
+			}
+		case actionAssertCount:
+			if step.IDPrefix == "" {
+				return fmt.Errorf("step %d (assert-count) needs an id_prefix", i)
+			}
+		case actionAssertNoOverlap:
+			if len(step.IDs) < 2 {
+				return fmt.Errorf("step %d (assert-no-overlap) needs at least two ids", i)
+			}
 		case actionWait:
 			if step.MS <= 0 {
 				return fmt.Errorf("step %d (wait) needs a positive ms", i)
@@ -221,6 +261,23 @@ func splitBudgetKey(key string) (metric, statistic string, err error) {
 func (s *Scenario) HasCaptures() bool {
 	for _, step := range s.Steps {
 		if step.Action == actionCapture {
+			return true
+		}
+	}
+	return false
+}
+
+// NeedsForegroundWindow reports whether preparing this scenario's window
+// should bring it to the foreground, not just restore and clamp it on
+// screen. Only a "desktop" capture genuinely needs that -- it reads the
+// literal desktop pixels under the app's screen region, which only shows
+// the app's own content when nothing else is drawn on top. Every other
+// capture source (native/self/window) reads the GPU backbuffer or internal
+// render output directly, unaffected by window z-order, so foregrounding
+// for those would just be an intrusive alt-tab with no benefit.
+func (s *Scenario) NeedsForegroundWindow() bool {
+	for _, step := range s.Steps {
+		if step.Action == actionCapture && step.Source == "desktop" {
 			return true
 		}
 	}

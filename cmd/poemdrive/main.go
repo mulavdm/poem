@@ -158,6 +158,17 @@ func (d *driver) step(s Step) error {
 		return d.post("/pointer-drag", map[string]any{"id": s.ID, "delta_x": s.DeltaX, "delta_y": s.DeltaY, "button": s.Button, "phase": s.Phase})
 	case actionAssertValue:
 		return d.assertComponentValue(s.ID, s.Value)
+	case actionResize:
+		d.rememberFrameBeforeAction()
+		return d.post("/resize", map[string]any{"width": s.Width, "height": s.Height})
+	case actionAssertExists:
+		return d.assertComponentExists(s.ID)
+	case actionAssertAbsent:
+		return d.assertComponentAbsent(s.ID)
+	case actionAssertCount:
+		return d.assertComponentCount(s.IDPrefix, s.Count)
+	case actionAssertNoOverlap:
+		return d.assertNoOverlap(s.IDs)
 	case actionWait:
 		time.Sleep(time.Duration(s.MS) * time.Millisecond)
 		return nil
@@ -187,6 +198,118 @@ func (d *driver) assertComponentValue(id, contains string) error {
 		return fmt.Errorf("component %q value %q does not contain %q", id, node.Value, contains)
 	}
 	return fmt.Errorf("component %q was not present while asserting value", id)
+}
+
+func (d *driver) componentFlatList() ([]struct {
+	ID     string `json:"id"`
+	Bounds struct {
+		X int `json:"x"`
+		Y int `json:"y"`
+		W int `json:"w"`
+		H int `json:"h"`
+	} `json:"bounds"`
+}, error) {
+	var tree struct {
+		Flat []struct {
+			ID     string `json:"id"`
+			Bounds struct {
+				X int `json:"x"`
+				Y int `json:"y"`
+				W int `json:"w"`
+				H int `json:"h"`
+			} `json:"bounds"`
+		} `json:"flat"`
+	}
+	if err := d.getJSON("/components", &tree); err != nil {
+		return nil, err
+	}
+	return tree.Flat, nil
+}
+
+func (d *driver) assertComponentExists(id string) error {
+	flat, err := d.componentFlatList()
+	if err != nil {
+		return err
+	}
+	for _, node := range flat {
+		if node.ID == id {
+			return nil
+		}
+	}
+	return fmt.Errorf("component %q was not present, expected it to exist", id)
+}
+
+func (d *driver) assertComponentAbsent(id string) error {
+	flat, err := d.componentFlatList()
+	if err != nil {
+		return err
+	}
+	for _, node := range flat {
+		if node.ID == id {
+			return fmt.Errorf("component %q was present, expected it to be absent", id)
+		}
+	}
+	return nil
+}
+
+func (d *driver) assertComponentCount(prefix string, want int) error {
+	flat, err := d.componentFlatList()
+	if err != nil {
+		return err
+	}
+	got := 0
+	for _, node := range flat {
+		if strings.HasPrefix(node.ID, prefix) {
+			got++
+		}
+	}
+	if got != want {
+		return fmt.Errorf("expected %d component(s) with id prefix %q, found %d", want, prefix, got)
+	}
+	return nil
+}
+
+// assertNoOverlap checks that no two of the named components' bounding
+// rectangles intersect -- useful for the class of bug where a fixed-size
+// layout slot overflows into its neighbor (button rows, wrapped text) only
+// under specific content, which a screenshot catches but a plain
+// assert-value on either component's own text cannot.
+func (d *driver) assertNoOverlap(ids []string) error {
+	flat, err := d.componentFlatList()
+	if err != nil {
+		return err
+	}
+	type rect struct {
+		id             string
+		x0, y0, x1, y1 int
+	}
+	rects := make([]rect, 0, len(ids))
+	for _, want := range ids {
+		found := false
+		for _, node := range flat {
+			if node.ID == want {
+				rects = append(rects, rect{
+					id: want,
+					x0: node.Bounds.X, y0: node.Bounds.Y,
+					x1: node.Bounds.X + node.Bounds.W, y1: node.Bounds.Y + node.Bounds.H,
+				})
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("component %q was not present while checking overlap", want)
+		}
+	}
+	for i := 0; i < len(rects); i++ {
+		for j := i + 1; j < len(rects); j++ {
+			a, b := rects[i], rects[j]
+			if a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1 {
+				return fmt.Errorf("components %q and %q overlap", a.id, b.id)
+			}
+		}
+	}
+	return nil
 }
 
 // capture asks the host for an image and writes it beside the others. The
@@ -363,7 +486,7 @@ func (d *driver) run() (Measurement, error) {
 	measurement := collect(perf, native, nativeOK)
 	measurement.Scenario = d.scenario.Name
 	measurement.Captured = time.Now().UTC().Format(time.RFC3339)
-	if measurement.Frames == 0 {
+	if measurement.Frames == 0 && !d.scenario.Functional {
 		return measurement, fmt.Errorf("no frames were recorded; the steps may not have changed anything")
 	}
 	return measurement, nil
@@ -470,8 +593,18 @@ func main() {
 
 	// Windows capture returns a blank image while the window has never been
 	// presented — a window-state problem that reads as a rendering failure.
+	// Only bring the window to the foreground when the scenario actually
+	// captures the desktop; restoring and clamping it on screen is enough
+	// for every other capture source, and doing more than that is an
+	// intrusive alt-tab for no benefit -- especially across a batch of
+	// scenarios run back to back.
 	if scenario.Launch != nil && scenario.Launch.PrepareWindow && !*noLaunch {
-		if err := d.post("/prepare-window", nil); err != nil && *verbose {
+		prepareBody := map[string]bool{
+			"restore_window":      true,
+			"clamp_to_work_area":  true,
+			"bring_to_foreground": scenario.NeedsForegroundWindow(),
+		}
+		if err := d.post("/prepare-window", prepareBody); err != nil && *verbose {
 			fmt.Fprintln(os.Stderr, "  prepare-window:", err)
 		}
 		// Foregrounding round-trips through the native debug channel and the

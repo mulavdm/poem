@@ -9,6 +9,7 @@ timestamp: 2026-07-10T00:00:00Z
 
 ## State and components
 
+- `GET /health` — never blocks on `stateMutex`, the lock every interactive command and `/state`/`/components` require; reports `{"ok":true,"state_locked":bool,"frame_count":uint64}`. `state_locked:true` means some other caller is currently holding that lock — usually the render/frame loop mid-frame, occasionally a wedged one. Use this to tell "the app is momentarily busy" apart from "the app is actually stuck", which `/frame` alone cannot do: it reads the last-produced frame through separate synchronization and keeps answering even while `stateMutex` (and therefore every interactive command) is stuck. See [Interaction commands](#interaction-commands) below.
 - `GET /state` — returns current page, focused ID, hovered ID, and logical/physical window size
 - `GET /components` — returns both hierarchical and flat component snapshots
 
@@ -24,6 +25,8 @@ timestamp: 2026-07-10T00:00:00Z
 `click`, `focus`, `set-text`, `select-text`, and composition commands accept either `id` or `selector`, never both. Selector `role` and accessible `name` use exact case-insensitive matching. The `states` map accepts `enabled`, `disabled`, `focused`, `selected`, `checked`, `expanded`, `read_only`, `required`, `invalid`, `password`, and `offscreen`, with either `true` or `false` values. Successful targeted commands return the resolved stable ID as `target_id`. This keeps semantic scripts readable without sacrificing stable ID diagnostics.
 
 HTTP JSON request bodies are capped at 1 MiB. Selector text, state counts, and IDs have tighter limits; unknown states, empty selectors, dangling semantic trees, and ambiguous matches fail without performing an action.
+
+Every command above, plus `/state` and `/components`, waits up to `automationLockTimeout` (5s) to acquire `stateMutex` before failing with an explicit `"automation surface busy"` error rather than hanging indefinitely behind a wedged owner (typically the render/frame loop, which holds the same lock). Check `GET /health` when a command fails this way, or seems to be taking unusually long, to confirm whether the lock is actually held.
 
 ## Frame capture endpoints
 
@@ -42,6 +45,7 @@ See [Capture Modes](/concepts/automation/capture-modes.md) for how to interpret 
 ## Shared window-control and inspection endpoints
 
 - `POST /prepare-window` — shared helper for restore/clamp/foreground; request body may also include `maximize_window`
+- `POST /resize` — body: `{"width":1280,"height":720}`, both required and positive; resizes the window's client area (not the outer window rect, so callers do not need to account for title bar/border chrome) and returns the same native-state shape as `/prepare-window`. Crossing a responsive breakpoint is the primary use — see [Perf Profiling](/concepts/automation/perf-profiling.md) for the `resize` scenario step
 - `POST /inspect-frame` — shared "best inspection frame" endpoint for agents and tests
 
 See [Inspect Flow](/concepts/automation/inspect-flow.md) for full request/response details on both endpoints.

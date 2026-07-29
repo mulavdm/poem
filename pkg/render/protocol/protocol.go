@@ -305,6 +305,11 @@ type NativeDebugRequest struct {
 	// ResetPerf clears the host's native timing rings after the response is
 	// built, so a caller can scope a measurement to one driven scene.
 	ResetPerf bool
+	// ResizeWidth and ResizeHeight, when both greater than zero, resize the
+	// window's client area to this size (not the outer window rect) before
+	// any capture below runs. Zero means "leave the window size alone."
+	ResizeWidth  int32
+	ResizeHeight int32
 }
 
 // NativePerfPhase is one timed native channel (frame presentation, protocol
