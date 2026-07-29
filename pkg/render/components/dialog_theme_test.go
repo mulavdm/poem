@@ -29,6 +29,36 @@ func TestDialogButtonsSizeToLabels(t *testing.T) {
 	}
 }
 
+// TestDialogManyButtonsWrapWithoutOverlapOrOverflow guards against the
+// regression buildModal was fixed for: a hardcoded 400x250 card laid every
+// button out in one un-wrapping row starting from the right edge, so past a
+// handful of buttons most of them rendered outside the card entirely,
+// overlapping or clipped. Buttons must now wrap onto new rows that fit
+// inside the (grown-to-fit) card, with no two overlapping.
+func TestDialogManyButtonsWrapWithoutOverlapOrOverflow(t *testing.T) {
+	buttons := make([]*Button, 0, 12)
+	for _, label := range []string{"Save As", "Undo", "Redo", "Refresh", "Move", "Rotate", "Scale", "World", "Snap Off 0.25", "Run Game", "Help", "Close"} {
+		buttons = append(buttons, &Button{CompID: "btn_" + label, Text: label})
+	}
+	dialog := &Dialog{CompID: "overflow", Title: "More editor actions", Message: "File, transform, and game actions", Buttons: buttons}
+	dialog.SetBounds(image.Rect(0, 0, 1440, 900))
+	card := dialog.ChildComponents()[0].(*Panel)
+
+	for i, a := range buttons {
+		if a.Bounds().Empty() {
+			t.Fatalf("button %q has an empty rect", a.CompID)
+		}
+		if !a.Bounds().In(card.Rect) {
+			t.Fatalf("button %q at %v falls outside the card %v", a.CompID, a.Bounds(), card.Rect)
+		}
+		for j, b := range buttons {
+			if i != j && a.Bounds().Overlaps(b.Bounds()) {
+				t.Fatalf("buttons %q and %q overlap: %v vs %v", a.CompID, b.CompID, a.Bounds(), b.Bounds())
+			}
+		}
+	}
+}
+
 func TestDialogMessageWrapsIntoVisibleSemanticLabels(t *testing.T) {
 	dialog := &Dialog{CompID: "pause", Message: "Take a breath. Resume this room or restart from the Habitrail map."}
 	dialog.SetBounds(image.Rect(0, 0, 800, 600))

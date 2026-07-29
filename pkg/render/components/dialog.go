@@ -57,7 +57,39 @@ func (d *Dialog) SetBounds(r image.Rectangle) {
 }
 
 func (d *Dialog) buildModal() {
-	cardW, cardH := 400, 250
+	const pad = 20
+	const messageTop, messageLineH = 60, 24
+	const btnH, btnGap, btnRowGap = 40, 10, 10
+
+	// cardW is a typical dialog width, but shrinks to fit narrow windows
+	// rather than overflowing them.
+	cardW := 400
+	if available := d.Rect.Dx() - 2*pad; available > 0 {
+		cardW = minInt(cardW, maxInt(240, available))
+	}
+
+	lines := dialogMessageLines(d.Message, 44)
+	messageH := len(lines) * messageLineH
+
+	// Lay out buttons left-to-right, wrapping onto a new row instead of
+	// overflowing past the card edge when there are more buttons than fit
+	// one row -- the card grows to fit however many rows that takes, rather
+	// than a fixed height clipping or overlapping button rows.
+	type placedButton struct {
+		btn        *Button
+		x, y, w, h int
+	}
+	placed := make([]placedButton, 0, len(d.Buttons))
+	x, y := pad, messageTop+messageH+20
+	for _, b := range d.Buttons {
+		bw := maxInt(100, len([]rune(b.Text))*9+28)
+		if x != pad && x+bw > cardW-pad {
+			x, y = pad, y+btnH+btnRowGap
+		}
+		placed = append(placed, placedButton{b, x, y, bw, btnH})
+		x += bw + btnGap
+	}
+	cardH := maxInt(160, y+btnH+pad)
 
 	// Center the card in the rect
 	cx := d.Rect.Min.X + d.Rect.Dx()/2
@@ -79,7 +111,7 @@ func (d *Dialog) buildModal() {
 	}
 
 	children := []types.Component{card, titleLabel}
-	for index, line := range dialogMessageLines(d.Message, 44) {
+	for index, line := range lines {
 		message := NewLabel(d.CompID+"_msg_"+intString(index), line)
 		message.SetBounds(image.Rect(cardRect.Min.X+20, cardRect.Min.Y+60+index*24, cardRect.Max.X-20, cardRect.Min.Y+84+index*24))
 		message.Role = TextMuted
@@ -88,18 +120,12 @@ func (d *Dialog) buildModal() {
 		children = append(children, message)
 	}
 
-	// Layout buttons horizontally at the bottom right
-	btnX := cardRect.Max.X - 20
-	btnY := cardRect.Max.Y - 60
-	for i := len(d.Buttons) - 1; i >= 0; i-- {
-		b := d.Buttons[i]
-		// Size actions from their labels so translated or descriptive text is not
-		// silently clipped. The dialog retains a predictable minimum target size.
-		bw, bh := maxInt(100, len([]rune(b.Text))*9+28), 40
-		btnX -= bw
-		b.SetBounds(image.Rect(btnX, btnY, btnX+bw, btnY+bh))
-		children = append(children, b)
-		btnX -= 10 // spacing
+	for _, p := range placed {
+		// Size actions from their labels so translated or descriptive text
+		// is not silently clipped. The dialog retains a predictable minimum
+		// target size.
+		p.btn.SetBounds(image.Rect(cardRect.Min.X+p.x, cardRect.Min.Y+p.y, cardRect.Min.X+p.x+p.w, cardRect.Min.Y+p.y+p.h))
+		children = append(children, p.btn)
 	}
 
 	d.modal = &Modal{
