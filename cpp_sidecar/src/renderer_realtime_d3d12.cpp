@@ -109,7 +109,7 @@ void RendererRealtimeD3D12::Render(const protocol::RenderFrame& frame){
     list_->ClearRenderTargetView(handle,clear,0,nullptr);
     list_->ClearDepthStencilView(depthHandle,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
     realtime::FrameInput input{sizeof(input),frameID_++,1.0f/60,viewportRect_,device_.Get(),queue_.Get(),list_.Get(),
-        DXGI_FORMAT_R8G8B8A8_UNORM,viewportFocused_?1u:0u,DXGI_FORMAT_D32_FLOAT};
+        DXGI_FORMAT_R8G8B8A8_UNORM,viewportFocused_?1u:0u,DXGI_FORMAT_D32_FLOAT,handle.ptr,depthHandle.ptr};
     if(viewportCommand&&viewportRect_.width>0&&viewportRect_.height>0&&
        viewport_->render(viewport_->userData,&input)!=realtime::Result::ok)return;
     const D3D12_VIEWPORT fullViewport{0,0,static_cast<float>(width_),static_cast<float>(height_),0,1};

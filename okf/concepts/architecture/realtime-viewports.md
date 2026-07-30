@@ -20,6 +20,16 @@ list, render targets, device-loss policy, composition, and final presentation.
 Objects in `FrameInput` are borrowed for one callback and must not be retained.
 Shutdown is explicit and occurs only after callbacks have quiesced.
 
+`FrameInput::renderTargetView`/`depthStencilView` carry the host's
+already-bound CPU descriptor handles (`D3D12_CPU_DESCRIPTOR_HANDLE::ptr`, 0
+if not supplied), mirroring `HamsterViewportInput::render_target_view`/
+`depth_stencil_view` byte-for-byte. The viewport's own colour pass still
+never binds OM state, but a sub-pass that must rebind it for a private
+resource (HamsterEngine's shadow map, for instance) uses these handles to
+restore the host's binding before returning control to the host's own draws
+-- without them, every draw issued after such a sub-pass would render into
+whatever the sub-pass last bound instead of anything visible.
+
 The viewport publishes a bounded semantic snapshot rather than exposing native
 objects to accessibility or automation code. POEM converts that snapshot into
 its ordinary semantic UI and inspection surfaces.

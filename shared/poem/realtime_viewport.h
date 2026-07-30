@@ -23,6 +23,14 @@ struct FrameInput {
     // alongside the render target (0 = none). Mirrors
     // HamsterViewportInput::depth_stencil_format byte-for-byte.
     std::uint32_t depthStencilFormat;
+    // D3D12_CPU_DESCRIPTOR_HANDLE::ptr of the render target (and, below,
+    // depth-stencil view) already bound by the caller (0 = not supplied).
+    // Lets a sub-pass that must temporarily rebind OM state (e.g. a shadow
+    // map) restore the caller's binding before returning. Mirrors
+    // HamsterViewportInput::render_target_view/depth_stencil_view
+    // byte-for-byte.
+    std::uint64_t renderTargetView;
+    std::uint64_t depthStencilView;
 };
 struct SemanticSnapshot { std::uint32_t structSize; const std::uint8_t* bytes; std::uint32_t byteCount; };
 enum class Action : std::uint32_t { moveLeft=1, moveRight=2, confirm=3, cancel=4 };

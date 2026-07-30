@@ -1,5 +1,20 @@
 # OKF Bundle Update Log
 
+## 2026-07-30 (Realtime viewport: restore caller render target after shadow sub-pass)
+
+- `FrameInput` gains `renderTargetView`/`depthStencilView` (CPU descriptor
+  handle `.ptr` values, 0 if not supplied), mirroring HamsterEngine's
+  `HamsterViewportInput::render_target_view`/`depth_stencil_view`
+  byte-for-byte. HamsterEngine's D3D12 shadow sub-pass rebinds OM state to
+  its own shadow-map depth target and, until now, never rebound the host's
+  actual render target afterward -- every mesh/box draw for the rest of
+  that frame rendered into nothing visible whenever a scene had a
+  shadow-casting light and at least one mesh. `renderer_realtime_d3d12.cpp`
+  now supplies its already-bound RTV/DSV handles so the shadow pass can
+  restore them.
+  **Modified Concepts:**
+  [realtime-viewports.md](/concepts/architecture/realtime-viewports.md).
+
 ## 2026-07-29 (poemdrive: stop foregrounding when nothing needs it)
 
 - `prepare_window` no longer brings the window to the OS foreground
