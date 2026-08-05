@@ -1,2 +1,33 @@
+# Normalize text files to LF in the repository and in the working tree.
+#
+# Previously only *.go and *.sh were pinned, so every other tracked type fell
+# through to the host's core.autocrlf setting. On Windows that rewrites them to
+# CRLF at checkout: 156 of 419 tracked files were non-LF in the working tree
+# while the index was entirely LF. A re-checkout without this rule makes it
+# worse, not better, because autocrlf is what performs the conversion.
+* text=auto eol=lf
+
 *.go text eol=lf
 *.sh text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.rs text eol=lf
+*.js text eol=lf
+*.wgsl text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.xml text eol=lf
+
+# Windows tooling does not reliably tolerate LF in these formats.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary content: never touch.
+*.png binary
+*.jpg binary
+*.ico binary
+*.ttf binary
+*.dll binary
+*.exe binary
