@@ -544,7 +544,7 @@ func desktopActionLabel(icon app.IconID, label string) string {
 // already open a Modal: from directly inside a click handler, not from
 // BuildPagesFn's own per-repaint execution. That's deliberate, not
 // incidental — calling OpenModal again on every repaint while already open
-// would replace the whole OverlayEntry (see okf/architecture/overview.md)
+// would replace the whole OverlayEntry (see docs/design/architecture/TDD.md)
 // and steal focus from wherever the user just tabbed to inside it. Content
 // is therefore a snapshot from the moment the trigger was clicked, not
 // continuously live against later unrelated state changes.

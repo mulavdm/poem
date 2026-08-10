@@ -67,7 +67,7 @@ var App = app.App[State]{
 }
 
 func view(state State) app.Node {
-	// The web backend's transport is plain HTML forms (see okf/architecture/
+	// The web backend's transport is plain HTML forms (see docs/design/architecture/
 	// web-backend.md): a checkbox or select alone has no way to submit
 	// itself, so a Save button is what actually applies whatever the visitor
 	// changed. POEM's own Checkbox/Select fire OnChange immediately on

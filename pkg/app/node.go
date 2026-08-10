@@ -68,7 +68,7 @@ func (m Msg) Float() float64 {
 // value parses back identically. This is the second non-string payload
 // convention after BoolPayload — Msg.Payload stays string, and each numeric
 // kind that needs it declares its own encode/decode pair here rather than the
-// IR growing a generic typed-payload mechanism (see okf architecture/overview).
+// IR growing a generic typed-payload mechanism (see docs/design/architecture/TDD.md).
 func FloatPayload(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }
@@ -472,7 +472,7 @@ type TableRow struct {
 // TableNode renders read-only tabular data. It fires no Msg: this is the
 // display-only intersection of POEM's DataTable and GopherWeb's data.Table
 // (both of which additionally support row selection / sorting that this shared
-// kind deliberately does not surface yet — see okf component-parity). Columns
+// kind deliberately does not surface yet — see docs/design/app/component-parity.md). Columns
 // give the heading order; each row supplies its cells by column Key.
 type TableNode struct {
 	Caption string
@@ -630,7 +630,7 @@ func OverlayFloat(base Node, layers ...OverlayLayer) OverlayNode {
 
 // ModalNode renders a trigger and, behind it, a dialog containing Content.
 // Unlike every other interactive Node, its open/closed state is not part of
-// App[S] — see okf/architecture/overview.md for why: both backends already
+// App[S] — see docs/design/architecture/TDD.md for why: both backends already
 // have their own idiomatic, backend-local way to manage a dialog's open/
 // closed state (POEM's OverlayManager, a native-JS hidden toggle on the
 // web), so the shared IR doesn't try to unify something neither backend
