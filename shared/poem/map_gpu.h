@@ -2,7 +2,7 @@
 
 // Shared GPU map plumbing: which batches the GPU path owns, and the uniform
 // block feeding poem::mapshader. Both live here so no backend re-derives them
-// (framework TDD §4.1 shared core, §40.3 backend divergence).
+// (framework TDD §4.1 shared core, TDD §40.3 backend divergence).
 
 #include "poem/map_view.h"
 #include "poem/protocol.h"

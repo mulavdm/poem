@@ -6,8 +6,8 @@
 // The projection here mirrors poem::mapview in map_view.h (which the CPU side
 // and the tests use); this is the GPU transcription of the same model, kept in
 // one place so D3D11, GLES and a future WebGL/WebGPU backend cannot drift from
-// each other (framework TDD §15.3 one canonical shader source, §40.3 backend
-// divergence).
+// each other (framework TDD §15.3 one canonical shader source, TDD §40.3
+// backend divergence).
 //
 // Only the *entry points* are per-backend: HLSL needs structs with semantics,
 // GLSL needs attribute/varying declarations, and each declares its uniforms

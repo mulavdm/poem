@@ -7,9 +7,9 @@
 // This exists because the D3D11 and GLES presenters had independently copied
 // the same projection, and the sun shading was about to become a third copy
 // when the WebGL bridge caught up. The framework TDD calls that out directly:
-// portable behaviour belongs in shared code (§4.1), shared headers must not
-// expose platform types (§4.2), and backend divergence is mitigated with "one
-// renderer contract, shared validation" (§40.3). Nothing here touches D3D11,
+// portable behaviour belongs in shared code (TDD §4.1), shared headers must not
+// expose platform types (TDD §4.2), and backend divergence is mitigated with
+// "one renderer contract, shared validation" (TDD §40.3). Nothing here touches D3D11,
 // GLES, EGL, Win32 or JNI — it is arithmetic over values each host already has,
 // so every backend lights and orders the scene identically by construction
 // rather than by review.

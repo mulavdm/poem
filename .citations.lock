@@ -9,7 +9,9 @@
 workspace_citations 1
 section local:TDD 15.3 hash=df3ef2dfaad6ac35 cited=1 title="Shader Strategy"
 section local:TDD 30.1 hash=481168add21b8421 cited=1 title="Unit Tests"
-section local:TDD 4.1 hash=8e86cfa754db7ada cited=1 title="Shared Core, Thin Platform Hosts"
+section local:TDD 4.1 hash=8e86cfa754db7ada cited=2 title="Shared Core, Thin Platform Hosts"
+section local:TDD 4.2 hash=375c24a90ccb902d cited=1 title="No Native Types in Shared Public Headers"
+section local:TDD 40.3 hash=b5c6bafdf4e32ddd cited=4 title="Rendering Backend Divergence"
 section self 1 hash=5fadf2a293f9ff7b cited=1 title="Corpus"
 section self 3 hash=348ec1b4ec98a5b0 cited=2 title="Silent divergence — the actual finding"
 section self 4 hash=8cd460bd0fd90d79 cited=1 title="What this changes in the plan"

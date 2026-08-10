@@ -1,7 +1,7 @@
 // Contract tests for the shared map view maths. These run on desktop CI with no
 // GPU, window or platform SDK, which is the point: every presenter projects and
 // lights the scene through this one implementation, so pinning it here pins all
-// of them (framework TDD §30.1 shared unit tests, §40.3 backend divergence).
+// of them (framework TDD §30.1 shared unit tests, TDD §40.3 backend divergence).
 
 #include "poem/map_gpu.h"
 #include "poem/map_view.h"
