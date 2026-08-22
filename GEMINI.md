@@ -4,6 +4,20 @@
 
 # Agent Instructions: POEM
 
+> **Status: superseded by HamsterUI for new work**
+> ([ADR-0009](../../docs/adr/0009-poem-is-superseded-by-hamsterui.md)).
+>
+> Read this before starting anything here. New UI capability belongs in
+> `HamsterUI`, not in POEM -- its CL5 row provides for a consumer's needs
+> becoming named additions there. What remains in scope here is maintenance
+> that keeps the three modules still linking against POEM working:
+> `HamsterSuite/HamsterEditor/ui` (whose own guide calls this path frozen),
+> `HamsterSuite/HamsterGameRPG/ui`, and `FutureCloud/client`.
+>
+> The rules below still apply to that maintenance, unchanged. `rust_engine/`
+> was already legacy before this and remains so.
+
+
 This document contains project-specific architectural rules, debugging knowledge, and operational context for POEM. Agents working on this project should use it together with the workspace-level instructions and the human-facing `README.md`.
 
 ## How To Use This File

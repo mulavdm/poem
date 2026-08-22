@@ -1,5 +1,22 @@
 # POEM
 
+> **Status: superseded by HamsterUI for new work.**
+>
+> `HamsterUI` is the workspace's UI platform going forward -- a reusable Rust
+> retained-mode framework, and the native replacement for the capabilities
+> described here. New UI work targets it, not POEM.
+>
+> POEM is **not retired**. Three modules still build against it through
+> `go.mod replace` -- `HamsterSuite/HamsterEditor/ui`,
+> `HamsterSuite/HamsterGameRPG/ui` and `FutureCloud/client` -- so the checkout
+> stays pinned and buildable, and maintenance that keeps those consumers
+> working is in scope. New feature work is not.
+>
+> The decision, the evidence behind it, and what is explicitly still open are
+> recorded in the workspace's
+> [ADR-0009](../../docs/adr/0009-poem-is-superseded-by-hamsterui.md).
+
+
 ## External native hosts
 
 Native engines may embed an application-specific `poem_app.dll` without using
