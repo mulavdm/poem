@@ -20,15 +20,12 @@ struct FrameInput {
     std::uint32_t renderTargetFormat;
     std::uint32_t flags;
     // DXGI_FORMAT of a depth-stencil buffer already bound by the caller
-    // alongside the render target (0 = none). Mirrors
-    // HamsterViewportInput::depth_stencil_format byte-for-byte.
+    // alongside the render target (0 = none).
     std::uint32_t depthStencilFormat;
     // D3D12_CPU_DESCRIPTOR_HANDLE::ptr of the render target (and, below,
     // depth-stencil view) already bound by the caller (0 = not supplied).
     // Lets a sub-pass that must temporarily rebind OM state (e.g. a shadow
-    // map) restore the caller's binding before returning. Mirrors
-    // HamsterViewportInput::render_target_view/depth_stencil_view
-    // byte-for-byte.
+    // map) restore the caller's binding before returning.
     std::uint64_t renderTargetView;
     std::uint64_t depthStencilView;
 };

@@ -23,7 +23,5 @@ classify by purpose, namespace by subject, name by document type.
 | [`cross_platform_cpp_framework_tdd.md`](cross_platform_cpp_framework_tdd.md) | The C++ framework design that `shared/poem/*.h` realizes. |
 | [`archive/okf-bundle-log.md`](archive/okf-bundle-log.md) | The retired bundle's update ledger. |
 
-This tree replaced an `okf/` bundle when project OKF bundles were retired
-under the workspace ADR-0003. The bundle's conformance policy (`okf/.okfcheck`)
-and its checker (`scripts/check-okf.ps1`) went with it — the bundle they
-validated no longer exists.
+This tree replaced an earlier documentation structure. The historical update
+ledger is preserved at `archive/okf-bundle-log.md`.

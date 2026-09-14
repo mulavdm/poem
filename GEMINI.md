@@ -4,18 +4,11 @@
 
 # Agent Instructions: POEM
 
-> **Status: superseded by HamsterUI for new work**
-> ([ADR-0009](../../docs/adr/0009-poem-is-superseded-by-hamsterui.md)).
+> **Status: Archived Reference & Architectural Showcase**
 >
-> Read this before starting anything here. New UI capability belongs in
-> `HamsterUI`, not in POEM -- its CL5 row provides for a consumer's needs
-> becoming named additions there. What remains in scope here is maintenance
-> that keeps the three modules still linking against POEM working:
-> `HamsterSuite/HamsterEditor/ui` (whose own guide calls this path frozen),
-> `HamsterSuite/HamsterGameRPG/ui`, and `FutureCloud/client`.
+> POEM (*POEM Operational Engine Matrix*) is an archived technical exploration into high-performance, cross-platform GUI architecture pairing Go with native platform presenters.
 >
-> The rules below still apply to that maintenance, unchanged. `rust_engine/`
-> was already legacy before this and remains so.
+> This repository is a historical snapshot. It is retired and preserved "as is" for study, inspiration, and forking. Active feature development has concluded. Issues and pull requests are disabled.
 
 
 This document contains project-specific architectural rules, debugging knowledge, and operational context for POEM. Agents working on this project should use it together with the workspace-level instructions and the human-facing `README.md`.
@@ -46,7 +39,7 @@ Treat this file as the repo-level source of truth for agent behavior and guardra
 - **No Autonomous Overreach**: Agents must not unilaterally commit, push, or open Pull Requests on the user's behalf without explicit direction.
 - **Professional Interfaces**: Maintain a professional, accessible, and vanilla visual theme. Avoid over-the-top styling (like "cyberpunk" or heavy neon aesthetics). Prioritize clean typography and functionality.
 - **Systematic Layout Design**: Never use ad-hoc layout bypasses or hardcoded Y/X coordinate offsets to fix visual text or container clipping. Position and baseline issues must be resolved systematically within the rendering engine's layout components (like FlexBox or Grid) or component-level metric calculations, and parent container dimensions must be properly sized to fit their contents.
-- **Design System Conformance**: POEM and every downstream app share one cross-platform design language kept in the Git-ignored `adaptive-ui-ux-guide/` checkout at the workspace root (principles, color, tokens, adaptation, typography, per-component and per-platform specs, and the `DESIGN_LINTING.md` diagnostic catalog). UI work must conform to it, not reinvent styling ad hoc. Conformance is enforceable, not aspirational: `pkg/app/designlint` (`Lint`, `LintTheme`, `LintLayout`) implements the guide's `UI###` diagnostics, and checked-in apps should have no findings outside explicit, reasoned migration allowlists — wire it into acceptance tests. The relationship is **bidirectional**: when you discover a real, generalizable design rule or anti-pattern while building (e.g. the layout-output-as-intrinsic-size anti-pattern), dogfeed it back into the guide (and, if enforceable, add the diagnostic) in the same change — the spec improves from practice, it is not frozen. The guide is reference material like the `EngineeringOperatingManual/`; consult it before designing UI, and edit it deliberately when improving the language rather than guessing.
+- **Design System Conformance**: Express product UI through stable semantic IDs, labelled controls, state-derived transport-safe commands, adaptive window-class branches, and shared tokens. Conformance is enforceable: `pkg/app/designlint` (`Lint`, `LintTheme`, `LintLayout`) implements `UI###` diagnostics to catch clipped text, low-contrast pairs, and unreachable actions.
 - **Public API Stability**: Treat exported symbols on the `pkg/render` surface (and any other package intentionally exposed to downstream apps) as contracts. Document deliberate breaking changes in the same commit that makes them, not as a follow-up. Add Go doc comments for every exported type, field, constant, and function on that surface.
 - **Trust Boundaries**: Clearly separate trusted/sanitized data from raw external or user input at every boundary (protocol messages from the sidecar, automation HTTP payloads, downstream app input). Never let unsanitized input reach a sensitive sink without explicit validation at that boundary.
 - **Defensive Enum Handling**: Validate enum-like or variant values (config modes, capture modes, protocol message kinds) before they drive behavior. Unrecognized values must fall back to a documented default rather than silently misbehaving or panicking.
@@ -96,14 +89,13 @@ Treat this file as the repo-level source of truth for agent behavior and guardra
 
 ## Documentation-as-Code
 
-- POEM's documentation lives under [`docs/`](docs/README.md), organised subject first and document type second per the workspace standard (`EOM repository-documentation-architecture-tdd`). Treat it as part of the implementation, not optional documentation. Engine API, protocol, automation-surface, or architecture changes require corresponding documentation updates in the same thematic commit.
+- POEM's documentation lives under [`docs/`](docs/README.md), organised subject first and document type second. Treat it as part of the implementation, not optional documentation.
 - The design subjects are [`docs/design/architecture/`](docs/design/architecture/TDD.md) (runtime, layout, rendering, hosts), [`docs/design/app/`](docs/design/app/TDD.md) (the `App[S]` layer), [`docs/design/automation/`](docs/design/automation/TDD.md) (inspection and the scenario runner), and [`docs/design/web/`](docs/design/web/) (the web target). Each subject's `TDD.md` is its specification; supporting topics sit beside it.
-- `adaptive-ui-ux-guide/` (workspace root, Git-ignored) is the shared cross-platform design language — see **Design System Conformance** under Product Standards. Consult it before UI work; conform via `pkg/app/designlint`; improve it bidirectionally when you learn a generalizable rule. Editing it *is* expected when the language genuinely advances.
 - Public contracts are [`docs/reference/public-api.md`](docs/reference/public-api.md) and [`docs/reference/protocol.md`](docs/reference/protocol.md). Significant decisions are ADRs under [`docs/adr/`](docs/adr/).
-- Cross-links between documents are ordinary relative Markdown links. The bundle-absolute form (`/concepts/…`) belonged to the retired OKF layout and no longer resolves.
+- Cross-links between documents are ordinary relative Markdown links.
 - `ARCHITECTURE.md`, `GUIDE.md`, and `docs/AUTOMATION.md` were removed once their content was subsumed into these subjects — do not recreate them as duplicate prose; edit the subject document instead.
-- `README.md` remains a separately-maintained human-facing overview (product intent, build/run instructions, current status). Keep it current per **Atomic Updates** above when the facts it states change; do not let its automation/layout-measurement summaries silently diverge from the corresponding design documents.
-- This repository previously kept an OKF bundle at `okf/`, retired under the workspace [ADR-0003](../../docs/adr/0003-retire-okf-bundles-for-eom-documentation.md). Its ledger is preserved at [`docs/archive/okf-bundle-log.md`](docs/archive/okf-bundle-log.md) for history. The bundle's conformance policy and `scripts/check-okf.ps1` went with it.
+- `README.md` remains a separately-maintained human-facing overview (product intent, build/run instructions, current status).
+- The historical update ledger is preserved at [`docs/archive/okf-bundle-log.md`](docs/archive/okf-bundle-log.md) for history.
 
 ## Common Gotchas
 
@@ -111,7 +103,7 @@ Treat this file as the repo-level source of truth for agent behavior and guardra
 - **Protocol edits are cross-language edits**: do not update only the Go or only the C++ side.
 - **Inspection mode matters**: a clean internal render does not prove the app is visible on the user's desktop. Use the correct capture mode for the question being asked.
 - **Foreground is observable state**: use native state reporting instead of assuming the app is frontmost.
-- **Downstream docs matter**: if an engine change affects GenEngine or another POEM app, update the downstream docs too.
+- **Downstream apps**: ensure API and contract stability for any downstream applications.
 
 ## Additional References
 

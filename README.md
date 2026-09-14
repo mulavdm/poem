@@ -1,32 +1,27 @@
 # POEM
 
-> **Status: superseded by HamsterUI for new work.**
+> **Status: Archived Reference & Architectural Showcase**
 >
-> `HamsterUI` is the workspace's UI platform going forward -- a reusable Rust
-> retained-mode framework, and the native replacement for the capabilities
-> described here. New UI work targets it, not POEM.
+> POEM (*POEM Operational Engine Matrix*) is an archived technical exploration into high-performance, cross-platform GUI architecture pairing Go with native platform presenters.
 >
-> POEM is **not retired**. Three modules still build against it through
-> `go.mod replace` -- `HamsterSuite/HamsterEditor/ui`,
-> `HamsterSuite/HamsterGameRPG/ui` and `FutureCloud/client` -- so the checkout
-> stays pinned and buildable, and maintenance that keeps those consumers
-> working is in scope. New feature work is not.
+> This repository is a historical snapshot of an experimental UI framework. It is retired and preserved "as is" for study, inspiration, and forking. Active feature development has concluded, and because work on this prototype paused several months ago, no claims are made regarding full functional status across all platforms and toolchains today. Issues and pull requests are disabled.
 >
-> The decision, the evidence behind it, and what is explicitly still open are
-> recorded in the workspace's
-> [ADR-0009](../../docs/adr/0009-poem-is-superseded-by-hamsterui.md).
-
+> ### Key Architectural Highlights
+> - **Go + Native C++ DirectX in a Single Process**: Go owns application state, layout, and Elm-like reducers compiled into a dynamic library (`poem_app.dll`), while a native C++ host (`windows_host/`) manages Win32 swapchains (DirectX 11/12), input loops, and UI Automation across a versioned 6-function C ABI, carrying framed protocol commands over bounded in-memory pipes (evolving from an earlier named-pipe IPC sidecar).
+> - **Pure-Go Vector Cartography**: Complete MVT decoding, Web-Mercator tiling, polygon-with-hole tessellation (`earcut`), OpenType text shaping, and collision culling in pure Go (`pkg/cartography`) without CGo dependencies.
+> - **One Application API, Three Targets**: A declarative Elm-like application definition (`pkg/app` `App[S]`) multi-targeting native Windows desktop, server-rendered/WASM web, and Android (GLES3).
 
 ## External native hosts
 
-Native engines may embed an application-specific `poem_app.dll` without using
-POEM's window or presenter. The stable contract is declared in
+Native 3D and game engines may embed an application-specific `poem_app.dll` without using
+POEM's standalone window or presenter. The stable contract is declared in
 `shared/poem/external_ui_host.h`: POEM owns UI state, layout, semantics, and
 framed UI output; the external engine owns platform resources, input timing,
-graphics, capture, and presentation. This is the primary integration direction
-for HamsterEngine, while POEM's own hosts remain unchanged for ordinary apps.
+graphics, capture, and presentation. This allows external native engines to composite POEM
+interfaces directly into their own rendering passes (such as a native D3D12 UI pass),
+while POEM's own hosts remain unchanged for ordinary apps.
 `cmd/external-overlay` is the minimal transparent-surface fixture: it emits an
-accessible pause card that HamsterEngine composites in its own D3D12 UI pass.
+accessible pause card that an external host composites in its own UI pass.
 Its Settings/Back transition is an end-to-end interaction probe: the external
 host sends canonical pointer events and consumes the resulting frame
 asynchronously.
@@ -109,7 +104,7 @@ web.Run(App, "127.0.0.1:8090", "Counter")              // stateful web server, n
 
 As of 2026-07-16 the former sibling projects **Trellis** (the app layer) and **GopherWeb**
 (the web component library) are merged into this repository — see
-[okf/concepts/decisions/consolidation.md](okf/concepts/decisions/consolidation.md).
+[docs/adr/0002-consolidation.md](docs/adr/0002-consolidation.md).
 
 ## Layers
 
@@ -126,9 +121,10 @@ As of 2026-07-16 the former sibling projects **Trellis** (the app layer) and **G
 - **`pkg/web`** — the server-rendered HTML component library and HTTP middleware the web
   driver renders through (formerly GopherWeb; `poem-*` CSS classes, no-JS baseline).
 - **Presenters** — native hosts that draw the engine's frames and feed input back over the
-  protocol: the `poem_windows_host` target in `cpp_sidecar/` (Win32, D3D11, UI Automation),
-  `android_engine/` (Android: C++/EGL/GLES2 in a zero-Java NativeActivity APK), and
-  `rust_engine/` (legacy Windows/OpenGL reference, no longer the active runtime path).
+  protocol: the `poem_windows_host` target in `cpp_sidecar/` (Win32, D3D11, UI Automation)
+  and `android_engine/` (Android: C++/EGL/GLES2 in a zero-Java NativeActivity APK).
+  The Windows presenter was originally prototyped in Rust and early IPC sidecars before
+  being superseded by the single-process native C++ DirectX host.
   These live at the top level because they are foreign-toolchain native code; the web
   target has no presenter directory by design — it never sees draw commands, so its whole
   engine is the pure-Go `pkg/web` + `pkg/app/web` pair.
@@ -147,10 +143,10 @@ As of 2026-07-16 the former sibling projects **Trellis** (the app layer) and **G
 |-- cpp_sidecar/           # Generic poem_windows_host C++ source (Win32 + D3D11 + UIA)
 |-- windows_host/          # Portable ZIP/MSIX packaging and development signing commands
 |-- android_engine/        # Android presenter (EGL/GLES2) + no-Gradle APK build script
-|-- rust_engine/           # Legacy Windows presenter (OpenGL), reference only
 |-- examples/              # counter, preferences, settings — one App[S], three targets each
 |-- cmd/engine, cmd/gallery# Engine-layer demos (gallery targets desktop and Android)
-|-- okf/                   # Living documentation bundle (start at okf/index.md)
+|-- docs/                  # Architecture, foundation guides, and design explorations
+|   `-- design/            # Historical design notes (discussionIPC.md, discussionLanguages.md)
 |-- schema/                # Legacy FlatBuffers schema (superseded by pkg/render/protocol)
 `-- TASK.md                # Tracked follow-up work (Android Phase 4, CI, docs)
 ```
@@ -186,7 +182,7 @@ poemwindows.MustRegister(config, poemwindows.Metadata{
 })
 ```
 
-The source-of-truth automation reference is [okf/concepts/automation/index.md](./okf/concepts/automation/index.md).
+The source-of-truth automation reference is [docs/design/automation/TDD.md](./docs/design/automation/TDD.md).
 Commands may use stable component IDs or unique semantic role/name/state
 selectors; successful selector commands report the resolved stable target ID.
 
@@ -208,8 +204,8 @@ and forwards the port; on Windows it builds and starts the host and foregrounds
 the window. So a single command runs from a cold machine, and `-teardown` stops
 only what that run started (a borrowed emulator or already-open app is left
 running). Nothing about any app is compiled in — the scene supplies the base URL
-and steps — so one binary drives Windows, MAPPS, and Android. Details in
-[Scenario replay](./okf/concepts/automation/perf-profiling.md).
+and steps — so one binary drives Windows and Android. Details in
+[docs/design/automation/TDD.md](./docs/design/automation/TDD.md).
 
 On Windows, Android APK builds require Git for Windows. The scenario runner
 deliberately selects Git Bash instead of the unrelated WSL `bash.exe`, so the
@@ -280,7 +276,7 @@ This means downstream apps should not assume "declare children and forget it" br
 - **Systematic Layout Rule**: Never use hardcoded visual offsets or ad-hoc coordinate bypasses to fix visual text or container clipping. Position and baseline issues must be resolved systematically within the rendering engine's layout components (like FlexBox or Grid) or component-level metric calculations, and parent container dimensions must be properly sized to fit their contents.
 - use semantic `designlint.Lint` to gate raw map colors (`UI042`), `designlint.LintTheme` after token resolution to gate low-contrast token pairs (`UI043`), and `designlint.LintLayout(root, viewport, state)` after layout to gate clipped text (`UI023`), unreachable actions (`UI102`), and focus order that contradicts visual order (`UI103`)
 
-See [okf/concepts/architecture/layout-measurement.md](./okf/concepts/architecture/layout-measurement.md) for the downstream migration pattern.
+See [docs/design/architecture/TDD.md](./docs/design/architecture/TDD.md).
 
 ## Windows hosting and packaging
 
@@ -326,11 +322,11 @@ commands, two-pointer pan/pinch gestures, touch input, and the in-process engine
 and atlas re-rasterization at density. On Windows, raycaster/billboard special paths are not
 fully ported from the legacy renderer, and glass/blur are functional approximations.
 
-## Docs
+## Documentation & Architecture Notes
 
-- [okf/index.md](./okf/index.md) — living documentation bundle (architecture, app layer, web
-  engine, protocol, automation, decisions)
-- [docs/POEM_2_FOUNDATION.md](./docs/POEM_2_FOUNDATION.md) — the POEM 2.0 foundation guide
-- [AGENTS.md](./AGENTS.md)
-- [RELEASING.md](./RELEASING.md)
-- [TASK.md](./TASK.md)
+- [docs/README.md](./docs/README.md) — Comprehensive documentation index (architecture, app layer, web engine, protocol, automation, decisions)
+- [docs/design/discussionIPC.md](./docs/design/discussionIPC.md) — Architectural design exploration: Multi-Agent IPC and Named Pipe sidecar protocols
+- [docs/design/discussionLanguages.md](./docs/design/discussionLanguages.md) — Architectural analysis: Comparing languages for GUI runtime engines
+- [docs/POEM_2_FOUNDATION.md](./docs/POEM_2_FOUNDATION.md) — The POEM 2.0 foundation guide
+- [LICENSE](./LICENSE) — MIT License
+- [TASK.md](./TASK.md) — Historical milestone tracking and follow-up notes
